@@ -71,6 +71,7 @@ private:
         QImage image;
         QString error;
         int frame = 0;
+        std::int64_t render_elapsed_ns = 0;
         std::uint64_t generation = 0;
         std::uint64_t document_revision = 0;
     };
@@ -84,7 +85,8 @@ private:
 
     enum class ProjectIoOperation {
         Load,
-        Save
+        Save,
+        CreateRevision
     };
 
     struct ProjectIoResult {
@@ -250,6 +252,14 @@ private:
         pvt::ProjectConfig& stagedProject,
         std::unique_ptr<pvt::ProjectDocument>& stagedDocument,
         QString* notice = nullptr, QString* error = nullptr) const;
+    bool stageNewLayerFromSource(
+        const pvt::ProjectDocument& sourceDocument,
+        std::size_t sourceLayerIndex,
+        std::size_t insertionIndex,
+        const std::string& requestedName,
+        pvt::ProjectConfig& stagedProject,
+        std::unique_ptr<pvt::ProjectDocument>& stagedDocument,
+        QString* error = nullptr) const;
     void addLayer();
     void duplicateLayer();
     void removeLayer();
@@ -272,6 +282,8 @@ private:
     bool confirmDiscardChanges(std::function<void()> after_save = {});
     void restoreUserSettings();
     void saveUserSettings();
+    void offerCpuOnlyRescueIfNeeded();
+    void considerCpuOnlyNewProjectResolution(const PreviewResult& result);
     void addRecentProject(const QString& path);
     void refreshRecentProjectsMenu();
     void showApplicationSettings();
@@ -286,10 +298,14 @@ private:
     void replaceWithNewProject();
     bool documentReplacementAllowed(QString* error = nullptr);
     void refreshVersionsPage();
+    void refreshProjectFileIoControls();
     void refreshVersionDiff();
     void startVersionDiff();
     void makeSelectedVersionCurrent();
     void revertSelectedVersion();
+    void createManualRevision();
+    void deleteSelectedVersion();
+    void setSelectedVersionPinned(bool pinned);
     bool loadProjectPath(const QString& path, QString* error = nullptr);
     bool adoptLoadedProject(pvt::ProjectDocument loaded,
                             QString* error = nullptr);
@@ -425,6 +441,7 @@ private:
     pvt::display::DeliveredFrameRate preview_delivery_rate_;
     std::optional<double> preview_delivered_fps_;
     bool suppress_realtime_preview_resume_ = false;
+    bool cpu_rescue_timing_pending_ = false;
     PerformanceSettings performance_settings_;
     pvt::RenderBackend render_backend_ = pvt::RenderBackend::CpuAndGpu;
     int recent_project_limit_ = 10;
@@ -537,6 +554,7 @@ private:
     QAction* show_project_in_browser_action_ = nullptr;
     QAction* save_action_ = nullptr;
     QAction* save_as_action_ = nullptr;
+    QAction* create_revision_action_ = nullptr;
     QAction* randomize_values_action_ = nullptr;
     QAction* randomize_mix_action_ = nullptr;
     QAction* undo_action_ = nullptr;
@@ -559,6 +577,13 @@ private:
     QListWidget* layer_list_ = nullptr;
     QLineEdit* project_name_ = nullptr;
     QLabel* compatibility_warning_label_ = nullptr;
+    QComboBox* project_storage_encoding_ = nullptr;
+    QComboBox* project_revision_mode_ = nullptr;
+    QFormLayout* project_file_io_form_ = nullptr;
+    QSpinBox* project_revision_keep_ = nullptr;
+    QCheckBox* project_human_deltas_ = nullptr;
+    QSpinBox* project_zip_compression_ = nullptr;
+    QLabel* project_file_io_status_ = nullptr;
     QLineEdit* layer_name_ = nullptr;
     QCheckBox* layer_enabled_ = nullptr;
     QCheckBox* layer_solo_ = nullptr;
@@ -580,6 +605,9 @@ private:
     QLabel* version_summary_ = nullptr;
     QPushButton* version_make_current_ = nullptr;
     QPushButton* version_revert_ = nullptr;
+    QPushButton* version_create_ = nullptr;
+    QPushButton* version_delete_ = nullptr;
+    QCheckBox* version_pinned_ = nullptr;
 
     QListWidget* wave_list_ = nullptr;
     QLineEdit* wave_name_ = nullptr;
@@ -747,7 +775,18 @@ private:
 
     QSpinBox* width_ = nullptr;
     QSpinBox* height_ = nullptr;
-    QSpinBox* block_size_ = nullptr;
+    QDoubleSpinBox* block_size_ = nullptr;
+    QCheckBox* block_size_sync_ = nullptr;
+    QCheckBox* block_size_alpha_gaps_ = nullptr;
+    QCheckBox* block_size_lfo_enabled_ = nullptr;
+    QLineEdit* block_size_lfo_name_ = nullptr;
+    QComboBox* block_size_lfo_waveform_ = nullptr;
+    QDoubleSpinBox* block_size_lfo_minimum_ = nullptr;
+    QDoubleSpinBox* block_size_lfo_maximum_ = nullptr;
+    QSpinBox* block_size_lfo_cycles_ = nullptr;
+    QDoubleSpinBox* block_size_lfo_phase_ = nullptr;
+    QDoubleSpinBox* block_size_lfo_shape_ = nullptr;
+    QPushButton* assign_block_size_lfo_ = nullptr;
     QSpinBox* frames_ = nullptr;
     QLabel* effective_frames_ = nullptr;
     QDoubleSpinBox* fps_ = nullptr;

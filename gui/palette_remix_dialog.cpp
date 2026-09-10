@@ -1,4 +1,5 @@
 #include "palette_remix_dialog.h"
+#include "flexible_spin_box.h"
 
 #include <QCheckBox>
 #include <QDialogButtonBox>
@@ -148,7 +149,7 @@ PaletteRemixDialog::PaletteRemixDialog(const pvt::PaletteConfig& original,
     auto* exposure_slider = new QSlider(Qt::Horizontal);
     exposure_slider->setRange(-200, 200);
     exposure_slider->setAccessibleName(tr("Exposure"));
-    exposure_ = new QDoubleSpinBox;
+    exposure_ = new FlexibleDoubleSpinBox;
     exposure_->setObjectName(QStringLiteral("paletteRemixExposure"));
     exposure_->setRange(-2.0, 2.0);
     exposure_->setDecimals(2);

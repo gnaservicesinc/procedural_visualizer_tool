@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 26;
+constexpr std::uint32_t kSetupFormatVersion = 27;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -657,16 +657,42 @@ struct AudioFrequencyStreamConfig {
     double high_hz = 20000.0;
 };
 
+// Config flags are stored in one uint32_t bank per owning record. The named
+// bit-field overlay preserves the long-standing public member spelling while
+// `flags` is the authoritative in-memory and binary-snapshot representation.
+// GCC, Clang, and MSVC all support this C-compatible anonymous-record form.
+#if defined(__clang__)
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wgnu-anonymous-struct"
+#  pragma clang diagnostic ignored "-Wnested-anon-types"
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic push
+#  pragma GCC diagnostic ignored "-Wpedantic"
+#elif defined(_MSC_VER)
+#  pragma warning(push)
+#  pragma warning(disable : 4201)
+#endif
+
 // Applied to decoded/captured mono audio before beat, envelope, spectrum, or
 // chroma analysis. A disabled flat block is an exact semantic bypass. Named
 // frequency streams split the already-filtered signal and are analyzed
 // independently for use as project or layer clocks.
 struct AudioInputProcessingConfig {
-    bool high_pass_enabled = false;
+    enum : std::uint32_t {
+        HighPassEnabledFlag = 1U << 0U,
+        LowPassEnabledFlag = 1U << 1U,
+        EqualizerEnabledFlag = 1U << 2U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t high_pass_enabled : 1;
+            std::uint32_t low_pass_enabled : 1;
+            std::uint32_t equalizer_enabled : 1;
+        };
+    };
     double high_pass_hz = 20.0;
-    bool low_pass_enabled = false;
     double low_pass_hz = 20000.0;
-    bool equalizer_enabled = false;
     std::vector<AudioEqualizerBandConfig> equalizer_bands = {
         {31.25, 0.0}, {62.5, 0.0}, {125.0, 0.0}, {250.0, 0.0},
         {500.0, 0.0}, {1000.0, 0.0}, {2000.0, 0.0}, {4000.0, 0.0},
@@ -694,9 +720,13 @@ struct MusicFrequencyStreamAnalysis {
 // reserved recovery envelope so a later build can try the original value
 // again. Repair notes are user-facing diagnostics and are not serialized.
 struct PreservedConfigRecord {
+    enum : std::uint32_t { RejectedFlag = 1U << 0U };
     std::string key;
     std::string value;
-    bool rejected = false;
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t rejected : 1; };
+    };
 };
 
 struct ConfigCompatibility {
@@ -741,6 +771,17 @@ struct MeterConfig {
 };
 
 struct ClockConfig {
+    enum : std::uint32_t {
+        ReverseFlag = 1U << 0U,
+        DataOnlyFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t reverse : 1;
+            std::uint32_t data_only : 1;
+        };
+    };
     ClockMode mode = ClockMode::Default;
     ClockInterpolation interpolation = ClockInterpolation::Linear;
     ClockFit fit = ClockFit::Exact;
@@ -753,10 +794,8 @@ struct ClockConfig {
     MusicSwingPolicy music_swing_policy = MusicSwingPolicy::KeepAll;
     std::int64_t beat_offset_microseconds = 0;
     double phase_offset_degrees = 0.0;
-    bool reverse = false;
     // Analysis still drives visuals when true, but this source is excluded
     // from preview playback and movie audio. Project clocks default audible.
-    bool data_only = false;
     MusicAnalysis music;
     // Appended to preserve aggregate-initializer source compatibility. Empty
     // selects the complete post-filter signal; otherwise it references a
@@ -766,7 +805,17 @@ struct ClockConfig {
 };
 
 struct LayerClockConfig {
-    bool enabled = false;
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        MixEnabledFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t mix_enabled : 1;
+        };
+    };
     LayerClockScale scale = LayerClockScale::SmartLoopFit;
     // Layer music is normally a control signal. Audibility is an explicit
     // choice so adding a modulation clip cannot unexpectedly alter a mix.
@@ -780,21 +829,33 @@ struct LayerClockConfig {
     LayerClockMixMode mix = LayerClockMixMode::Replace;
     // Mixing is an explicit opt-in. When false an enabled layer clock always
     // replaces the project clock, regardless of the stored mix selection.
-    bool mix_enabled = false;
 };
 
 // Music response changes only evaluated values. Authored wave/effect settings
 // remain untouched; by default free-running items do not respond.
 struct AudioReactiveConfig {
-    bool enabled = false;
-    bool synchronized_only = true;
-    bool waves_enabled = true;
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        SynchronizedOnlyFlag = 1U << 1U,
+        WavesEnabledFlag = 1U << 2U,
+        EffectsEnabledFlag = 1U << 3U,
+        ColorEnabledFlag = 1U << 4U,
+    };
+    union {
+        std::uint32_t flags = SynchronizedOnlyFlag | WavesEnabledFlag
+                              | EffectsEnabledFlag | ColorEnabledFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t synchronized_only : 1;
+            std::uint32_t waves_enabled : 1;
+            std::uint32_t effects_enabled : 1;
+            std::uint32_t color_enabled : 1;
+        };
+    };
     MusicFeature wave_source = MusicFeature::Beat;
     double wave_amount = 0.35;
-    bool effects_enabled = true;
     MusicFeature effect_source = MusicFeature::Energy;
     double effect_amount = 0.45;
-    bool color_enabled = true;
     // Energy is intentionally the visible default. Pitch color remains an
     // opt-in tonality-weighted route and can be subtle for noisy/atonal audio.
     MusicFeature color_source = MusicFeature::Energy;
@@ -819,25 +880,45 @@ struct CubicMotionPath {
 };
 
 struct PathBinding {
-    bool enabled = false;
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        SynchronizedFlag = 1U << 1U,
+        ReverseFlag = 1U << 2U,
+        FollowTangentFlag = 1U << 3U,
+    };
+    union {
+        std::uint32_t flags = SynchronizedFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t synchronized : 1;
+            std::uint32_t reverse : 1;
+            std::uint32_t follow_tangent : 1;
+        };
+    };
     std::uint64_t path_id = 0;
-    bool synchronized = true;
     int cycles_per_loop = 1;
     double phase_degrees = 0.0;
-    bool reverse = false;
     double offset_x = 0.0;
     double offset_y = 0.0;
-    bool follow_tangent = false;
     // Evaluation scratch populated on a per-frame RenderConfig copy. It is
     // intentionally not persisted as authored path-binding state.
     double resolved_tangent_degrees = 0.0;
 };
 
 struct WaveConfig {
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        SynchronizedFlag = 1U << 1U,
+    };
     std::uint64_t id = 0;
     std::string name;
-    bool enabled = true;
-    bool synchronized = true;
+    union {
+        std::uint32_t flags = EnabledFlag | SynchronizedFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t synchronized : 1;
+        };
+    };
     double x_percent = 50.0;
     double y_percent = 50.0;
     double amplitude = 0.5;
@@ -855,9 +936,13 @@ struct WaveConfig {
 };
 
 struct SwingConfig {
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
     std::uint64_t id = 0;
     std::string name;
-    bool enabled = true;
+    union {
+        std::uint32_t flags = EnabledFlag;
+        struct { std::uint32_t enabled : 1; };
+    };
     Waveform waveform = Waveform::Sine;
     double amount = 0.15;
     int cycles_per_loop = 4;
@@ -932,12 +1017,21 @@ struct SwingConfig {
 // Synchronized effects use the swung master clock; otherwise they use their
 // own linear periodic clock. Both modes close at the loop boundary.
 struct EffectConfig {
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        SynchronizedFlag = 1U << 1U,
+    };
     std::uint64_t id = 0;
     std::string name;
     EffectType type = EffectType::Ripple;
     EffectSpace space = EffectSpace::Texture;
-    bool enabled = false;
-    bool synchronized = true;
+    union {
+        std::uint32_t flags = SynchronizedFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t synchronized : 1;
+        };
+    };
     int cycles_per_loop = 1;
     double phase_degrees = 0.0;
     // Preserve legacy records with no boundary field. New effects made by
@@ -1015,7 +1109,11 @@ struct PaletteColor {
 };
 
 struct PaletteConfig {
-    bool enabled = false;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t enabled : 1; };
+    };
     std::string name = "Custom";
     std::vector<PaletteColor> colors;
     // Zero means the source did not declare a preferred grid width.
@@ -1023,13 +1121,26 @@ struct PaletteConfig {
 };
 
 struct LayerTransformConfig {
-    bool flip_horizontal = false;
-    bool flip_vertical = false;
+    enum : std::uint32_t {
+        FlipHorizontalFlag = 1U << 0U,
+        FlipVerticalFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t flip_horizontal : 1;
+            std::uint32_t flip_vertical : 1;
+        };
+    };
     MirrorMode mirror = MirrorMode::None;
 };
 
 struct LayerMotionConfig {
-    bool enabled = false;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t enabled : 1; };
+    };
     LayerMotionPath path = LayerMotionPath::None;
     // Center and travel are fractions of canvas dimensions. Travel may extend
     // beyond the canvas deliberately for projection/installation workflows.
@@ -1063,11 +1174,21 @@ struct LayerMotionConfig {
 };
 
 struct AlphaConfig {
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        UseSourceAlphaFlag = 1U << 1U,
+    };
     // Enables procedural alpha modulation for this render/layer. Legacy
     // RenderConfig exports also treat this flag as an RGBA request; projects
     // select their final RGB/RGBA output independently with
     // ExportConfig::write_alpha.
-    bool enabled = false;
+    union {
+        std::uint32_t flags = UseSourceAlphaFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t use_source_alpha : 1;
+        };
+    };
     // Opaque defaults make enabling RGBA output neutral until modulation is
     // requested explicitly by lowering minimum or maximum.
     double minimum = 1.0;
@@ -1080,12 +1201,21 @@ struct AlphaConfig {
     // StartingColorConfig::include_alpha. This does not change
     // LayerConfig::opacity, and ignored authored alpha remains available when
     // this is re-enabled.
-    bool use_source_alpha = true;
 };
 
 struct StartingColorConfig {
+    enum : std::uint32_t {
+        IncludeAlphaFlag = 1U << 0U,
+        LegacyAlphaOutermostFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t include_alpha : 1;
+            std::uint32_t legacy_alpha_outermost : 1;
+        };
+    };
     StartingColorMode mode = StartingColorMode::ContinuousHue;
-    bool include_alpha = false;
     // Deprecated layer-format-8 controls. Generated rainbow modes use
     // deterministic working-precision float colors and do not quantize to
     // these values. They remain serialized only for lossless older-file round trips.
@@ -1108,19 +1238,27 @@ struct StartingColorConfig {
     // width, height, and block size.
     int reference_width = 0;
     int reference_height = 0;
-    int reference_block_size = 0;
+    double reference_block_size = 0.0;
 
     // Generated-source pattern shaping. These controls are evaluated only by
     // procedural base generation; an enabled StartingImageConfig bypasses
     // them completely. Neutral defaults preserve pre-format-11 rendering.
     struct KaleidoscopeConfig {
-        bool enabled = false;
+        enum : std::uint32_t { EnabledFlag = 1U << 0U };
+        union {
+            std::uint32_t flags = 0U;
+            struct { std::uint32_t enabled : 1; };
+        };
         int mirrored_segments = 6;
         double rotation_degrees = 0.0;
         double mix = 1.0;
     } kaleidoscope;
     struct DomainWarpConfig {
-        bool enabled = false;
+        enum : std::uint32_t { EnabledFlag = 1U << 0U };
+        union {
+            std::uint32_t flags = 0U;
+            struct { std::uint32_t enabled : 1; };
+        };
         double strength = 0.0; // Fraction of the shorter canvas edge.
         double scale = 2.0;
         int octaves = 3;
@@ -1132,18 +1270,25 @@ struct StartingColorConfig {
     // dimension, so the complete RGB gamut repeats once per alpha level. New
     // projects keep alpha innermost, matching literal nested RGBA enumeration
     // and preserving one coherent RGB traversal across the output.
-    bool legacy_alpha_outermost = false;
 };
 
 struct QuantizationConfig {
-    bool enabled = false;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t enabled : 1; };
+    };
     int levels = 16;
     double mix = 1.0;
     QuantizationMode mode = QuantizationMode::Rgb;
 };
 
 struct ChannelMapConfig {
-    bool enabled = false;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t enabled : 1; };
+    };
     double mix = 1.0;
     ChannelSource red_source = ChannelSource::Red;
     ChannelSource green_source = ChannelSource::Green;
@@ -1158,10 +1303,14 @@ struct ChannelMapConfig {
 // Fields that do not apply to an item's stage are retained unchanged; this
 // makes stage duplication and future type editing lossless.
 struct PostProcessEffectConfig {
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
     std::uint64_t id = 0;
     std::string name;
     PostProcessStage stage = PostProcessStage::InvertRgb;
-    bool enabled = true;
+    union {
+        std::uint32_t flags = EnabledFlag;
+        struct { std::uint32_t enabled : 1; };
+    };
     double mix = 1.0;
     ChannelSource red_source = ChannelSource::Red;
     ChannelSource green_source = ChannelSource::Green;
@@ -1181,21 +1330,36 @@ struct PostProcessEffectConfig {
 // linear light throughout the renderer; antialiasing temporarily premultiplies
 // its neighborhood so transparent edges cannot leak hidden RGB.
 struct PostProcessConfig {
-    bool invert_rgb_enabled = false;
+    enum : std::uint32_t {
+        InvertRgbEnabledFlag = 1U << 0U,
+        InvertRedEnabledFlag = 1U << 1U,
+        InvertGreenEnabledFlag = 1U << 2U,
+        InvertBlueEnabledFlag = 1U << 3U,
+        InvertAlphaEnabledFlag = 1U << 4U,
+        AntialiasEnabledFlag = 1U << 5U,
+        EffectsAuthoritativeFlag = 1U << 6U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t invert_rgb_enabled : 1;
+            std::uint32_t invert_red_enabled : 1;
+            std::uint32_t invert_green_enabled : 1;
+            std::uint32_t invert_blue_enabled : 1;
+            std::uint32_t invert_alpha_enabled : 1;
+            std::uint32_t antialias_enabled : 1;
+            std::uint32_t effects_authoritative : 1;
+        };
+    };
     double invert_rgb_mix = 1.0;
     // In the compatibility-default order, per-channel inversions follow the
     // combined RGB inversion. At full mix, adjacent enabled stages therefore
     // apply two inversions to that channel; an authored order may move either.
-    bool invert_red_enabled = false;
     double invert_red_mix = 1.0;
-    bool invert_green_enabled = false;
     double invert_green_mix = 1.0;
-    bool invert_blue_enabled = false;
     double invert_blue_mix = 1.0;
-    bool invert_alpha_enabled = false;
     double invert_alpha_mix = 1.0;
     ChannelMapConfig channel_map;
-    bool antialias_enabled = false;
     double antialias_strength = 0.75;
     double antialias_threshold = 0.08;
     int antialias_passes = 1;
@@ -1212,7 +1376,6 @@ struct PostProcessConfig {
     // complete ordered stack and may be empty. When false, direct API clients
     // retain the historical fixed-field/order behavior above.
     std::vector<PostProcessEffectConfig> effects;
-    bool effects_authoritative = false;
 };
 
 // Optional height-field geometry for the built-in Plane surface. The height
@@ -1222,7 +1385,11 @@ struct PostProcessConfig {
 // pixels_per_node value of 1 creates one mesh vertex for every render pixel;
 // larger values provide a deliberate performance/geometry tradeoff.
 struct PlaneDisplacementConfig {
-    bool enabled = false;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t enabled : 1; };
+    };
     double minimum = -0.2;
     double maximum = 0.2;
     double midpoint = 0.5;
@@ -1242,7 +1409,11 @@ enum class EnvironmentMapEncoding : std::uint8_t {
 };
 
 struct EnvironmentMapConfig {
-    bool enabled = false;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t enabled : 1; };
+    };
     EnvironmentMapEncoding encoding = EnvironmentMapEncoding::Auto;
     double rotation_degrees = 0.0;
     double exposure_stops = 0.0;
@@ -1269,7 +1440,19 @@ struct MeshConstructionConfig {
 };
 
 struct SurfaceConfig {
-    bool enabled = false;
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        CompositeBackfacesFlag = 1U << 1U,
+        NormalizeObjFlag = 1U << 2U,
+    };
+    union {
+        std::uint32_t flags = CompositeBackfacesFlag | NormalizeObjFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t composite_backfaces : 1;
+            std::uint32_t normalize_obj : 1;
+        };
+    };
     SurfaceMapping mapping = SurfaceMapping::Plane;
     SurfaceProjection projection = SurfaceProjection::Orthographic;
     SurfaceSizing sizing = SurfaceSizing::Contain;
@@ -1306,10 +1489,8 @@ struct SurfaceConfig {
     double light_direction_z = 0.75;
     double light_ambient = 0.28;
     double light_diffuse = 0.72;
-    bool composite_backfaces = true;
     // If true, imported OBJ bounds are recentered and their longest axis is
     // normalized to two units before the authored scale is applied.
-    bool normalize_obj = true;
     // Used when mapping is CustomObj. obj_path is the current runtime/source
     // path and is deliberately not part of portable project semantics when an
     // embedded digest is present. New project bundles store the bytes at
@@ -1328,7 +1509,17 @@ struct SurfaceConfig {
 // then flows through Texture effects, surface mapping, transforms,
 // mapped-object effects, and final quantization like any other source.
 struct StartingImageConfig {
-    bool enabled = false;
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        PaletteDitherEnabledFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t palette_dither_enabled : 1;
+        };
+    };
     StartingImageFit fit = StartingImageFit::Cover;
     std::string path;
     std::string sha256;
@@ -1336,7 +1527,6 @@ struct StartingImageConfig {
     // When an authored starting palette is enabled, the fitted in-memory image
     // is quantized to that palette before effects. Dithering is optional and is
     // distinct from final PNG export dithering.
-    bool palette_dither_enabled = false;
     DitherMethod palette_dither_method = DitherMethod::BlueNoise;
 };
 
@@ -1355,7 +1545,11 @@ struct LiveEndpointConfig {
 };
 
 struct LiveControlMapping {
-    bool enabled = true;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = EnabledFlag;
+        struct { std::uint32_t enabled : 1; };
+    };
     std::string name = "Live control";
     std::string endpoint_uuid;
     LiveControlInput input = LiveControlInput::MidiControlChange;
@@ -1388,7 +1582,17 @@ struct LiveControlMapping {
 };
 
 struct LiveClockInputConfig {
-    bool enabled = false;
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        FollowMidiTransportFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = FollowMidiTransportFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t follow_midi_transport : 1;
+        };
+    };
     LiveClockTarget target = LiveClockTarget::Project;
     // Empty for Project; a canonical layer UUID for Layer.
     std::string layer_uuid;
@@ -1397,7 +1601,6 @@ struct LiveClockInputConfig {
     // Zero mixes all audio channels; positive values are one-based logical
     // channel hints and never OS device channel IDs.
     int audio_channel = 0;
-    bool follow_midi_transport = true;
     int holdover_milliseconds = 500;
     // Empty selects the full post-filter signal. Used only for AudioStream.
     // Appended to preserve aggregate-initializer source compatibility.
@@ -1405,13 +1608,23 @@ struct LiveClockInputConfig {
 };
 
 struct LiveMidiClockOutputConfig {
-    bool enabled = false;
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        SendTransportFlag = 1U << 1U,
+        SendSongPositionFlag = 1U << 2U,
+    };
+    union {
+        std::uint32_t flags = SendTransportFlag | SendSongPositionFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t send_transport : 1;
+            std::uint32_t send_song_position : 1;
+        };
+    };
     LiveClockTarget source = LiveClockTarget::Project;
     // Empty for Project; a canonical layer UUID for Layer.
     std::string layer_uuid;
     std::string endpoint_uuid;
-    bool send_transport = true;
-    bool send_song_position = true;
 };
 
 struct LiveSceneValue {
@@ -1432,26 +1645,50 @@ struct LiveSceneConfig {
 };
 
 struct LiveOutputConfig {
-    bool fullscreen = true;
-    bool prefer_secondary_display = true;
-    bool hide_cursor = true;
+    enum : std::uint32_t {
+        FullscreenFlag = 1U << 0U,
+        PreferSecondaryDisplayFlag = 1U << 1U,
+        HideCursorFlag = 1U << 2U,
+    };
+    union {
+        std::uint32_t flags = FullscreenFlag | PreferSecondaryDisplayFlag
+                              | HideCursorFlag;
+        struct {
+            std::uint32_t fullscreen : 1;
+            std::uint32_t prefer_secondary_display : 1;
+            std::uint32_t hide_cursor : 1;
+        };
+    };
 };
 
 struct LiveSafetyConfig {
+    enum : std::uint32_t {
+        FrameTimeWatchdogEnabledFlag = 1U << 0U,
+        PreventDeviceSleepFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = FrameTimeWatchdogEnabledFlag;
+        struct {
+            std::uint32_t frame_time_watchdog_enabled : 1;
+            std::uint32_t prevent_device_sleep : 1;
+        };
+    };
     LiveDropoutBehavior dropout_behavior =
         LiveDropoutBehavior::LastGoodFrame;
-    bool frame_time_watchdog_enabled = true;
     int watchdog_timeout_milliseconds = 100;
     int audio_dropout_grace_milliseconds = 250;
     // When LastGoodFrame is selected, zero holds indefinitely and a positive
     // value transitions to blackout after this much time.
     int last_good_frame_timeout_milliseconds = 0;
     // Hosts implement this only where a supported OS assertion API exists.
-    bool prevent_device_sleep = false;
 };
 
 struct LiveConfig {
-    bool enabled = false;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = 0U;
+        struct { std::uint32_t enabled : 1; };
+    };
     std::vector<LiveEndpointConfig> endpoints;
     std::vector<LiveControlMapping> mappings;
     std::vector<LiveClockInputConfig> clock_inputs;
@@ -1465,26 +1702,67 @@ struct LiveConfig {
 };
 
 struct ExportConfig {
+    enum : std::uint32_t {
+        DitherEnabledFlag = 1U << 0U,
+        WriteAlphaFlag = 1U << 1U,
+        OverwriteExistingFlag = 1U << 2U,
+    };
+    union {
+        std::uint32_t flags = DitherEnabledFlag;
+        struct {
+            std::uint32_t dither_enabled : 1;
+            std::uint32_t write_alpha : 1;
+            std::uint32_t overwrite_existing : 1;
+        };
+    };
     int bit_depth = 8; // 8/16 write PNG; 32 writes full-float EXR.
     // libpng/zlib compression level: 0 stores without deflate compression and
     // 9 spends the most CPU for the smallest output. Ignored for EXR.
     int png_compression_level = 5;
-    bool dither_enabled = true;
     DitherMethod dither_method = DitherMethod::BlueNoise;
     // Project-global final image channel selection. Legacy RenderConfig APIs
     // continue to honor AlphaConfig::enabled as well.
-    bool write_alpha = false;
     std::string output_directory = ".";
     std::string filename_prefix = "frame_";
     int first_frame_number = 0;
     int filename_digits = 4;
-    bool overwrite_existing = false;
+};
+
+// Optional project-wide modulation for the source block size. The authored
+// block_size remains the fallback when this is disabled. Keeping this on the
+// canvas (rather than one layer) guarantees that every layer uses the same
+// stochastic grid and avoids paint-order-dependent global state.
+struct BlockSizeModulation {
+    enum : std::uint32_t {
+        SynchronizedFlag = 1U << 0U,
+        AlphaGapsFlag = 1U << 1U,
+        LfoEnabledFlag = 1U << 2U,
+    };
+    union {
+        std::uint32_t flags = 0U;
+        struct {
+            std::uint32_t synchronized : 1;
+            std::uint32_t alpha_gaps : 1;
+            std::uint32_t lfo_enabled : 1;
+        };
+    };
+    std::string lfo_name = "Block Size Pulse";
+    Waveform waveform = Waveform::Sine;
+    double minimum = 1.0;
+    double maximum = 32.0;
+    int cycles_per_loop = 1;
+    double phase_degrees = 0.0;
+    double shape = 0.5;
 };
 
 struct CanvasLoopConfig {
     int width = 1920;
     int height = 1080;
-    int block_size = 16;
+    // Zero is an intentional low-cost blackout. Values between zero and one
+    // request supersampled subpixel generation; other fractional values use a
+    // deterministic floor/ceil block distribution whose long-block share is
+    // the fractional part.
+    double block_size = 16.0;
     int total_frames = 480;
     double fps = 60.0;
     ClockConfig clock;
@@ -1498,6 +1776,7 @@ struct CanvasLoopConfig {
     // current freeze/blackout state, and resolved device/display handles are
     // ephemeral runtime data and must never be written here.
     LiveConfig live;
+    BlockSizeModulation block_size_modulation;
 };
 
 // A layer-local low-frequency oscillator drives one stable target. Render
@@ -1507,7 +1786,11 @@ struct CanvasLoopConfig {
 // and categorical targets round the evaluated value at the point of use.
 // Integer cycles preserve a seamless project loop.
 struct ParameterLfo {
-    bool enabled = true;
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = EnabledFlag;
+        struct { std::uint32_t enabled : 1; };
+    };
     std::string target_path;
     Waveform waveform = Waveform::Sine;
     double minimum = 0.0;
@@ -1531,11 +1814,32 @@ struct ParameterLfo {
 // Per-layer render data. Canvas/loop and export settings deliberately live
 // outside this type so switching layers cannot overwrite project-global data.
 struct RenderData {
+    enum : std::uint32_t {
+        SwingsEnabledFlag = 1U << 0U,
+        DisplacementEnabledFlag = 1U << 1U,
+        LightingEnabledFlag = 1U << 2U,
+        SpiralEnabledFlag = 1U << 3U,
+        WallReflectionEnabledFlag = 1U << 4U,
+        AudioReactiveOverrideEnabledFlag = 1U << 5U,
+    };
+    union {
+        std::uint32_t flags = SwingsEnabledFlag | DisplacementEnabledFlag
+                              | LightingEnabledFlag | SpiralEnabledFlag
+                              | WallReflectionEnabledFlag
+                              | AudioReactiveOverrideEnabledFlag;
+        struct {
+            std::uint32_t swings_enabled : 1;
+            std::uint32_t displacement_enabled : 1;
+            std::uint32_t lighting_enabled : 1;
+            std::uint32_t spiral_enabled : 1;
+            std::uint32_t wall_reflection_enabled : 1;
+            std::uint32_t audio_reactive_override_enabled : 1;
+        };
+    };
     std::vector<WaveConfig> waves;
     std::vector<SwingConfig> swings;
     std::vector<EffectConfig> effects;
 
-    bool swings_enabled = true;
     AudioReactiveConfig audio_reactive;
     LayerClockConfig layer_clock;
 
@@ -1543,14 +1847,10 @@ struct RenderData {
     double ghost_mix = 0.25;
     double ghost_lag_degrees = 5.7296;
 
-    bool displacement_enabled = true;
     double displacement = 32.0;
-    bool lighting_enabled = true;
     double wave_depth = 0.85;
-    bool spiral_enabled = true;
     double spiral_frequency = 3.4377;
     int spiral_arms = 4;
-    bool wall_reflection_enabled = true;
     double wall_frequency = 6.0161;
     double wall_mix = 0.45;
     int hue_cycles = 2;
@@ -1567,7 +1867,6 @@ struct RenderData {
     // Direct RenderConfig users retain the historical explicit-layer behavior.
     // This is appended for aggregate-initializer compatibility; default_layer()
     // changes it to false so project layers inherit the project-wide defaults.
-    bool audio_reactive_override_enabled = true;
     StartingColorConfig starting_colors;
     // Appended so older aggregate initializers retain their field ordering and
     // receive a fully neutral finishing stage.
@@ -1583,7 +1882,7 @@ struct RenderData {
 struct RenderConfig : RenderData {
     int width = 1920;
     int height = 1080;
-    int block_size = 16;
+    double block_size = 16.0;
     int total_frames = 480;
     double fps = 60.0;
     ClockConfig clock;
@@ -1597,9 +1896,15 @@ struct RenderConfig : RenderData {
     // Appended project-global Live configuration. Offline rendering ignores
     // it; the setup codec retains it so a standalone setup remains portable.
     LiveConfig live;
+    BlockSizeModulation block_size_modulation;
 };
 
 struct LayerConfig {
+    enum : std::uint32_t { EnabledFlag = 1U << 0U };
+    union {
+        std::uint32_t flags = EnabledFlag;
+        struct { std::uint32_t enabled : 1; };
+    };
     // Canonical lower-case RFC 4122 UUID text. UUIDs identify layers across
     // renames and reordering; they must be unique within a project.
     std::string uuid;
@@ -1607,7 +1912,6 @@ struct LayerConfig {
     // never changes it and deletion may deliberately leave gaps.
     std::uint64_t file_id = 0;
     std::string name = "Layer 1";
-    bool enabled = true;
     BlendMode blend_mode = BlendMode::Normal;
     double opacity = 1.0;
     RenderData render;
@@ -1620,11 +1924,20 @@ struct LayerConfig {
 };
 
 struct LayerGroup {
+    enum : std::uint32_t {
+        EnabledFlag = 1U << 0U,
+        LockedFlag = 1U << 1U,
+    };
+    union {
+        std::uint32_t flags = EnabledFlag;
+        struct {
+            std::uint32_t enabled : 1;
+            std::uint32_t locked : 1;
+        };
+    };
     std::string uuid;
     std::string name = "Group 1";
-    bool enabled = true;
     // Locking is an authoring guard. It never changes rendered pixels.
-    bool locked = false;
 };
 
 struct ProjectConfig {
@@ -1639,6 +1952,14 @@ struct ProjectConfig {
     // one contiguous layer run; ordering is therefore derived from `layers`.
     std::vector<LayerGroup> groups;
 };
+
+#if defined(__clang__)
+#  pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#  pragma GCC diagnostic pop
+#elif defined(_MSC_VER)
+#  pragma warning(pop)
+#endif
 
 struct PVT_API Image {
     int width = 0;
@@ -1660,8 +1981,9 @@ struct ValidationResult {
 };
 
 struct FrameRenderOptions {
-    // CPU remains the library/API compatibility default. Applications can opt
-    // into CpuAndGpu, which uses Metal for the accelerated pixel pipeline on
+    // CPU remains the library/API compatibility default and a usable reference
+    // path, but carries no performance or GPU-shader support guarantee.
+    // Applications normally opt into CpuAndGpu, which uses Metal for the accelerated pixel pipeline on
     // macOS and OpenGL generated/surface/completion passes on Windows and
     // Linux. Gpu prioritizes that device and reports runtime acceleration
     // failures instead of silently restarting the frame on CPU. Ordered CPU

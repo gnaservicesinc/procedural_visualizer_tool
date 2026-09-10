@@ -17,8 +17,8 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
                              double requested_scale) {
     const int source_width = project.canvas.width;
     const int source_height = project.canvas.height;
-    const int source_block_size = project.canvas.block_size;
-    if (source_width <= 0 || source_height <= 0 || source_block_size <= 0) {
+    const double source_block_size = project.canvas.block_size;
+    if (source_width <= 0 || source_height <= 0 || source_block_size < 0.0) {
         return;
     }
     const int source_short_edge = std::max(
@@ -55,8 +55,8 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
     }
     project.canvas.width = width;
     project.canvas.height = height;
-    project.canvas.block_size = std::max(
-        1, static_cast<int>(std::lround(source_block_size * scale)));
+    project.canvas.block_size = source_block_size == 0.0
+        ? 0.0 : std::max(0.000001, source_block_size * scale);
 }
 
 } // namespace

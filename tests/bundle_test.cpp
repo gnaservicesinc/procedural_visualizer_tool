@@ -69,6 +69,12 @@ std::string as_utf8(const fs::path& path) {
     return pvt::detail::path_to_utf8(path);
 }
 
+pvt::ProjectDocument human_project_document() {
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.file_io.encoding = pvt::ProjectStorageEncoding::HumanEditable;
+    return document;
+}
+
 class TemporaryDirectory {
 public:
     TemporaryDirectory() {
@@ -116,6 +122,21 @@ bool write_bytes(const fs::path& path, const std::string& bytes) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
     return static_cast<bool>(output);
+}
+
+bool replace_bytes(const fs::path& path, const std::string& bytes) {
+    std::error_code error;
+    fs::remove(path, error);
+    return !error && write_bytes(path, bytes);
+}
+
+bool replace_current_link(const fs::path& bundle, std::uint64_t version) {
+    std::error_code error;
+    const fs::path current = bundle / "current";
+    fs::remove(current, error);
+    if (error) return false;
+    fs::create_directory_symlink(std::to_string(version), current, error);
+    return !error;
 }
 
 void append_u16(std::string& bytes, std::uint16_t value) {
@@ -1421,7 +1442,7 @@ void test_particle_workload_canvas_and_project_boundaries() {
 }
 
 void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Aggregate Particle Recovery";
     pvt::LayerConfig& first = document.project.layers.front();
     for (pvt::EffectConfig& effect : first.render.effects) {
@@ -1719,17 +1740,36 @@ void test_render_output_codec_backward_compatibility() {
     foot_mapping.scene_uuid = scene_uuid;
     foot_mapping.mode = pvt::LiveMappingMode::Trigger;
     canvas.live.mappings = {midi_mapping, osc_mapping, foot_mapping};
-    canvas.live.clock_inputs = {
-        {true, pvt::LiveClockTarget::Project, {},
-         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 750, {}},
-        {true, pvt::LiveClockTarget::Layer, layer_uuid,
-         pvt::LiveClockInputSource::AudioStream, audio_uuid, 2, false, 300, {}},
-    };
-    canvas.live.midi_clock_outputs = {
-        {true, pvt::LiveClockTarget::Project, {}, midi_uuid, true, true},
-        {true, pvt::LiveClockTarget::Layer, layer_uuid,
-         layer_midi_output_uuid, false, false},
-    };
+    pvt::LiveClockInputConfig project_clock_input;
+    project_clock_input.enabled = true;
+    project_clock_input.target = pvt::LiveClockTarget::Project;
+    project_clock_input.source = pvt::LiveClockInputSource::MidiClock;
+    project_clock_input.endpoint_uuid = midi_uuid;
+    project_clock_input.follow_midi_transport = true;
+    project_clock_input.holdover_milliseconds = 750;
+    pvt::LiveClockInputConfig layer_clock_input;
+    layer_clock_input.enabled = true;
+    layer_clock_input.target = pvt::LiveClockTarget::Layer;
+    layer_clock_input.layer_uuid = layer_uuid;
+    layer_clock_input.source = pvt::LiveClockInputSource::AudioStream;
+    layer_clock_input.endpoint_uuid = audio_uuid;
+    layer_clock_input.audio_channel = 2;
+    layer_clock_input.follow_midi_transport = false;
+    layer_clock_input.holdover_milliseconds = 300;
+    canvas.live.clock_inputs = {project_clock_input, layer_clock_input};
+
+    pvt::LiveMidiClockOutputConfig project_clock_output;
+    project_clock_output.enabled = true;
+    project_clock_output.source = pvt::LiveClockTarget::Project;
+    project_clock_output.endpoint_uuid = midi_uuid;
+    pvt::LiveMidiClockOutputConfig layer_clock_output;
+    layer_clock_output.enabled = true;
+    layer_clock_output.source = pvt::LiveClockTarget::Layer;
+    layer_clock_output.layer_uuid = layer_uuid;
+    layer_clock_output.endpoint_uuid = layer_midi_output_uuid;
+    layer_clock_output.send_transport = false;
+    layer_clock_output.send_song_position = false;
+    canvas.live.midi_clock_outputs = {project_clock_output, layer_clock_output};
     canvas.live.output.fullscreen = true;
     canvas.live.output.prefer_secondary_display = true;
     canvas.live.output.hide_cursor = false;
@@ -1750,7 +1790,7 @@ void test_render_output_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_render_output_config(
         canvas, output, version_two, &error));
-    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t9\n", 0U) == 0U);
+    CHECK(version_two.rfind("PVT_RENDER_OUTPUT\t10\n", 0U) == 0U);
     pvt::CanvasLoopConfig round_trip;
     pvt::ExportConfig round_trip_output;
     CHECK(pvt::detail::deserialize_render_output_config(
@@ -1806,7 +1846,7 @@ void test_render_output_codec_backward_compatibility() {
 
     std::string version_eight = version_two;
     version_eight.replace(
-        0U, std::string("PVT_RENDER_OUTPUT\t9").size(),
+        0U, std::string("PVT_RENDER_OUTPUT\t10").size(),
         "PVT_RENDER_OUTPUT\t8");
     const std::string smoother_clock_record =
         "timing.clock.interpolation\tsmootherstep";
@@ -1993,7 +2033,7 @@ void test_render_output_codec_backward_compatibility() {
     std::ostringstream legacy;
     std::string line;
     CHECK(static_cast<bool>(std::getline(input, line)));
-    CHECK(line == "PVT_RENDER_OUTPUT\t9");
+    CHECK(line == "PVT_RENDER_OUTPUT\t10");
     legacy << "PVT_RENDER_OUTPUT\t1\n";
     while (std::getline(input, line)) {
         const std::size_t tab = line.find('\t');
@@ -2157,7 +2197,7 @@ void test_archive_compare_and_swap(const fs::path& directory) {
 }
 
 void test_directory_versions_and_names(const fs::path& directory) {
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Fire: Night";
     document.project.canvas.clock.mode = pvt::ClockMode::Time;
     document.project.canvas.clock.interpolation = pvt::ClockInterpolation::Hold;
@@ -2208,7 +2248,8 @@ void test_directory_versions_and_names(const fs::path& directory) {
     CHECK(document.project.canvas.output_compatibility.records.size() == 1U);
     CHECK(document.last_opened_utc == opened);
     CHECK(!document.last_saved_utc.empty());
-    CHECK(fs::is_regular_file(fs::symlink_status(bundle / "current")));
+    CHECK(fs::is_symlink(fs::symlink_status(bundle / "current")));
+    CHECK(fs::read_symlink(bundle / "current") == "0");
     CHECK(fs::exists(bundle / "0" / "metadata.txt"));
     CHECK(fs::exists(bundle / "0" / "render_output.txt"));
     CHECK(fs::exists(bundle / "0" / "0.pvt"));
@@ -2363,22 +2404,33 @@ void test_directory_versions_and_names(const fs::path& directory) {
 
     CHECK(pvt::save_project_document(loaded, as_utf8(bundle), &report, &error));
     CHECK(report.validated_only && !report.created_version);
-    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+    if (!pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error)) {
+        std::cerr << "post-revert validate failed: " << error << '\n';
+        CHECK(false);
+    }
 
     const fs::path copied = directory / "Copied Bundle";
     std::error_code copy_error;
-    fs::copy(bundle, copied, fs::copy_options::recursive, copy_error);
+    fs::copy(bundle, copied,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
+             copy_error);
     CHECK(!copy_error);
     loaded.project.name = "Copied Display Name";
-    CHECK(pvt::save_project_document(loaded, as_utf8(copied), &report, &error));
+    if (!pvt::save_project_document(loaded, as_utf8(copied), &report, &error)) {
+        std::cerr << "copied bundle save failed: " << error << '\n';
+        CHECK(false);
+    }
     CHECK(report.created_version && report.version == 4U);
     pvt::ProjectDocument copied_document;
-    CHECK(pvt::load_project_document(as_utf8(copied), copied_document, &error));
+    if (!pvt::load_project_document(as_utf8(copied), copied_document, &error)) {
+        std::cerr << "copied bundle load failed: " << error << '\n';
+        CHECK(false);
+    }
     CHECK(copied_document.project.name == "Copied Display Name");
 }
 
 void test_save_avoids_deep_document_copy(const fs::path& directory) {
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Bounded Save Snapshot";
     const fs::path bundle = directory / portable_root(document.project.name);
     pvt::BundleSaveReport report;
@@ -2466,7 +2518,7 @@ void test_save_attachment_sync_failure_rollback(const fs::path& directory) {
         image_source,
         std::string("\x89PNG\r\n\x1a\n", 8U) + "rollback-image"));
 
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Save Rollback";
     pvt::ProjectAttachment attached;
     std::string error;
@@ -2527,7 +2579,7 @@ void test_save_attachment_sync_failure_rollback(const fs::path& directory) {
 }
 
 void test_independent_current_state_copy(const fs::path& directory) {
-    pvt::ProjectDocument source = pvt::default_project_document();
+    pvt::ProjectDocument source = human_project_document();
     source.project.name = "Original History";
     pvt::LayerConfig upper = pvt::default_layer(1U);
     upper.name = "Upper layer";
@@ -2711,7 +2763,7 @@ void test_independent_current_state_copy(const fs::path& directory) {
     attachment_bearing.layers.front().render.starting_image.sha256 =
         std::string(64U, 'a');
     pvt::ProjectDocument attachment_untouched =
-        pvt::default_project_document();
+        human_project_document();
     const std::string attachment_untouched_uuid =
         attachment_untouched.project.uuid;
     CHECK(!pvt::make_independent_project_copy(
@@ -2731,14 +2783,14 @@ void test_independent_current_state_copy(const fs::path& directory) {
 
     pvt::ProjectConfig invalid = renamed_snapshot;
     invalid.uuid.clear();
-    pvt::ProjectDocument untouched = pvt::default_project_document();
+    pvt::ProjectDocument untouched = human_project_document();
     const std::string untouched_uuid = untouched.project.uuid;
     CHECK(!pvt::make_independent_project_copy(invalid, untouched, &error));
     CHECK(untouched.project.uuid == untouched_uuid);
 }
 
 void test_zip_unicode_and_legacy(const fs::path& directory) {
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Flame \xCE\xB3";
     document.project.output.write_alpha = true;
     pvt::LayerConfig second = pvt::default_layer(1U);
@@ -2791,7 +2843,7 @@ void test_zip_unicode_and_legacy(const fs::path& directory) {
     const std::string portable = pvt::portable_project_filename(long_unicode);
     CHECK(portable.size() <= 244U);
     CHECK(pvt::detail::valid_utf8(portable.substr(0U, portable.size() - 4U)));
-    pvt::ProjectDocument long_name_document = pvt::default_project_document();
+    pvt::ProjectDocument long_name_document = human_project_document();
     long_name_document.project.name = long_unicode;
     const fs::path long_bundle = directory
                                  / pvt::detail::path_from_utf8(
@@ -2819,7 +2871,7 @@ void test_zip_unicode_and_legacy(const fs::path& directory) {
 }
 
 void test_external_change_lifecycle(const fs::path& directory) {
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "External Change";
     const fs::path bundle = directory / portable_root(document.project.name);
     std::string error;
@@ -2881,7 +2933,7 @@ void test_external_change_lifecycle(const fs::path& directory) {
 void test_fallback_orphan_and_stale(const fs::path& directory) {
     std::string error;
     pvt::BundleSaveReport report;
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Orphan Recovery";
     const fs::path bundle = directory / portable_root(document.project.name);
     CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
@@ -2892,7 +2944,7 @@ void test_fallback_orphan_and_stale(const fs::path& directory) {
     CHECK(report.version == 1U);
     CHECK(write_bytes(bundle / "metadata.txt", root0));
     CHECK(write_bytes(bundle / "metadata.sha256", checksum0));
-    CHECK(write_bytes(bundle / "current", "broken current\n"));
+    CHECK(replace_bytes(bundle / "current", "broken current\n"));
 
     pvt::ProjectDocument recovered;
     CHECK(pvt::load_project_document(as_utf8(bundle), recovered, &error));
@@ -2921,7 +2973,7 @@ void test_fallback_orphan_and_stale(const fs::path& directory) {
           && first.current_version == first_version);
     CHECK(untouched.path == "sentinel");
 
-    pvt::ProjectDocument fallback = pvt::default_project_document();
+    pvt::ProjectDocument fallback = human_project_document();
     fallback.project.name = "Malformed Current";
     const fs::path fallback_bundle = directory / portable_root(fallback.project.name);
     CHECK(pvt::save_project_document(fallback, as_utf8(fallback_bundle),
@@ -2953,7 +3005,7 @@ void test_complete_history_accounting(const fs::path& directory) {
     // A valid crash-orphan that is unrelated to the intact current pointer is
     // surfaced on load, then retained as byte-exact noncanonical history when
     // Save appends the explicit external-change version.
-    pvt::ProjectDocument orphan_document = pvt::default_project_document();
+    pvt::ProjectDocument orphan_document = human_project_document();
     orphan_document.project.name = "Unrelated Orphan";
     const fs::path orphan_bundle =
         directory / portable_root(orphan_document.project.name);
@@ -2962,13 +3014,12 @@ void test_complete_history_accounting(const fs::path& directory) {
     const std::string root_zero = read_bytes(orphan_bundle / "metadata.txt");
     const std::string checksum_zero =
         read_bytes(orphan_bundle / "metadata.sha256");
-    const std::string current_zero = read_bytes(orphan_bundle / "current");
     orphan_document.project.layers[0].name = "Unindexed but valid";
     CHECK(pvt::save_project_document(orphan_document, as_utf8(orphan_bundle),
                                      &report, &error));
     CHECK(write_bytes(orphan_bundle / "metadata.txt", root_zero));
     CHECK(write_bytes(orphan_bundle / "metadata.sha256", checksum_zero));
-    CHECK(write_bytes(orphan_bundle / "current", current_zero));
+    CHECK(replace_current_link(orphan_bundle, 0U));
     CHECK(!pvt::validate_project_bundle(as_utf8(orphan_bundle), nullptr, &error));
 
     pvt::ProjectDocument recovered_orphan;
@@ -2993,7 +3044,7 @@ void test_complete_history_accounting(const fs::path& directory) {
     // A malformed unrelated numeric directory follows the same lifecycle. It
     // remains recoverable raw data, but its exact tree is explicitly recorded
     // rather than disappearing from validation.
-    pvt::ProjectDocument malformed_document = pvt::default_project_document();
+    pvt::ProjectDocument malformed_document = human_project_document();
     malformed_document.project.name = "Unrelated Malformed";
     const fs::path malformed_bundle =
         directory / portable_root(malformed_document.project.name);
@@ -3046,7 +3097,7 @@ void test_complete_history_accounting(const fs::path& directory) {
 
     // Moving a corrupted indexed ancestor into preserved history retains its
     // former metadata digest as a lineage alias for valid descendants.
-    pvt::ProjectDocument lineage_document = pvt::default_project_document();
+    pvt::ProjectDocument lineage_document = human_project_document();
     lineage_document.project.name = "Preserved Lineage";
     const fs::path lineage_bundle =
         directory / portable_root(lineage_document.project.name);
@@ -3075,7 +3126,7 @@ void test_complete_history_accounting(const fs::path& directory) {
     // A deleted indexed ancestor must not prevent a valid current child from
     // loading. Repair retains the vanished digest as a lineage alias and
     // appends a new snapshot without inventing replacement raw data.
-    pvt::ProjectDocument missing_indexed = pvt::default_project_document();
+    pvt::ProjectDocument missing_indexed = human_project_document();
     missing_indexed.project.name = "Missing Indexed Ancestor";
     const fs::path missing_indexed_bundle =
         directory / portable_root(missing_indexed.project.name);
@@ -3109,7 +3160,7 @@ void test_complete_history_accounting(const fs::path& directory) {
 void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     std::string error;
     pvt::BundleSaveReport report;
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Corrupt History";
     const fs::path bundle = directory / portable_root(document.project.name);
     CHECK(pvt::save_project_document(document, as_utf8(bundle), &report, &error));
@@ -3123,7 +3174,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(invalid != nullptr && !invalid->valid);
     CHECK(!pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
 
-    pvt::ProjectDocument checksum_document = pvt::default_project_document();
+    pvt::ProjectDocument checksum_document = human_project_document();
     checksum_document.project.name = "Root Checksum";
     const fs::path checksum_bundle = directory
                                      / portable_root(checksum_document.project.name);
@@ -3154,7 +3205,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     // A future root header and unknown records are not, by themselves,
     // evidence of damage. Parse the known structural fields and preserve the
     // rest when the mutable root file is rewritten.
-    CHECK(replace_once(root, "PVT_BUNDLE\t1\n", "PVT_BUNDLE\t999\n"));
+    CHECK(replace_once(root, "PVT_BUNDLE\t2\n", "PVT_BUNDLE\t999\n"));
     root.append("future.root.sparkle\tmaximum\n");
     CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
     CHECK(rewrite_root_checksum(checksum_bundle));
@@ -3169,7 +3220,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     CHECK(root.find("future.root.sparkle\tmaximum\n")
           != std::string::npos);
 
-    pvt::ProjectDocument future_manifest = pvt::default_project_document();
+    pvt::ProjectDocument future_manifest = human_project_document();
     future_manifest.project.name = "Future Version Metadata";
     const fs::path future_manifest_bundle =
         directory / portable_root(future_manifest.project.name);
@@ -3177,7 +3228,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
         future_manifest, as_utf8(future_manifest_bundle), &report, &error));
     std::string future_version_bytes =
         read_bytes(future_manifest_bundle / "0" / "metadata.txt");
-    CHECK(replace_once(future_version_bytes, "PVT_VERSION\t5\n",
+    CHECK(replace_once(future_version_bytes, "PVT_VERSION\t7\n",
                        "PVT_VERSION\t999\n"));
     future_version_bytes.append("future.version.sparkle\tmaximum\n");
     CHECK(write_bytes(future_manifest_bundle / "0" / "metadata.txt",
@@ -3213,7 +3264,7 @@ void test_corrupt_history_and_root_metadata(const fs::path& directory) {
     }
     CHECK(write_bytes(checksum_bundle / "metadata.txt", root));
     CHECK(rewrite_root_checksum(checksum_bundle));
-    pvt::ProjectDocument rejected = pvt::default_project_document();
+    pvt::ProjectDocument rejected = human_project_document();
     const std::string original_uuid = rejected.project.uuid;
     CHECK(!pvt::load_project_document(as_utf8(checksum_bundle), rejected, &error));
     CHECK(rejected.project.uuid == original_uuid);
@@ -3270,7 +3321,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(write_bytes(height_source, height_bytes));
     CHECK(write_bytes(environment_source, environment_bytes));
 
-    pvt::ProjectDocument document = pvt::default_project_document();
+    pvt::ProjectDocument document = human_project_document();
     document.project.name = "Embedded Assets";
     std::string error;
     pvt::ProjectAttachment music_attachment;
@@ -3392,7 +3443,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(directory_files.files.count(
               readable_asset_path(environment_attachment)) == 1U);
     CHECK(read_bytes(bundle / "0" / "metadata.txt").rfind(
-              "PVT_VERSION\t5\n", 0U) == 0U);
+              "PVT_VERSION\t7\n", 0U) == 0U);
     CHECK(music_analysis_entry_count(directory_files) == 1U);
     CHECK(directory_files.files["0/render_output.txt"].find(
               "timing.music.feature_samples") == std::string::npos);
@@ -3415,7 +3466,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     const fs::path current_split_v1_bundle =
         directory / "split-layer-v1-current";
     filesystem_error.clear();
-    fs::copy(bundle, current_split_v1_bundle, fs::copy_options::recursive,
+    fs::copy(bundle, current_split_v1_bundle,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
              filesystem_error);
     CHECK(!filesystem_error);
     std::string current_split_v1 =
@@ -3426,15 +3478,19 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(write_bytes(current_split_v1_bundle / "0" / "0.pvt",
                       current_split_v1));
     pvt::ProjectDocument current_split_v1_loaded;
-    CHECK(pvt::load_project_document(as_utf8(current_split_v1_bundle),
-                                     current_split_v1_loaded, &error));
+    if (!pvt::load_project_document(as_utf8(current_split_v1_bundle),
+                                    current_split_v1_loaded, &error)) {
+        std::cerr << "current split-v1 load failed: " << error << '\n';
+        CHECK(false);
+    }
     CHECK(!current_split_v1_loaded.project.layers.front().render
                .starting_colors.legacy_alpha_outermost);
 
     const fs::path historical_split_v1_bundle =
         directory / "split-layer-v1-historical";
     filesystem_error.clear();
-    fs::copy(bundle, historical_split_v1_bundle, fs::copy_options::recursive,
+    fs::copy(bundle, historical_split_v1_bundle,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
              filesystem_error);
     CHECK(!filesystem_error);
     std::string historical_split_v1 =
@@ -3517,7 +3573,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     const fs::path future_split_layer_bundle =
         directory / "split-layer-future-codec";
     filesystem_error.clear();
-    fs::copy(bundle, future_split_layer_bundle, fs::copy_options::recursive,
+    fs::copy(bundle, future_split_layer_bundle,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
              filesystem_error);
     CHECK(!filesystem_error);
     std::string future_split_layer =
@@ -3528,7 +3585,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(write_bytes(future_split_layer_bundle / "0" / "0.pvt",
                       future_split_layer));
     pvt::ProjectDocument future_split_sentinel =
-        pvt::default_project_document();
+        human_project_document();
     future_split_sentinel.project.name = "split layer sentinel";
     const std::string future_split_sentinel_uuid =
         future_split_sentinel.project.uuid;
@@ -3541,7 +3598,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     // large music tables even when a caller does not separately set dirty.
     const fs::path fingerprint_bundle = directory / "analysis-fingerprint-edit";
     filesystem_error.clear();
-    fs::copy(bundle, fingerprint_bundle, fs::copy_options::recursive,
+    fs::copy(bundle, fingerprint_bundle,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
              filesystem_error);
     CHECK(!filesystem_error);
     pvt::ProjectDocument fingerprint_document;
@@ -3575,7 +3633,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     // corrupting or silently discarding the user's manual change.
     const fs::path edited_analysis_bundle = directory / "direct-analysis-edit";
     filesystem_error.clear();
-    fs::copy(bundle, edited_analysis_bundle, fs::copy_options::recursive,
+    fs::copy(bundle, edited_analysis_bundle,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
              filesystem_error);
     CHECK(!filesystem_error);
     auto analysis_entry = std::find_if(
@@ -3595,7 +3654,9 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
               "malformed-analysis-object"}) {
             const fs::path rejected_bundle = directory / failure_case;
             filesystem_error.clear();
-            fs::copy(bundle, rejected_bundle, fs::copy_options::recursive,
+            fs::copy(bundle, rejected_bundle,
+                     fs::copy_options::recursive
+                         | fs::copy_options::copy_symlinks,
                      filesystem_error);
             CHECK(!filesystem_error);
             if (failure_case == "missing-analysis-reference") {
@@ -3616,7 +3677,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
                         / pvt::detail::path_from_utf8(analysis_entry->first),
                     "not a music analysis\n"));
             }
-            pvt::ProjectDocument rejected = pvt::default_project_document();
+            pvt::ProjectDocument rejected = human_project_document();
             rejected.project.name = "transaction sentinel";
             const std::string sentinel_uuid = rejected.project.uuid;
             CHECK(!pvt::load_project_document(
@@ -3651,7 +3712,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     // analysis transaction as choosing a new source in the GUI.
     const fs::path edited_music_bundle = directory / "direct-music-edit";
     filesystem_error.clear();
-    fs::copy(bundle, edited_music_bundle, fs::copy_options::recursive,
+    fs::copy(bundle, edited_music_bundle,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
              filesystem_error);
     CHECK(!filesystem_error);
     const std::string replacement_wave = readable_click_wave();
@@ -3812,6 +3874,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::detail::sha256_hex(
         legacy_output, legacy_output_digest, &error));
     legacy_files.files["0/render_output.txt"] = legacy_output;
+    legacy_files.files.erase("0/render_output.pvtdat");
+    legacy_files.files.erase("0/render_output.pvtstrings");
     legacy_files.files.erase("0/music_analysis.txt");
     std::string legacy_layer;
     std::string legacy_layer_digest;
@@ -3821,6 +3885,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::detail::sha256_hex(
         legacy_layer, legacy_layer_digest, &error));
     legacy_files.files["0/0.pvt"] = legacy_layer;
+    legacy_files.files.erase("0/0.pvtdat");
+    legacy_files.files.erase("0/0.pvtstrings");
     legacy_files.files.erase("0/0.music_analysis.txt");
     std::vector<std::pair<std::string, std::string>> legacy_assets;
     for (auto iterator = legacy_files.files.begin();
@@ -3843,9 +3909,14 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         CHECK(legacy_files.files.emplace(std::move(asset)).second);
     }
     std::string& legacy_manifest = legacy_files.files["0/metadata.txt"];
-    CHECK(replace_once(legacy_manifest, "PVT_VERSION\t5\n",
+    CHECK(replace_once(legacy_manifest, "PVT_VERSION\t7\n",
                        "PVT_VERSION\t2\n"));
+    CHECK(erase_record(legacy_manifest, "storage.encoding"));
+    CHECK(erase_record(legacy_manifest, "project.semantic_sha256"));
     CHECK(erase_record(legacy_manifest, "music_analysis.sha256"));
+    CHECK(erase_record(legacy_manifest, "groups.count"));
+    CHECK(erase_record(legacy_manifest, "layers.0.alpha_mode"));
+    CHECK(erase_record(legacy_manifest, "layers.0.group_uuid"));
     CHECK(replace_record_value(legacy_manifest, "render_output.sha256",
                                legacy_output_digest));
     CHECK(replace_record_value(legacy_manifest, "layers.0.sha256",
@@ -3854,7 +3925,11 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(pvt::detail::write_bundle_file_set(as_utf8(legacy_zip), legacy_files,
                                              &error));
     pvt::ProjectDocument legacy_loaded;
-    CHECK(pvt::load_project_document(as_utf8(legacy_zip), legacy_loaded, &error));
+    if (!pvt::load_project_document(as_utf8(legacy_zip), legacy_loaded,
+                                    &error)) {
+        std::cerr << "legacy v2 load failed: " << error << '\n';
+        CHECK(false);
+    }
     CHECK(legacy_loaded.externally_modified);
     legacy_loaded.project.layers.front().name = "Readable asset upgrade";
     CHECK(pvt::save_project_document(legacy_loaded, as_utf8(legacy_zip),
@@ -3879,8 +3954,12 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     // bundles; it does not require rewriting unrelated immutable files.
     pvt::detail::BundleFileSet legacy_directory_files = zip_files;
     legacy_directory_files.files["0/render_output.txt"] = legacy_output;
+    legacy_directory_files.files.erase("0/render_output.pvtdat");
+    legacy_directory_files.files.erase("0/render_output.pvtstrings");
     legacy_directory_files.files.erase("0/music_analysis.txt");
     legacy_directory_files.files["0/0.pvt"] = legacy_layer;
+    legacy_directory_files.files.erase("0/0.pvtdat");
+    legacy_directory_files.files.erase("0/0.pvtstrings");
     legacy_directory_files.files.erase("0/0.music_analysis.txt");
     for (auto iterator = legacy_directory_files.files.begin();
          iterator != legacy_directory_files.files.end();) {
@@ -3895,9 +3974,14 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     }
     std::string& legacy_directory_manifest =
         legacy_directory_files.files["0/metadata.txt"];
-    CHECK(replace_once(legacy_directory_manifest, "PVT_VERSION\t5\n",
+    CHECK(replace_once(legacy_directory_manifest, "PVT_VERSION\t7\n",
                        "PVT_VERSION\t3\n"));
+    CHECK(erase_record(legacy_directory_manifest, "storage.encoding"));
+    CHECK(erase_record(legacy_directory_manifest, "project.semantic_sha256"));
     CHECK(erase_record(legacy_directory_manifest, "music_analysis.sha256"));
+    CHECK(erase_record(legacy_directory_manifest, "groups.count"));
+    CHECK(erase_record(legacy_directory_manifest, "layers.0.alpha_mode"));
+    CHECK(erase_record(legacy_directory_manifest, "layers.0.group_uuid"));
     CHECK(replace_record_value(legacy_directory_manifest,
                                "render_output.sha256",
                                legacy_output_digest));
@@ -3996,7 +4080,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     // music source is replaced with non-audio bytes.
     const fs::path corrupt_directory = directory / "corrupt-assets";
     filesystem_error.clear();
-    fs::copy(bundle, corrupt_directory, fs::copy_options::recursive,
+    fs::copy(bundle, corrupt_directory,
+             fs::copy_options::recursive | fs::copy_options::copy_symlinks,
              filesystem_error);
     CHECK(!filesystem_error);
     CHECK(write_bytes(corrupt_directory / "assets" / changed_attachment.sha256
@@ -4008,7 +4093,7 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     CHECK(write_bytes(corrupt_directory / "assets" / renamed_attachment.sha256
                           / renamed_attachment.basename,
                       "corrupt"));
-    pvt::ProjectDocument untouched = pvt::default_project_document();
+    pvt::ProjectDocument untouched = human_project_document();
     const std::string untouched_uuid = untouched.project.uuid;
     CHECK(!pvt::load_project_document(
         as_utf8(corrupt_directory), untouched, &error));
@@ -4042,6 +4127,123 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
         loaded, "oversized.asset", as_utf8(oversized), nullptr, &error));
 }
 
+void test_partial_revision_controls(const fs::path& directory) {
+    pvt::ProjectDocument document = pvt::default_project_document();
+    document.project.name = "Partial Revision Controls";
+    document.file_io.revision_history = pvt::RevisionHistoryMode::Partial;
+    document.file_io.partial_keep_count = 1U;
+    const fs::path bundle = directory
+        / pvt::detail::path_from_utf8(
+            portable_root(document.project.name));
+    std::string error;
+    pvt::BundleSaveReport report;
+
+    CHECK(pvt::save_project_document(
+        document, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 0U);
+    document.project.layers.front().name = "Saved layer";
+    document.dirty = true;
+    const bool updated_working_state = pvt::save_project_document(
+        document, as_utf8(bundle), &report, &error);
+    CHECK(updated_working_state);
+    CHECK(!report.created_version && !report.validated_only
+          && report.version == 0U);
+    CHECK(document.versions.size() == 1U);
+    CHECK(document.versions.front().number == 0U);
+    CHECK(fs::exists(bundle / "0"));
+    pvt::ProjectConfig saved_working_state;
+    CHECK(pvt::load_project_version(
+        document, 0U, saved_working_state, &error));
+    CHECK(saved_working_state.layers.front().name == "Saved layer");
+
+    CHECK(pvt::set_project_version_pinned(document, 0U, true, &error));
+    CHECK(document.file_io.pinned_versions
+          == std::vector<std::uint64_t>{0U});
+    CHECK(pvt::create_project_revision(document, &report, &error));
+    CHECK(report.created_version && report.version == 1U);
+    CHECK(document.versions.size() == 2U);
+    CHECK(fs::exists(bundle / "0"));
+    CHECK(fs::exists(bundle / "1"));
+
+    CHECK(!pvt::delete_project_version(
+        document, document.current_version, &report, &error));
+    CHECK(pvt::delete_project_version(document, 0U, &report, &error));
+    CHECK(document.versions.size() == 1U);
+    CHECK(document.versions.front().number == 1U);
+    CHECK(document.file_io.pinned_versions.empty());
+    CHECK(!fs::exists(bundle / "0"));
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    pvt::ProjectDocument reloaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), reloaded, &error));
+    CHECK(reloaded.file_io.revision_history
+          == pvt::RevisionHistoryMode::Partial);
+    CHECK(reloaded.file_io.partial_keep_count == 1U);
+    CHECK(reloaded.current_version == 1U);
+    CHECK(reloaded.versions.size() == 1U);
+
+    reloaded.file_io.revision_history = pvt::RevisionHistoryMode::Full;
+    CHECK(!pvt::save_project_document(
+        reloaded, as_utf8(bundle), &report, &error));
+    CHECK(error.find("cannot become full history") != std::string::npos);
+}
+
+void test_human_directory_revision_deltas(const fs::path& directory) {
+    pvt::ProjectDocument document = human_project_document();
+    document.project.name = "Human Revision Deltas";
+    document.file_io.human_version_deltas = true;
+    const fs::path bundle = directory
+        / pvt::detail::path_from_utf8(portable_root(document.project.name));
+    std::string error;
+    pvt::BundleSaveReport report;
+
+    CHECK(pvt::save_project_document(
+        document, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 0U);
+    const std::string first_layer_name =
+        document.project.layers.front().name;
+    document.project.layers.front().name = "Second saved layer name";
+    document.project.output.filename_prefix = "second_";
+    document.dirty = true;
+    CHECK(pvt::save_project_document(
+        document, as_utf8(bundle), &report, &error));
+    CHECK(report.created_version && report.version == 1U);
+
+    CHECK(!fs::exists(bundle / "0" / "render_output.txt"));
+    CHECK(fs::exists(bundle / "0" / "render_output.txt.pvtdiff"));
+    CHECK(!fs::exists(bundle / "0" / "0.pvt"));
+    CHECK(fs::exists(bundle / "0" / "0.pvt.pvtdiff"));
+    CHECK(fs::exists(bundle / "1" / "render_output.txt"));
+    CHECK(fs::exists(bundle / "1" / "0.pvt"));
+    CHECK(!fs::exists(bundle / "1" / "0.pvt.pvtdiff"));
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+
+    pvt::ProjectConfig first;
+    CHECK(pvt::load_project_version(document, 0U, first, &error));
+    CHECK(first.layers.front().name == first_layer_name);
+    CHECK(first.output.filename_prefix != "second_");
+    pvt::ProjectConfig second;
+    CHECK(pvt::load_project_version(document, 1U, second, &error));
+    CHECK(second.layers.front().name == "Second saved layer name");
+    CHECK(second.output.filename_prefix == "second_");
+
+    pvt::ProjectDocument loaded;
+    CHECK(pvt::load_project_document(as_utf8(bundle), loaded, &error));
+    CHECK(loaded.current_version == 1U);
+    CHECK(loaded.project.layers.front().name == "Second saved layer name");
+    loaded.file_io.human_version_deltas = false;
+    CHECK(pvt::save_project_document(
+        loaded, as_utf8(bundle), &report, &error));
+    CHECK(report.validated_only && report.compacted_storage);
+    CHECK(fs::exists(bundle / "0" / "render_output.txt"));
+    CHECK(!fs::exists(bundle / "0" / "render_output.txt.pvtdiff"));
+    CHECK(fs::exists(bundle / "0" / "0.pvt"));
+    CHECK(!fs::exists(bundle / "0" / "0.pvt.pvtdiff"));
+    CHECK(pvt::validate_project_bundle(as_utf8(bundle), nullptr, &error));
+    CHECK(pvt::load_project_version(loaded, 0U, first, &error));
+    CHECK(first.layers.front().name == first_layer_name);
+}
+
 } // namespace
 
 int main() {
@@ -4063,6 +4265,8 @@ int main() {
     test_complete_history_accounting(temporary.path());
     test_corrupt_history_and_root_metadata(temporary.path());
     test_content_addressed_embedded_assets(temporary.path());
+    test_partial_revision_controls(temporary.path());
+    test_human_directory_revision_deltas(temporary.path());
     if (failures != 0) {
         std::cerr << failures << " bundle test(s) failed.\n";
         return 1;

@@ -1,4 +1,5 @@
 #include "video_export_dialog.h"
+#include "flexible_spin_box.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -136,7 +137,7 @@ VideoExportDialog::VideoExportDialog(
     chunk_frames_->setSuffix(tr(" frames"));
     form->addRow(tr("Frames per chunk"), chunk_frames_);
 
-    chunk_seconds_ = new QDoubleSpinBox(this);
+    chunk_seconds_ = new FlexibleDoubleSpinBox(this);
     chunk_seconds_->setObjectName(QStringLiteral("videoChunkSeconds"));
     chunk_seconds_->setDecimals(3);
     chunk_seconds_->setRange(0.001,

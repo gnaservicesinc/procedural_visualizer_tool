@@ -1,4 +1,5 @@
 #include "audio_processing_dialog.h"
+#include "flexible_spin_box.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -106,7 +107,7 @@ AudioProcessingDialog::AudioProcessingDialog(
     auto* filter_form = new QFormLayout(filters);
     high_pass_enabled_ = new QCheckBox(tr("Enable high-pass"));
     high_pass_enabled_->setChecked(initial.high_pass_enabled);
-    high_pass_hz_ = new QDoubleSpinBox;
+    high_pass_hz_ = new FlexibleDoubleSpinBox;
     high_pass_hz_->setRange(0.001, 192000.0);
     high_pass_hz_->setDecimals(3);
     high_pass_hz_->setSingleStep(1.0);
@@ -117,7 +118,7 @@ AudioProcessingDialog::AudioProcessingDialog(
         "remove rumble or DC-like movement; 20 Hz is gentle full-range protection."));
     low_pass_enabled_ = new QCheckBox(tr("Enable low-pass"));
     low_pass_enabled_->setChecked(initial.low_pass_enabled);
-    low_pass_hz_ = new QDoubleSpinBox;
+    low_pass_hz_ = new FlexibleDoubleSpinBox;
     low_pass_hz_->setRange(0.001, 192000.0);
     low_pass_hz_->setDecimals(3);
     low_pass_hz_->setSingleStep(10.0);
@@ -178,7 +179,7 @@ AudioProcessingDialog::AudioProcessingDialog(
         auto* column = new QWidget;
         auto* column_layout = new QVBoxLayout(column);
         column_layout->setContentsMargins(2, 0, 2, 0);
-        auto* value = new QDoubleSpinBox;
+        auto* value = new FlexibleDoubleSpinBox;
         value->setRange(-24.0, 24.0);
         value->setDecimals(1);
         value->setSingleStep(0.1);

@@ -311,6 +311,19 @@ bool prompt_bool(const std::string& label, bool& value) {
     }
 }
 
+template <typename Setter>
+bool prompt_packed_bool(const std::string& label, bool value, Setter&& setter) {
+    if (!prompt_bool(label, value)) return false;
+    setter(value);
+    return true;
+}
+
+#define prompt_bool(label, destination)                                      \
+    prompt_packed_bool((label), static_cast<bool>(destination),              \
+                       [&](bool pvt_flag_value) {                            \
+                           (destination) = pvt_flag_value;                   \
+                       })
+
 bool prompt_text(const std::string& label, std::string& value, std::size_t maximum) {
     for (;;) {
         std::string input;
@@ -2082,8 +2095,8 @@ void configure_canvas(RenderConfig& config) {
     std::cout << "\n-- Canvas and timing --\n";
     prompt_int("Width", config.width, 16, (std::numeric_limits<int>::max)());
     prompt_int("Height", config.height, 16, (std::numeric_limits<int>::max)());
-    prompt_int("Block size", config.block_size, 1,
-               (std::numeric_limits<int>::max)());
+    prompt_real("Block size (0 = blackout)", config.block_size, 0.0,
+                static_cast<double>((std::numeric_limits<int>::max)()));
     prompt_real("Playback FPS", config.fps, 1.0, 240.0);
     prompt_int("Frames per loop", config.total_frames, 2,
                (std::numeric_limits<int>::max)());
@@ -3392,7 +3405,7 @@ void print_help(const char* program) {
         << "  --waves N --bit-depth 8|16|32 --png-compression 0..9\n"
         << "  --workers 0.." << pvt::kMaximumSequenceWorkers
         << "  (0 auto, 1 sequential)\n"
-        << "  --backend cpu|cpu+gpu|gpu          Rendering policy (default cpu+gpu)\n"
+        << "  --backend cpu+gpu|gpu|cpu          Rendering policy (default cpu+gpu; CPU-only has no performance/GPU-shader support guarantee)\n"
         << "  --renderer-info                    Show runtime devices and backend status; use alone\n"
         << "  --gpu-in-flight 0.." << pvt::kMaximumGpuFramesInFlight
         << "  (0 uses host-adaptive, device-memory-bounded admission)\n"
@@ -3514,13 +3527,13 @@ bool parse_starting_image_fit(const std::string& text,
 bool parse_render_backend(const std::string& text,
                           pvt::RenderBackend& backend) {
     const std::string value = lower_ascii(text);
-    if (value == "cpu") {
-        backend = pvt::RenderBackend::Cpu;
-    } else if (value == "cpu+gpu" || value == "cpu-gpu"
+    if (value == "cpu+gpu" || value == "cpu-gpu"
                || value == "hybrid" || value == "auto") {
         backend = pvt::RenderBackend::CpuAndGpu;
     } else if (value == "gpu" || value == "metal") {
         backend = pvt::RenderBackend::Gpu;
+    } else if (value == "cpu" || value == "cpu-only") {
+        backend = pvt::RenderBackend::Cpu;
     } else {
         return false;
     }
@@ -3709,14 +3722,20 @@ int main(int argc, char** argv) {
         return interactive_menu(state) ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
-    const auto mark_changed = [&](auto& destination, const auto& next) {
-        if (destination == next) {
+    const auto mark_changed_value = [&](auto current, const auto& next,
+                                        auto&& setter) {
+        if (current == next) {
             return false;
         }
-        destination = next;
+        setter(next);
         state.document.dirty = true;
         return true;
     };
+#define mark_changed(destination, next)                                      \
+    mark_changed_value((destination), (next),                               \
+                       [&](const auto& pvt_next_value) {                     \
+                           (destination) = pvt_next_value;                   \
+                       })
     const auto mutate_active = [&](auto&& mutation) {
         RenderConfig config = active_render_config(state);
         const bool changed = mutation(config);
@@ -4007,10 +4026,13 @@ int main(int argc, char** argv) {
                 return true;
             });
         } else if (option == "--block-size"
-                   && parse_integer(value, 1, (std::numeric_limits<int>::max)(), integer)) {
+                   && parse_real(value, 0.0,
+                                 static_cast<double>(
+                                     (std::numeric_limits<int>::max)()),
+                                 real)) {
             mutate_active([&](RenderConfig& config) {
-                if (config.block_size == integer) return false;
-                config.block_size = static_cast<int>(integer);
+                if (config.block_size == real) return false;
+                config.block_size = real;
                 return true;
             });
         } else if (option == "--frames"
@@ -4170,7 +4192,7 @@ int main(int argc, char** argv) {
         } else if (option == "--backend") {
             pvt::RenderBackend backend;
             if (!parse_render_backend(value, backend)) {
-                std::cerr << "Rendering backend must be cpu, cpu+gpu, or gpu.\n";
+                std::cerr << "Rendering backend must be cpu+gpu, gpu, or cpu.\n";
                 return EXIT_FAILURE;
             }
             render_options.frame.backend = backend;

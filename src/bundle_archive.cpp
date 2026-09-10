@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -469,6 +470,9 @@ std::size_t entry_size_limit(std::string_view path) {
 bool validate_file_set(const BundleFileSet& files, std::string* error) {
     const std::size_t bundle_byte_limit =
         resolved_resource_limits().maximum_project_bundle_expanded_bytes;
+    if (files.zip_compression_level < 0 || files.zip_compression_level > 9) {
+        return fail(error, "ZIP compression level must be between 0 and 9.");
+    }
     if (files.root_name.empty() || files.root_name.find('/') != std::string::npos
         || !safe_archive_path(files.root_name)) {
         return fail(error, "Bundle root name is invalid.");
@@ -652,6 +656,40 @@ bool write_atomic_file(const fs::path& destination,
     return true;
 }
 
+bool write_atomic_current_symlink(const fs::path& destination,
+                                  std::uint64_t version,
+                                  std::string* error) {
+    const fs::path directory = destination.parent_path().empty()
+        ? fs::path(".") : destination.parent_path();
+    const fs::path temporary =
+        directory / (".pvt-current-" + unique_suffix() + ".tmp");
+    std::error_code filesystem_error;
+    fs::create_directory_symlink(
+        path_from_utf8(std::to_string(version)), temporary, filesystem_error);
+    if (filesystem_error) {
+        return fail(error, "Could not create the relative current symlink.");
+    }
+#if defined(_WIN32)
+    if (!MoveFileExW(temporary.c_str(), destination.c_str(),
+                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD code = GetLastError();
+        fs::remove(temporary, filesystem_error);
+        return fail(error,
+                    "Could not atomically install the current symlink (Windows error "
+                        + std::to_string(code) + ").");
+    }
+#else
+    if (::rename(temporary.string().c_str(), destination.string().c_str()) != 0) {
+        const int code = errno;
+        fs::remove(temporary, filesystem_error);
+        return fail(error, "Could not atomically install the current symlink: "
+                               + std::generic_category().message(code) + ".");
+    }
+#endif
+    (void)flush_path(directory);
+    return true;
+}
+
 bool write_new_directory_tree(const fs::path& destination,
                               const BundleFileSet& files,
                               std::string* error) {
@@ -670,6 +708,18 @@ bool write_new_directory_tree(const fs::path& destination,
         if (filesystem_error) {
             success = false;
             break;
+        }
+        if (entry.first == "current"
+            && files.current_as_relative_symlink) {
+            fs::create_directory_symlink(
+                path_from_utf8(
+                    std::to_string(files.current_symlink_version)),
+                target, filesystem_error);
+            if (filesystem_error) {
+                success = false;
+                break;
+            }
+            continue;
         }
         std::ofstream output(target, std::ios::binary | std::ios::trunc);
         output.write(entry.second.data(),
@@ -714,7 +764,10 @@ bool supported_transactional_update(std::string_view path) {
     const std::size_t slash = path.find('/');
     if (slash == std::string_view::npos) return false;
     const std::string_view filename = path.substr(slash + 1U);
-    if (filename == "render_output.txt" || filename == "music_analysis.txt") {
+    if (filename == "metadata.txt" || filename == "render_output.txt"
+        || filename == "render_output.pvtdat"
+        || filename == "render_output.pvtstrings"
+        || filename == "music_analysis.txt") {
         return true;
     }
     const auto numeric_stem = [](std::string_view value) {
@@ -724,12 +777,27 @@ bool supported_transactional_update(std::string_view path) {
                   });
     };
     constexpr std::string_view layer_suffix = ".pvt";
+    constexpr std::string_view layer_data_suffix = ".pvtdat";
+    constexpr std::string_view layer_strings_suffix = ".pvtstrings";
+    constexpr std::string_view text_delta_suffix = ".pvtdiff";
     constexpr std::string_view analysis_suffix = ".music_analysis.txt";
-    if (filename.size() > layer_suffix.size()
-        && filename.substr(filename.size() - layer_suffix.size())
-               == layer_suffix) {
-        return numeric_stem(
-            filename.substr(0U, filename.size() - layer_suffix.size()));
+    for (const std::string_view suffix :
+         {layer_suffix, layer_data_suffix, layer_strings_suffix,
+          text_delta_suffix}) {
+        if (filename.size() > suffix.size()
+            && filename.substr(filename.size() - suffix.size()) == suffix) {
+            const std::string_view stem = filename.substr(
+                0U, filename.size() - suffix.size());
+            if (suffix == text_delta_suffix) {
+                return stem == "render_output.txt"
+                    || (stem.size() > layer_suffix.size()
+                        && stem.substr(stem.size() - layer_suffix.size())
+                               == layer_suffix
+                        && numeric_stem(stem.substr(
+                            0U, stem.size() - layer_suffix.size())));
+            }
+            return numeric_stem(stem);
+        }
     }
     return filename.size() > analysis_suffix.size()
            && filename.substr(filename.size() - analysis_suffix.size())
@@ -757,10 +825,10 @@ bool update_existing_directory(const fs::path& destination,
         }
     }
     for (const std::string& path : desired.transactional_removals) {
-        if (!asset_entry_path(path)
+        if ((!asset_entry_path(path) && !supported_transactional_update(path))
             || desired.files.find(path) != desired.files.end()) {
             return fail(error,
-                        "Bundle save requested an invalid redundant-asset removal.");
+                        "Bundle save requested an invalid transactional removal.");
         }
     }
     for (const auto& entry : desired.files) {
@@ -916,15 +984,53 @@ bool update_existing_directory(const fs::path& destination,
         if (found == desired.files.end()) {
             return fail(error, "Bundle save is missing required root metadata.");
         }
-        if (!write_atomic_file(destination / path_from_utf8(found->first),
-                               found->second, error)) {
+        const bool written = root_file == "current"
+                                 && desired.current_as_relative_symlink
+            ? write_atomic_current_symlink(
+                  destination / path_from_utf8(found->first),
+                  desired.current_symlink_version, error)
+            : write_atomic_file(destination / path_from_utf8(found->first),
+                                found->second, error);
+        if (!written) {
             return false;
         }
     }
 
-    // Remove only assets that the project layer explicitly proved redundant
-    // by content identity. Root controls are already durable, so a crash can
-    // at worst leave an extra harmless copy rather than a missing dependency.
+    // Revision retirement is deliberately last. Root controls now point only
+    // at retained history, so a crash can leave an extra old directory but
+    // cannot leave `current` targeting a directory that was already removed.
+    for (const std::uint64_t version : desired.retired_versions) {
+        if (version == desired.current_symlink_version) {
+            return fail(error, "Revision policy attempted to retire current.");
+        }
+        const std::string prefix = std::to_string(version) + "/";
+        if (desired.files.lower_bound(prefix) != desired.files.end()
+            && desired.files.lower_bound(prefix)->first.compare(
+                   0U, prefix.size(), prefix) == 0) {
+            return fail(error,
+                        "Revision policy retained files for a retired version.");
+        }
+        const fs::path target = destination / path_from_utf8(
+            std::to_string(version));
+        std::error_code filesystem_error;
+        const fs::file_status status = fs::symlink_status(
+            target, filesystem_error);
+        if (filesystem_error || !fs::is_directory(status)
+            || fs::is_symlink(status) || path_is_reparse_point(target)) {
+            return fail(error,
+                        "Retired revision changed type before cleanup.");
+        }
+        fs::remove_all(target, filesystem_error);
+        if (filesystem_error) {
+            return fail(error, "Could not retire an old revision directory.");
+        }
+    }
+    if (!desired.retired_versions.empty()) (void)flush_path(destination);
+
+    // Remove only assets proved redundant by content identity or obsolete
+    // files from a deliberately mutable partial-history working snapshot.
+    // Root controls are already durable, so a crash can at worst leave an
+    // extra unreferenced file rather than a missing dependency.
     for (const std::string& relative : desired.transactional_removals) {
         const fs::path target = destination / path_from_utf8(relative);
         std::error_code filesystem_error;
@@ -932,18 +1038,20 @@ bool update_existing_directory(const fs::path& destination,
         if (filesystem_error || !fs::is_regular_file(status)
             || fs::is_symlink(status) || path_is_reparse_point(target)) {
             return fail(error,
-                        "Redundant bundle asset changed type before cleanup.");
+                        "Transactional bundle removal changed type before cleanup.");
         }
         if (!fs::remove(target, filesystem_error) || filesystem_error) {
-            return fail(error, "Could not remove a redundant bundle asset.");
+            return fail(error, "Could not remove a transactional bundle file.");
         }
-        const fs::path identity_directory = target.parent_path();
-        (void)flush_path(identity_directory);
-        filesystem_error.clear();
-        (void)fs::remove(identity_directory, filesystem_error);
+        const fs::path parent = target.parent_path();
+        (void)flush_path(parent);
+        if (asset_entry_path(relative)) {
+            filesystem_error.clear();
+            (void)fs::remove(parent, filesystem_error);
+        }
     }
     if (!desired.transactional_removals.empty()) {
-        (void)flush_path(destination / "assets");
+        (void)flush_path(destination);
     }
     return true;
 }
@@ -1150,7 +1258,8 @@ bool write_zip(const fs::path& destination,
     writer.open = true;
     ZipReaderGuard source;
     bool source_open = false;
-    if (reusable != nullptr && reusable->root_name == files.root_name
+    if (!files.force_zip_recompression
+        && reusable != nullptr && reusable->root_name == files.root_name
         && source.handle != nullptr) {
         if (mz_zip_reader_open_file(source.handle,
                                     path_to_utf8(destination).c_str()) != MZ_OK) {
@@ -1164,7 +1273,9 @@ bool write_zip(const fs::path& destination,
         source_open = true;
     }
     mz_zip_writer_set_compress_method(writer.handle, MZ_COMPRESS_METHOD_DEFLATE);
-    mz_zip_writer_set_compress_level(writer.handle, MZ_COMPRESS_LEVEL_DEFAULT);
+    mz_zip_writer_set_compress_level(
+        writer.handle,
+        static_cast<std::int16_t>(files.zip_compression_level));
     for (const auto& entry : files.files) {
         const std::string archive_path = files.root_name + "/" + entry.first;
         bool copied = false;
@@ -1373,9 +1484,52 @@ bool read_bundle_file_set(const std::string& path,
         const fs::recursive_directory_iterator end;
         while (!status_error && iterator != end) {
             const fs::path entry_path = iterator->path();
+            const fs::path relative_native = entry_path.lexically_relative(native);
+            const std::string relative = path_to_generic_utf8(relative_native);
+            if (!safe_archive_path(relative)) {
+                return fail(error, "Unpacked bundle contains an unsafe entry path.");
+            }
             const fs::file_status entry_status = fs::symlink_status(entry_path, status_error);
-            if (status_error || fs::is_symlink(entry_status)
-                || path_is_reparse_point(entry_path)) {
+            if (status_error) {
+                return fail(error, "Unpacked bundle contains an unreadable entry.");
+            }
+            if (fs::is_symlink(entry_status)) {
+                if (relative != "current" || candidate.current_as_relative_symlink) {
+                    return fail(error,
+                                "Unpacked bundle contains an unsupported symbolic link.");
+                }
+                std::error_code link_error;
+                const fs::path target = fs::read_symlink(entry_path, link_error);
+                const std::string target_text = path_to_generic_utf8(target);
+                const bool canonical_number = !target_text.empty()
+                    && target.parent_path().empty()
+                    && (target_text == "0" || target_text.front() != '0')
+                    && std::all_of(
+                        target_text.begin(), target_text.end(), [](char value) {
+                            return value >= '0' && value <= '9';
+                        });
+                std::uint64_t target_number = 0U;
+                const auto parsed = std::from_chars(
+                    target_text.data(), target_text.data() + target_text.size(),
+                    target_number, 10);
+                const fs::file_status target_status = fs::symlink_status(
+                    native / target, link_error);
+                if (link_error || !canonical_number
+                    || parsed.ec != std::errc{}
+                    || parsed.ptr != target_text.data() + target_text.size()
+                    || !fs::is_directory(target_status)
+                    || fs::is_symlink(target_status)
+                    || !folded_paths.insert("current").second
+                    || ++entries > kMaximumBundleEntries) {
+                    return fail(error,
+                                "Human-readable current link is not a safe relative version link.");
+                }
+                candidate.current_as_relative_symlink = true;
+                candidate.current_symlink_version = target_number;
+                ++iterator;
+                continue;
+            }
+            if (path_is_reparse_point(entry_path)) {
                 return fail(error, "Unpacked bundle contains a symbolic link or unreadable entry.");
             }
             if (fs::is_directory(entry_status)) {
@@ -1384,14 +1538,6 @@ bool read_bundle_file_set(const std::string& path,
             }
             if (!fs::is_regular_file(entry_status) || ++entries > kMaximumBundleEntries) {
                 return fail(error, "Unpacked bundle contains a special file or too many entries.");
-            }
-            const fs::path relative_native = fs::relative(entry_path, native, status_error);
-            if (status_error) {
-                return fail(error, "Could not resolve unpacked bundle entry path.");
-            }
-            const std::string relative = path_to_generic_utf8(relative_native);
-            if (!safe_archive_path(relative)) {
-                return fail(error, "Unpacked bundle contains an unsafe entry path.");
             }
             // Finder creates this out-of-band metadata file merely by browsing
             // a directory. It is not project state and must not make an
@@ -1426,6 +1572,27 @@ bool read_bundle_file_set(const std::string& path,
         }
         if (status_error || candidate.files.empty()) {
             return fail(error, "Could not enumerate unpacked bundle or it is empty.");
+        }
+        if (candidate.current_as_relative_symlink) {
+            const std::string version =
+                std::to_string(candidate.current_symlink_version);
+            const auto metadata = candidate.files.find(
+                version + "/metadata.txt");
+            std::string metadata_digest;
+            if (metadata == candidate.files.end()
+                || !sha256_hex(metadata->second, metadata_digest, error)) {
+                return fail(error,
+                            "Human-readable current link targets a version without metadata.");
+            }
+            std::string current = "PVT_CURRENT\t1\nversion\t" + version
+                + "\nmetadata.sha256\t" + metadata_digest + "\n";
+            if (current.size() > bundle_byte_limit
+                || total_bytes > bundle_byte_limit - current.size()) {
+                return fail(error,
+                            "Unpacked bundle exceeds the configured expanded-size limit.");
+            }
+            total_bytes += current.size();
+            candidate.files.emplace("current", std::move(current));
         }
         destination = std::move(candidate);
         return true;

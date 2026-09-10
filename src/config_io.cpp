@@ -11,6 +11,7 @@
 #include <clocale>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -96,7 +97,9 @@ namespace {
 // Version 24 adds LFO rest/skip timing, Square/Sawtooth waveforms, and
 // additional clock interpolation curves. Version 25 assigns stable IDs to
 // LFOs so their numeric settings can themselves be LFO destinations.
-// Version 26 adds the stackable Kaleidoscope effect.
+// Version 26 adds the stackable Kaleidoscope effect. Version 27 stores
+// project-wide fractional block sizing, synchronized floor/ceil grids, seam
+// policy, and the block-size LFO.
 
 constexpr std::size_t kMaximumLineBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumKeyBytes = kMaximumUiItems;
@@ -108,8 +111,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 26U,
-              "config_io.cpp implements setup format version 26");
+static_assert(kSetupFormatVersion == 27U,
+              "config_io.cpp implements setup format version 27");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -1373,6 +1376,7 @@ bool enum_token(Enum value,
 
 class SetupBuilder {
 public:
+    static constexpr bool kReading = false;
     explicit SetupBuilder(std::string* error)
         : error_(error),
           contents_("PVT_SETUP\t" + std::to_string(kSetupFormatVersion) + "\n") {}
@@ -1413,6 +1417,12 @@ public:
         return add(key, std::string_view(buffer.data(), static_cast<std::size_t>(result.ptr - buffer.data())));
     }
 
+    template <typename Collection>
+    bool add_collection(std::string_view key, Collection& values,
+                        std::size_t) {
+        return add_integer(key, values.size());
+    }
+
     bool add_double(std::string_view key, double value) {
         if (!std::isfinite(value)) {
             ok_ = fail(error_, record_error("Cannot serialize non-finite setup value at key", key));
@@ -1430,6 +1440,11 @@ public:
 
     bool add_bool(std::string_view key, bool value) {
         return add(key, value ? "1" : "0");
+    }
+
+    bool add_flag_bank(std::string_view, std::uint32_t, std::uint32_t,
+                       unsigned) {
+        return true;
     }
 
     bool add_string(std::string_view key, const std::string& value) {
@@ -1462,14 +1477,111 @@ private:
     bool ok_ = true;
 };
 
-void add_path_binding_records(SetupBuilder& builder,
+class RawSetupBuilder {
+public:
+    static constexpr bool kReading = false;
+    explicit RawSetupBuilder(std::string* error) : error_(error) {}
+
+    template <typename Integer>
+    bool add_integer(std::string_view, Integer value) {
+        static_assert(std::is_integral_v<Integer>
+                      && !std::is_same_v<Integer, bool>);
+        return append_native(value);
+    }
+
+    template <typename Collection>
+    bool add_collection(std::string_view key, Collection& values,
+                        std::size_t maximum) {
+        if (values.size() > maximum
+            || values.size() > (std::numeric_limits<std::uint32_t>::max)()) {
+            return set_failure("Raw configuration collection count is invalid.");
+        }
+        return add_integer(key, static_cast<std::uint32_t>(values.size()));
+    }
+
+    template <typename Real>
+    bool add_double(std::string_view, Real value) {
+        static_assert(std::is_floating_point_v<Real>);
+        return std::isfinite(value) && append_native(value);
+    }
+
+    bool add_flag_bank(std::string_view, std::uint32_t flags,
+                       std::uint32_t known_flags, unsigned member_count) {
+        if ((flags & ~known_flags) != 0U || member_count == 0U) {
+            return set_failure("Raw configuration contains invalid flag bits.");
+        }
+        return append_native(flags);
+    }
+
+    // Named Boolean fields are views into the preceding uint32_t. The raw
+    // snapshot has already written that integer, so there is nothing to do.
+    bool add_bool(std::string_view, bool) { return true; }
+
+    bool add_string(std::string_view, const std::string& value) {
+        if (value.find_first_of("\r\n") != std::string::npos) {
+            return set_failure(
+                "Binary project strings cannot contain line breaks.");
+        }
+        if (value.size() >= kMaximumSetupBytes - strings_.size()) {
+            return set_failure(
+                "Raw configuration strings exceed the signed-int limit.");
+        }
+        // Strings deliberately live outside .pvtdat. They are already bytes
+        // in memory, so store those bytes unchanged in the same frozen order.
+        strings_.append(value);
+        strings_.push_back('\n');
+        return true;
+    }
+
+    template <typename Enum, std::size_t Count>
+    bool add_enum(std::string_view,
+                  Enum value,
+                  const std::array<std::pair<std::string_view, Enum>, Count>&) {
+        static_assert(std::is_enum_v<Enum>);
+        return append_native(value);
+    }
+
+    bool ok() const { return ok_; }
+    const std::string& numeric_contents() const { return contents_; }
+    const std::string& string_contents() const { return strings_; }
+
+private:
+    template <typename Value>
+    bool append_native(const Value& value) {
+        static_assert(std::is_trivially_copyable_v<Value>);
+        if (!ok_) return false;
+        if (sizeof(Value) > kMaximumSetupBytes - contents_.size()) {
+            return set_failure("Raw configuration exceeds the signed-int limit.");
+        }
+        contents_.append(reinterpret_cast<const char*>(&value), sizeof(Value));
+        return true;
+    }
+
+    bool set_failure(const char* message) {
+        ok_ = fail(error_, message);
+        return false;
+    }
+
+    std::string* error_ = nullptr;
+    std::string contents_;
+    std::string strings_;
+    bool ok_ = true;
+};
+
+template <typename Builder, typename Binding>
+void add_path_binding_records(Builder& builder,
                               std::string_view prefix,
-                              const PathBinding& binding) {
+                              Binding& binding) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
         result.append(suffix);
         return result;
     };
+    builder.add_flag_bank(
+        key("flags"), binding.flags,
+        PathBinding::EnabledFlag | PathBinding::SynchronizedFlag
+            | PathBinding::ReverseFlag | PathBinding::FollowTangentFlag,
+        4U);
     builder.add_bool(key("enabled"), binding.enabled);
     builder.add_integer(key("path_id"), binding.path_id);
     builder.add_bool(key("synchronized"), binding.synchronized);
@@ -1481,35 +1593,44 @@ void add_path_binding_records(SetupBuilder& builder,
     builder.add_bool(key("follow_tangent"), binding.follow_tangent);
 }
 
-void add_audio_input_records(SetupBuilder& builder, std::string_view prefix,
-                             const AudioInputProcessingConfig& processing) {
+template <typename Builder, typename Processing>
+void add_audio_input_records(Builder& builder, std::string_view prefix,
+                             Processing& processing) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
         result.append(suffix);
         return result;
     };
+    builder.add_flag_bank(
+        key("flags"), processing.flags,
+        AudioInputProcessingConfig::HighPassEnabledFlag
+            | AudioInputProcessingConfig::LowPassEnabledFlag
+            | AudioInputProcessingConfig::EqualizerEnabledFlag,
+        3U);
     builder.add_bool(key("high_pass_enabled"), processing.high_pass_enabled);
     builder.add_double(key("high_pass_hz"), processing.high_pass_hz);
     builder.add_bool(key("low_pass_enabled"), processing.low_pass_enabled);
     builder.add_double(key("low_pass_hz"), processing.low_pass_hz);
     builder.add_bool(key("equalizer_enabled"), processing.equalizer_enabled);
     const std::string equalizer = key("equalizer_bands");
-    builder.add_integer(equalizer + ".count",
-                        processing.equalizer_bands.size());
+    builder.add_collection(equalizer + ".count",
+                           processing.equalizer_bands,
+                           kMaximumAudioEqualizerBands);
     for (std::size_t index = 0U;
          index < processing.equalizer_bands.size(); ++index) {
-        const auto& band = processing.equalizer_bands[index];
+        auto& band = processing.equalizer_bands[index];
         builder.add_double(indexed_key(equalizer, index, "frequency_hz"),
                            band.frequency_hz);
         builder.add_double(indexed_key(equalizer, index, "gain_db"),
                            band.gain_db);
     }
     const std::string streams = key("frequency_streams");
-    builder.add_integer(streams + ".count",
-                        processing.frequency_streams.size());
+    builder.add_collection(streams + ".count",
+                           processing.frequency_streams,
+                           kMaximumAudioFrequencyStreams);
     for (std::size_t index = 0U;
          index < processing.frequency_streams.size(); ++index) {
-        const auto& stream = processing.frequency_streams[index];
+        auto& stream = processing.frequency_streams[index];
         builder.add_string(indexed_key(streams, index, "uuid"), stream.uuid);
         builder.add_string(indexed_key(streams, index, "name"), stream.name);
         builder.add_double(indexed_key(streams, index, "low_hz"),
@@ -1519,8 +1640,9 @@ void add_audio_input_records(SetupBuilder& builder, std::string_view prefix,
     }
 }
 
-void add_music_records(SetupBuilder& builder, std::string_view prefix,
-                       const MusicAnalysis& music) {
+template <typename Builder, typename Music>
+void add_music_records(Builder& builder, std::string_view prefix,
+                       Music& music) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
         result.append(suffix);
@@ -1538,15 +1660,17 @@ void add_music_records(SetupBuilder& builder, std::string_view prefix,
     builder.add_double(key("detected_bpm"), music.detected_bpm);
     builder.add_double(key("tempo_confidence"), music.tempo_confidence);
     const std::string beats = key("beat_times");
-    builder.add_integer(beats + ".count", music.beat_times_seconds.size());
+    builder.add_collection(beats + ".count", music.beat_times_seconds,
+                           kMaximumMusicBeats);
     for (std::size_t index = 0U; index < music.beat_times_seconds.size(); ++index) {
         builder.add_double(indexed_key(beats, index, "seconds"),
                            music.beat_times_seconds[index]);
     }
     const std::string tempos = key("tempo_points");
-    builder.add_integer(tempos + ".count", music.tempo_points.size());
+    builder.add_collection(tempos + ".count", music.tempo_points,
+                           kMaximumMusicTempoPoints);
     for (std::size_t index = 0U; index < music.tempo_points.size(); ++index) {
-        const MusicTempoPoint& point = music.tempo_points[index];
+        auto& point = music.tempo_points[index];
         builder.add_double(indexed_key(tempos, index, "time_seconds"),
                            point.time_seconds);
         builder.add_double(indexed_key(tempos, index, "bpm"), point.bpm);
@@ -1554,9 +1678,10 @@ void add_music_records(SetupBuilder& builder, std::string_view prefix,
                            point.confidence);
     }
     const std::string samples = key("feature_samples");
-    builder.add_integer(samples + ".count", music.feature_samples.size());
+    builder.add_collection(samples + ".count", music.feature_samples,
+                           kMaximumMusicFeatureSamples);
     for (std::size_t index = 0U; index < music.feature_samples.size(); ++index) {
-        const MusicFeatureSample& sample = music.feature_samples[index];
+        auto& sample = music.feature_samples[index];
         builder.add_double(indexed_key(samples, index, "energy"), sample.energy);
         builder.add_double(indexed_key(samples, index, "bass"), sample.bass);
         builder.add_double(indexed_key(samples, index, "midrange"), sample.midrange);
@@ -1573,10 +1698,11 @@ void add_music_records(SetupBuilder& builder, std::string_view prefix,
                            sample.chroma_strength);
     }
     const std::string streams = key("frequency_streams");
-    builder.add_integer(streams + ".count", music.frequency_streams.size());
+    builder.add_collection(streams + ".count", music.frequency_streams,
+                           kMaximumAudioFrequencyStreams);
     for (std::size_t stream_index = 0U;
          stream_index < music.frequency_streams.size(); ++stream_index) {
-        const auto& stream = music.frequency_streams[stream_index];
+        auto& stream = music.frequency_streams[stream_index];
         const std::string item = indexed_key(streams, stream_index, "analysis");
         builder.add_string(indexed_key(streams, stream_index, "uuid"),
                            stream.uuid);
@@ -1587,18 +1713,20 @@ void add_music_records(SetupBuilder& builder, std::string_view prefix,
         builder.add_double(item + ".detected_bpm", stream.detected_bpm);
         builder.add_double(item + ".tempo_confidence",
                            stream.tempo_confidence);
-        builder.add_integer(item + ".beat_times.count",
-                            stream.beat_times_seconds.size());
+        builder.add_collection(item + ".beat_times.count",
+                               stream.beat_times_seconds,
+                               kMaximumMusicBeats);
         for (std::size_t index = 0U;
              index < stream.beat_times_seconds.size(); ++index) {
             builder.add_double(indexed_key(item + ".beat_times", index,
                                            "seconds"),
                                stream.beat_times_seconds[index]);
         }
-        builder.add_integer(item + ".tempo_points.count",
-                            stream.tempo_points.size());
+        builder.add_collection(item + ".tempo_points.count",
+                               stream.tempo_points,
+                               kMaximumMusicTempoPoints);
         for (std::size_t index = 0U; index < stream.tempo_points.size(); ++index) {
-            const auto& point = stream.tempo_points[index];
+            auto& point = stream.tempo_points[index];
             builder.add_double(indexed_key(item + ".tempo_points", index,
                                            "time_seconds"),
                                point.time_seconds);
@@ -1607,11 +1735,12 @@ void add_music_records(SetupBuilder& builder, std::string_view prefix,
             builder.add_double(indexed_key(item + ".tempo_points", index,
                                            "confidence"), point.confidence);
         }
-        builder.add_integer(item + ".feature_samples.count",
-                            stream.feature_samples.size());
+        builder.add_collection(item + ".feature_samples.count",
+                               stream.feature_samples,
+                               kMaximumMusicFeatureSamples);
         for (std::size_t index = 0U;
              index < stream.feature_samples.size(); ++index) {
-            const auto& sample = stream.feature_samples[index];
+            auto& sample = stream.feature_samples[index];
             const std::string sample_key = indexed_key(
                 item + ".feature_samples", index, "sample");
             builder.add_double(sample_key + ".energy", sample.energy);
@@ -1633,14 +1762,18 @@ void add_music_records(SetupBuilder& builder, std::string_view prefix,
                             music.input_processing);
 }
 
-void add_clock_records(SetupBuilder& builder, std::string_view prefix,
+template <typename Builder, typename Clock>
+void add_clock_records(Builder& builder, std::string_view prefix,
                        std::string_view music_prefix,
-                       const ClockConfig& clock) {
+                       Clock& clock) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
         result.append(suffix);
         return result;
     };
+    builder.add_flag_bank(key("flags"), clock.flags,
+                          ClockConfig::ReverseFlag | ClockConfig::DataOnlyFlag,
+                          2U);
     builder.add_enum(key("mode"), clock.mode, kClockModes);
     builder.add_enum(key("interpolation"), clock.interpolation,
                      kClockInterpolations);
@@ -1668,14 +1801,23 @@ void add_clock_records(SetupBuilder& builder, std::string_view prefix,
     add_music_records(builder, music_prefix, clock.music);
 }
 
-void add_audio_reactive_records(SetupBuilder& builder,
+template <typename Builder, typename Audio>
+void add_audio_reactive_records(Builder& builder,
                                 std::string_view prefix,
-                                const AudioReactiveConfig& audio) {
+                                Audio& audio) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
         result.append(suffix);
         return result;
     };
+    builder.add_flag_bank(
+        key("flags"), audio.flags,
+        AudioReactiveConfig::EnabledFlag
+            | AudioReactiveConfig::SynchronizedOnlyFlag
+            | AudioReactiveConfig::WavesEnabledFlag
+            | AudioReactiveConfig::EffectsEnabledFlag
+            | AudioReactiveConfig::ColorEnabledFlag,
+        5U);
     builder.add_bool(key("enabled"), audio.enabled);
     builder.add_bool(key("synchronized_only"), audio.synchronized_only);
     builder.add_bool(key("waves_enabled"), audio.waves_enabled);
@@ -1692,11 +1834,15 @@ void add_audio_reactive_records(SetupBuilder& builder,
                        audio.color_amount_degrees);
 }
 
-void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
+template <typename Builder, typename Live>
+void add_live_records(Builder& builder, Live& live) {
+    builder.add_flag_bank("live.flags", live.flags, LiveConfig::EnabledFlag,
+                          1U);
     builder.add_bool("live.enabled", live.enabled);
-    builder.add_integer("live.endpoints.count", live.endpoints.size());
+    builder.add_collection("live.endpoints.count", live.endpoints,
+                           kMaximumLiveEndpoints);
     for (std::size_t index = 0U; index < live.endpoints.size(); ++index) {
-        const LiveEndpointConfig& endpoint = live.endpoints[index];
+        auto& endpoint = live.endpoints[index];
         builder.add_string(indexed_key("live.endpoints", index, "uuid"),
                            endpoint.uuid);
         builder.add_string(indexed_key("live.endpoints", index, "name"),
@@ -1715,9 +1861,13 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
             endpoint.output_latency_microseconds);
     }
 
-    builder.add_integer("live.mappings.count", live.mappings.size());
+    builder.add_collection("live.mappings.count", live.mappings,
+                           kMaximumLiveMappings);
     for (std::size_t index = 0U; index < live.mappings.size(); ++index) {
-        const LiveControlMapping& mapping = live.mappings[index];
+        auto& mapping = live.mappings[index];
+        builder.add_flag_bank(
+            indexed_key("live.mappings", index, "flags"), mapping.flags,
+            LiveControlMapping::EnabledFlag, 1U);
         builder.add_bool(indexed_key("live.mappings", index, "enabled"),
                          mapping.enabled);
         builder.add_string(indexed_key("live.mappings", index, "name"),
@@ -1769,9 +1919,15 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
             mapping.smoothing_milliseconds);
     }
 
-    builder.add_integer("live.clock_inputs.count", live.clock_inputs.size());
+    builder.add_collection("live.clock_inputs.count", live.clock_inputs,
+                           kMaximumLiveClockInputs);
     for (std::size_t index = 0U; index < live.clock_inputs.size(); ++index) {
-        const LiveClockInputConfig& clock = live.clock_inputs[index];
+        auto& clock = live.clock_inputs[index];
+        builder.add_flag_bank(
+            indexed_key("live.clock_inputs", index, "flags"), clock.flags,
+            LiveClockInputConfig::EnabledFlag
+                | LiveClockInputConfig::FollowMidiTransportFlag,
+            2U);
         builder.add_bool(
             indexed_key("live.clock_inputs", index, "enabled"),
             clock.enabled);
@@ -1802,12 +1958,20 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
             clock.holdover_milliseconds);
     }
 
-    builder.add_integer("live.midi_clock_outputs.count",
-                        live.midi_clock_outputs.size());
+    builder.add_collection("live.midi_clock_outputs.count",
+                           live.midi_clock_outputs,
+                           kMaximumLiveClockOutputs);
     for (std::size_t index = 0U;
          index < live.midi_clock_outputs.size(); ++index) {
-        const LiveMidiClockOutputConfig& output =
+        auto& output =
             live.midi_clock_outputs[index];
+        builder.add_flag_bank(
+            indexed_key("live.midi_clock_outputs", index, "flags"),
+            output.flags,
+            LiveMidiClockOutputConfig::EnabledFlag
+                | LiveMidiClockOutputConfig::SendTransportFlag
+                | LiveMidiClockOutputConfig::SendSongPositionFlag,
+            3U);
         builder.add_bool(
             indexed_key("live.midi_clock_outputs", index, "enabled"),
             output.enabled);
@@ -1830,9 +1994,10 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
             output.send_song_position);
     }
 
-    builder.add_integer("live.scenes.count", live.scenes.size());
+    builder.add_collection("live.scenes.count", live.scenes,
+                           kMaximumLiveScenes);
     for (std::size_t index = 0U; index < live.scenes.size(); ++index) {
-        const LiveSceneConfig& scene = live.scenes[index];
+        auto& scene = live.scenes[index];
         builder.add_string(indexed_key("live.scenes", index, "uuid"),
                            scene.uuid);
         builder.add_string(indexed_key("live.scenes", index, "name"),
@@ -1842,10 +2007,11 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
             scene.transition_milliseconds);
         const std::string values =
             indexed_key("live.scenes", index, "values");
-        builder.add_integer(values + ".count", scene.values.size());
+        builder.add_collection(values + ".count", scene.values,
+                               kMaximumLiveSceneValues);
         for (std::size_t value_index = 0U;
              value_index < scene.values.size(); ++value_index) {
-            const LiveSceneValue& value = scene.values[value_index];
+            auto& value = scene.values[value_index];
             builder.add_string(indexed_key(values, value_index, "target_path"),
                                value.target_path);
             builder.add_enum(indexed_key(values, value_index, "type"),
@@ -1855,12 +2021,23 @@ void add_live_records(SetupBuilder& builder, const LiveConfig& live) {
         }
     }
     builder.add_string("live.startup_scene_uuid", live.startup_scene_uuid);
+    builder.add_flag_bank(
+        "live.output.flags", live.output.flags,
+        LiveOutputConfig::FullscreenFlag
+            | LiveOutputConfig::PreferSecondaryDisplayFlag
+            | LiveOutputConfig::HideCursorFlag,
+        3U);
     builder.add_bool("live.output.fullscreen", live.output.fullscreen);
     builder.add_bool("live.output.prefer_secondary_display",
                      live.output.prefer_secondary_display);
     builder.add_bool("live.output.hide_cursor", live.output.hide_cursor);
     builder.add_enum("live.safety.dropout_behavior",
                      live.safety.dropout_behavior, kLiveDropoutBehaviors);
+    builder.add_flag_bank(
+        "live.safety.flags", live.safety.flags,
+        LiveSafetyConfig::FrameTimeWatchdogEnabledFlag
+            | LiveSafetyConfig::PreventDeviceSleepFlag,
+        2U);
     builder.add_bool("live.safety.frame_time_watchdog_enabled",
                      live.safety.frame_time_watchdog_enabled);
     builder.add_integer("live.safety.watchdog_timeout_milliseconds",
@@ -1932,32 +2109,61 @@ bool validate_persistence_bounds(const RenderConfig& config,
     return true;
 }
 
-bool serialize_setup(const RenderConfig& config,
-                     std::string& serialized,
-                     std::string* error,
-                     bool enforce_particle_workload = true) {
-    const ValidationResult validation = enforce_particle_workload
-        ? validate(config)
-        : detail::validate_render_config_structure(config);
-    if (!validation.ok) {
-        return fail(error, "Cannot save invalid configuration: " + validation.message);
-    }
-    if (config.waves.size() > kMaximumWaves
-        || config.swings.size() > kMaximumSwings
-        || config.effects.size() > kMaximumEffects
-        || config.post_process.effects.size()
-               > kMaximumPostProcessEffects
-        || config.parameter_lfos.size() > kMaximumParameterLfos) {
-        return fail(error, "Cannot save configuration: a collection exceeds its public maximum.");
-    }
-    if (!validate_persistence_bounds(config, error)) {
-        return false;
+template <typename Builder, typename Config>
+bool serialize_setup_values(Config& config,
+                            Builder& builder,
+                            std::string* error,
+                            bool enforce_particle_workload = true) {
+    if constexpr (!Builder::kReading) {
+        const ValidationResult validation = enforce_particle_workload
+            ? validate(config)
+            : detail::validate_render_config_structure(config);
+        if (!validation.ok) {
+            return fail(error, "Cannot save invalid configuration: "
+                                   + validation.message);
+        }
+        if (config.waves.size() > kMaximumWaves
+            || config.swings.size() > kMaximumSwings
+            || config.effects.size() > kMaximumEffects
+            || config.post_process.effects.size()
+                   > kMaximumPostProcessEffects
+            || config.parameter_lfos.size() > kMaximumParameterLfos) {
+            return fail(error, "Cannot save configuration: a collection exceeds its public maximum.");
+        }
+        if (!validate_persistence_bounds(config, error)) {
+            return false;
+        }
     }
 
-    SetupBuilder builder(error);
     builder.add_integer("canvas.width", config.width);
     builder.add_integer("canvas.height", config.height);
-    builder.add_integer("canvas.block_size", config.block_size);
+    builder.add_double("canvas.block_size", config.block_size);
+    builder.add_flag_bank(
+        "canvas.block_size.flags", config.block_size_modulation.flags,
+        BlockSizeModulation::SynchronizedFlag
+            | BlockSizeModulation::AlphaGapsFlag
+            | BlockSizeModulation::LfoEnabledFlag,
+        3U);
+    builder.add_bool("canvas.block_size.synchronized",
+                     config.block_size_modulation.synchronized);
+    builder.add_bool("canvas.block_size.alpha_gaps",
+                     config.block_size_modulation.alpha_gaps);
+    builder.add_bool("canvas.block_size.lfo.enabled",
+                     config.block_size_modulation.lfo_enabled);
+    builder.add_string("canvas.block_size.lfo.name",
+                       config.block_size_modulation.lfo_name);
+    builder.add_enum("canvas.block_size.lfo.waveform",
+                     config.block_size_modulation.waveform, kWaveforms);
+    builder.add_double("canvas.block_size.lfo.minimum",
+                       config.block_size_modulation.minimum);
+    builder.add_double("canvas.block_size.lfo.maximum",
+                       config.block_size_modulation.maximum);
+    builder.add_integer("canvas.block_size.lfo.cycles_per_loop",
+                        config.block_size_modulation.cycles_per_loop);
+    builder.add_double("canvas.block_size.lfo.phase_degrees",
+                       config.block_size_modulation.phase_degrees);
+    builder.add_double("canvas.block_size.lfo.shape",
+                       config.block_size_modulation.shape);
     builder.add_integer("timing.total_frames", config.total_frames);
     builder.add_double("timing.fps", config.fps);
 
@@ -1982,6 +2188,9 @@ bool serialize_setup(const RenderConfig& config,
                         config.clock.beat_offset_microseconds);
     builder.add_double("timing.clock.phase_offset_degrees",
                        config.clock.phase_offset_degrees);
+    builder.add_flag_bank(
+        "timing.clock.flags", config.clock.flags,
+        ClockConfig::ReverseFlag | ClockConfig::DataOnlyFlag, 2U);
     builder.add_bool("timing.clock.reverse", config.clock.reverse);
     builder.add_bool("timing.clock.data_only", config.clock.data_only);
     builder.add_string("timing.clock.frequency_stream_uuid",
@@ -1992,17 +2201,19 @@ bool serialize_setup(const RenderConfig& config,
                                config.audio_reactive_defaults);
     add_live_records(builder, config.live);
 
-    builder.add_integer("paths.count", config.motion_paths.size());
+    builder.add_collection("paths.count", config.motion_paths,
+                           kMaximumMotionPaths);
     for (std::size_t path_index = 0U;
          path_index < config.motion_paths.size(); ++path_index) {
-        const CubicMotionPath& path = config.motion_paths[path_index];
+        auto& path = config.motion_paths[path_index];
         builder.add_integer(indexed_key("paths", path_index, "id"), path.id);
         builder.add_string(indexed_key("paths", path_index, "name"), path.name);
         const std::string nodes = indexed_key("paths", path_index, "nodes");
-        builder.add_integer(nodes + ".count", path.nodes.size());
+        builder.add_collection(nodes + ".count", path.nodes,
+                               kMaximumMotionPathNodes);
         for (std::size_t node_index = 0U;
              node_index < path.nodes.size(); ++node_index) {
-            const CubicPathNode& node = path.nodes[node_index];
+            auto& node = path.nodes[node_index];
             builder.add_integer(indexed_key(nodes, node_index, "id"), node.id);
             builder.add_double(indexed_key(nodes, node_index, "x"), node.x);
             builder.add_double(indexed_key(nodes, node_index, "y"), node.y);
@@ -2017,6 +2228,9 @@ bool serialize_setup(const RenderConfig& config,
 
     add_music_records(builder, "timing.music.", config.clock.music);
 
+    builder.add_flag_bank(
+        "layer_clock.flags", config.layer_clock.flags,
+        LayerClockConfig::EnabledFlag | LayerClockConfig::MixEnabledFlag, 2U);
     builder.add_bool("layer_clock.enabled", config.layer_clock.enabled);
     builder.add_enum("layer_clock.scale", config.layer_clock.scale,
                      kLayerClockScales);
@@ -2027,11 +2241,14 @@ bool serialize_setup(const RenderConfig& config,
     add_clock_records(builder, "layer_clock.clock.", "layer_clock.music.",
                       config.layer_clock.clock);
 
-    builder.add_integer("waves.count", config.waves.size());
+    builder.add_collection("waves.count", config.waves, kMaximumWaves);
     for (std::size_t index = 0; index < config.waves.size(); ++index) {
-        const WaveConfig& wave = config.waves[index];
+        auto& wave = config.waves[index];
         builder.add_integer(indexed_key("waves", index, "id"), wave.id);
         builder.add_string(indexed_key("waves", index, "name"), wave.name);
+        builder.add_flag_bank(
+            indexed_key("waves", index, "flags"), wave.flags,
+            WaveConfig::EnabledFlag | WaveConfig::SynchronizedFlag, 2U);
         builder.add_bool(indexed_key("waves", index, "enabled"), wave.enabled);
         builder.add_bool(indexed_key("waves", index, "synchronized"), wave.synchronized);
         builder.add_enum(indexed_key("waves", index, "audio_response"),
@@ -2047,11 +2264,13 @@ bool serialize_setup(const RenderConfig& config,
             builder, indexed_key("waves", index, "path") + ".", wave.path);
     }
 
-    builder.add_integer("swings.count", config.swings.size());
+    builder.add_collection("swings.count", config.swings, kMaximumSwings);
     for (std::size_t index = 0; index < config.swings.size(); ++index) {
-        const SwingConfig& swing = config.swings[index];
+        auto& swing = config.swings[index];
         builder.add_integer(indexed_key("swings", index, "id"), swing.id);
         builder.add_string(indexed_key("swings", index, "name"), swing.name);
+        builder.add_flag_bank(indexed_key("swings", index, "flags"),
+                              swing.flags, SwingConfig::EnabledFlag, 1U);
         builder.add_bool(indexed_key("swings", index, "enabled"), swing.enabled);
         builder.add_enum(indexed_key("swings", index, "waveform"), swing.waveform, kWaveforms);
         builder.add_double(indexed_key("swings", index, "amount"), swing.amount);
@@ -2063,13 +2282,16 @@ bool serialize_setup(const RenderConfig& config,
         builder.add_double(indexed_key("swings", index, "radius"), swing.radius);
     }
 
-    builder.add_integer("effects.count", config.effects.size());
+    builder.add_collection("effects.count", config.effects, kMaximumEffects);
     for (std::size_t index = 0; index < config.effects.size(); ++index) {
-        const EffectConfig& effect = config.effects[index];
+        auto& effect = config.effects[index];
         builder.add_integer(indexed_key("effects", index, "id"), effect.id);
         builder.add_string(indexed_key("effects", index, "name"), effect.name);
         builder.add_enum(indexed_key("effects", index, "type"), effect.type, kEffectTypes);
         builder.add_enum(indexed_key("effects", index, "space"), effect.space, kEffectSpaces);
+        builder.add_flag_bank(
+            indexed_key("effects", index, "flags"), effect.flags,
+            EffectConfig::EnabledFlag | EffectConfig::SynchronizedFlag, 2U);
         builder.add_bool(indexed_key("effects", index, "enabled"), effect.enabled);
         builder.add_bool(indexed_key("effects", index, "synchronized"), effect.synchronized);
         builder.add_enum(indexed_key("effects", index, "audio_response"),
@@ -2151,12 +2373,16 @@ bool serialize_setup(const RenderConfig& config,
         }
         used_lfo_ids.insert(lfo.id);
     }
-    builder.add_integer("parameter_lfos.count", persisted_lfos.size());
+    builder.add_collection("parameter_lfos.count", persisted_lfos,
+                           kMaximumParameterLfos);
     for (std::size_t index = 0U;
          index < persisted_lfos.size(); ++index) {
-        const ParameterLfo& lfo = persisted_lfos[index];
+        auto& lfo = persisted_lfos[index];
         builder.add_integer(indexed_key("parameter_lfos", index, "id"),
                             lfo.id);
+        builder.add_flag_bank(
+            indexed_key("parameter_lfos", index, "flags"), lfo.flags,
+            ParameterLfo::EnabledFlag, 1U);
         builder.add_bool(indexed_key("parameter_lfos", index, "enabled"),
                          lfo.enabled);
         builder.add_string(
@@ -2183,7 +2409,17 @@ bool serialize_setup(const RenderConfig& config,
             indexed_key("parameter_lfos", index, "skip_cycles"),
             lfo.skip_cycles);
     }
+    if constexpr (Builder::kReading) {
+        config.parameter_lfos = std::move(persisted_lfos);
+    }
 
+    builder.add_flag_bank(
+        "render.flags", config.flags,
+        RenderData::SwingsEnabledFlag | RenderData::DisplacementEnabledFlag
+            | RenderData::LightingEnabledFlag | RenderData::SpiralEnabledFlag
+            | RenderData::WallReflectionEnabledFlag
+            | RenderData::AudioReactiveOverrideEnabledFlag,
+        6U);
     builder.add_bool("rhythm.swings_enabled", config.swings_enabled);
     builder.add_double("rhythm.phrase_warp", config.phrase_warp);
     builder.add_double("rhythm.ghost_mix", config.ghost_mix);
@@ -2207,6 +2443,9 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_integer("appearance.hue_cycles", config.hue_cycles);
     builder.add_double("appearance.saturation", config.saturation);
 
+    builder.add_flag_bank(
+        "alpha.flags", config.alpha.flags,
+        AlphaConfig::EnabledFlag | AlphaConfig::UseSourceAlphaFlag, 2U);
     builder.add_bool("alpha.enabled", config.alpha.enabled);
     builder.add_double("alpha.minimum", config.alpha.minimum);
     builder.add_double("alpha.maximum", config.alpha.maximum);
@@ -2215,6 +2454,11 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("alpha.phase_degrees", config.alpha.phase_degrees);
     builder.add_bool("alpha.use_source_alpha", config.alpha.use_source_alpha);
 
+    builder.add_flag_bank(
+        "starting_colors.flags", config.starting_colors.flags,
+        StartingColorConfig::IncludeAlphaFlag
+            | StartingColorConfig::LegacyAlphaOutermostFlag,
+        2U);
     builder.add_enum("starting_colors.mode", config.starting_colors.mode,
                      kStartingColorModes);
     builder.add_bool("starting_colors.include_alpha",
@@ -2245,6 +2489,10 @@ bool serialize_setup(const RenderConfig& config,
                        config.starting_colors.alpha_minimum);
     builder.add_double("starting_colors.alpha_maximum",
                        config.starting_colors.alpha_maximum);
+    builder.add_flag_bank(
+        "starting_colors.kaleidoscope.flags",
+        config.starting_colors.kaleidoscope.flags,
+        StartingColorConfig::KaleidoscopeConfig::EnabledFlag, 1U);
     builder.add_bool("starting_colors.kaleidoscope.enabled",
                      config.starting_colors.kaleidoscope.enabled);
     builder.add_integer("starting_colors.kaleidoscope.mirrored_segments",
@@ -2253,6 +2501,10 @@ bool serialize_setup(const RenderConfig& config,
                        config.starting_colors.kaleidoscope.rotation_degrees);
     builder.add_double("starting_colors.kaleidoscope.mix",
                        config.starting_colors.kaleidoscope.mix);
+    builder.add_flag_bank(
+        "starting_colors.domain_warp.flags",
+        config.starting_colors.domain_warp.flags,
+        StartingColorConfig::DomainWarpConfig::EnabledFlag, 1U);
     builder.add_bool("starting_colors.domain_warp.enabled",
                      config.starting_colors.domain_warp.enabled);
     builder.add_double("starting_colors.domain_warp.strength",
@@ -2266,11 +2518,23 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_integer("starting_colors.domain_warp.seed",
                         config.starting_colors.domain_warp.seed);
 
+    builder.add_flag_bank("quantization.flags", config.quantization.flags,
+                          QuantizationConfig::EnabledFlag, 1U);
     builder.add_bool("quantization.enabled", config.quantization.enabled);
     builder.add_integer("quantization.levels", config.quantization.levels);
     builder.add_double("quantization.mix", config.quantization.mix);
     builder.add_enum("quantization.mode", config.quantization.mode, kQuantizationModes);
 
+    builder.add_flag_bank(
+        "post_process.flags", config.post_process.flags,
+        PostProcessConfig::InvertRgbEnabledFlag
+            | PostProcessConfig::InvertRedEnabledFlag
+            | PostProcessConfig::InvertGreenEnabledFlag
+            | PostProcessConfig::InvertBlueEnabledFlag
+            | PostProcessConfig::InvertAlphaEnabledFlag
+            | PostProcessConfig::AntialiasEnabledFlag
+            | PostProcessConfig::EffectsAuthoritativeFlag,
+        7U);
     builder.add_bool("post_process.invert_rgb_enabled",
                      config.post_process.invert_rgb_enabled);
     builder.add_double("post_process.invert_rgb_mix",
@@ -2291,6 +2555,9 @@ bool serialize_setup(const RenderConfig& config,
                      config.post_process.invert_alpha_enabled);
     builder.add_double("post_process.invert_alpha_mix",
                        config.post_process.invert_alpha_mix);
+    builder.add_flag_bank(
+        "post_process.channel_map.flags", config.post_process.channel_map.flags,
+        ChannelMapConfig::EnabledFlag, 1U);
     builder.add_bool("post_process.channel_map.enabled",
                      config.post_process.channel_map.enabled);
     builder.add_double("post_process.channel_map.mix",
@@ -2315,8 +2582,9 @@ bool serialize_setup(const RenderConfig& config,
                        config.post_process.antialias_threshold);
     builder.add_integer("post_process.antialias_passes",
                         config.post_process.antialias_passes);
-    builder.add_integer("post_process.order.count",
-                        config.post_process.order.size());
+    builder.add_collection("post_process.order.count",
+                           config.post_process.order,
+                           kPostProcessStageCount);
     for (std::size_t index = 0U;
          index < config.post_process.order.size(); ++index) {
         builder.add_enum(indexed_key("post_process.order", index, "stage"),
@@ -2325,11 +2593,12 @@ bool serialize_setup(const RenderConfig& config,
     }
     builder.add_bool("post_process.effects_authoritative",
                      config.post_process.effects_authoritative);
-    builder.add_integer("post_effects.count",
-                        config.post_process.effects.size());
+    builder.add_collection("post_effects.count",
+                           config.post_process.effects,
+                           kMaximumPostProcessEffects);
     for (std::size_t index = 0U;
          index < config.post_process.effects.size(); ++index) {
-        const PostProcessEffectConfig& effect =
+        auto& effect =
             config.post_process.effects[index];
         builder.add_integer(indexed_key("post_effects", index, "id"),
                             effect.id);
@@ -2337,6 +2606,9 @@ bool serialize_setup(const RenderConfig& config,
                            effect.name);
         builder.add_enum(indexed_key("post_effects", index, "stage"),
                          effect.stage, kPostProcessStages);
+        builder.add_flag_bank(
+            indexed_key("post_effects", index, "flags"), effect.flags,
+            PostProcessEffectConfig::EnabledFlag, 1U);
         builder.add_bool(indexed_key("post_effects", index, "enabled"),
                          effect.enabled);
         builder.add_double(indexed_key("post_effects", index, "mix"),
@@ -2366,6 +2638,11 @@ bool serialize_setup(const RenderConfig& config,
             effect.quantization_mode, kQuantizationModes);
     }
 
+    builder.add_flag_bank(
+        "surface.flags", config.surface.flags,
+        SurfaceConfig::EnabledFlag | SurfaceConfig::CompositeBackfacesFlag
+            | SurfaceConfig::NormalizeObjFlag,
+        3U);
     builder.add_bool("surface.enabled", config.surface.enabled);
     builder.add_enum("surface.mapping", config.surface.mapping, kSurfaceMappings);
     builder.add_enum("surface.projection", config.surface.projection,
@@ -2416,8 +2693,10 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_string("surface.obj_path", config.surface.obj_path);
     builder.add_string("surface.obj_sha256", config.surface.obj_sha256);
     builder.add_string("surface.obj_basename", config.surface.obj_basename);
-    const PlaneDisplacementConfig& plane =
+    auto& plane =
         config.surface.plane_displacement;
+    builder.add_flag_bank("surface.plane_displacement.flags", plane.flags,
+                          PlaneDisplacementConfig::EnabledFlag, 1U);
     builder.add_bool("surface.plane_displacement.enabled", plane.enabled);
     builder.add_double("surface.plane_displacement.minimum", plane.minimum);
     builder.add_double("surface.plane_displacement.maximum", plane.maximum);
@@ -2427,8 +2706,10 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_string("surface.plane_displacement.path", plane.path);
     builder.add_string("surface.plane_displacement.sha256", plane.sha256);
     builder.add_string("surface.plane_displacement.basename", plane.basename);
-    const EnvironmentMapConfig& environment =
+    auto& environment =
         config.surface.environment_map;
+    builder.add_flag_bank("surface.environment_map.flags", environment.flags,
+                          EnvironmentMapConfig::EnabledFlag, 1U);
     builder.add_bool("surface.environment_map.enabled", environment.enabled);
     builder.add_enum("surface.environment_map.encoding", environment.encoding,
                      kEnvironmentMapEncodings);
@@ -2443,7 +2724,7 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_string("surface.environment_map.sha256", environment.sha256);
     builder.add_string("surface.environment_map.basename",
                        environment.basename);
-    const MeshConstructionConfig& construction =
+    auto& construction =
         config.surface.mesh_construction;
     builder.add_enum("surface.mesh_construction.mode", construction.mode,
                      kMeshConstructionModes);
@@ -2465,6 +2746,11 @@ bool serialize_setup(const RenderConfig& config,
                        construction.stagger);
     builder.add_integer("surface.mesh_construction.seed", construction.seed);
 
+    builder.add_flag_bank(
+        "source_image.flags", config.starting_image.flags,
+        StartingImageConfig::EnabledFlag
+            | StartingImageConfig::PaletteDitherEnabledFlag,
+        2U);
     builder.add_bool("source_image.enabled", config.starting_image.enabled);
     builder.add_enum("source_image.fit", config.starting_image.fit,
                      kStartingImageFits);
@@ -2477,12 +2763,15 @@ bool serialize_setup(const RenderConfig& config,
                      config.starting_image.palette_dither_method,
                      kDitherMethods);
 
+    builder.add_flag_bank("palette.flags", config.palette.flags,
+                          PaletteConfig::EnabledFlag, 1U);
     builder.add_bool("palette.enabled", config.palette.enabled);
     builder.add_string("palette.name", config.palette.name);
     builder.add_integer("palette.columns", config.palette.columns);
-    builder.add_integer("palette.colors.count", config.palette.colors.size());
+    builder.add_collection("palette.colors.count", config.palette.colors,
+                           kMaximumPaletteColors);
     for (std::size_t index = 0; index < config.palette.colors.size(); ++index) {
-        const PaletteColor& color = config.palette.colors[index];
+        auto& color = config.palette.colors[index];
         builder.add_double(indexed_key("palette.colors", index, "red"), color.red);
         builder.add_double(indexed_key("palette.colors", index, "green"), color.green);
         builder.add_double(indexed_key("palette.colors", index, "blue"), color.blue);
@@ -2492,10 +2781,17 @@ bool serialize_setup(const RenderConfig& config,
                          color.encoding, kPaletteColorEncodings);
     }
 
+    builder.add_flag_bank(
+        "transform.flags", config.transform.flags,
+        LayerTransformConfig::FlipHorizontalFlag
+            | LayerTransformConfig::FlipVerticalFlag,
+        2U);
     builder.add_bool("transform.flip_horizontal", config.transform.flip_horizontal);
     builder.add_bool("transform.flip_vertical", config.transform.flip_vertical);
     builder.add_enum("transform.mirror", config.transform.mirror, kMirrorModes);
 
+    builder.add_flag_bank("motion.flags", config.motion.flags,
+                          LayerMotionConfig::EnabledFlag, 1U);
     builder.add_bool("motion.enabled", config.motion.enabled);
     builder.add_enum("motion.path", config.motion.path, kLayerMotionPaths);
     builder.add_double("motion.center_x", config.motion.center_x);
@@ -2527,6 +2823,11 @@ bool serialize_setup(const RenderConfig& config,
     builder.add_double("motion.reusable_path.phase_degrees",
                        config.motion.custom_phase_degrees);
 
+    builder.add_flag_bank(
+        "output.flags", config.output.flags,
+        ExportConfig::DitherEnabledFlag | ExportConfig::WriteAlphaFlag
+            | ExportConfig::OverwriteExistingFlag,
+        3U);
     builder.add_integer("output.bit_depth", config.output.bit_depth);
     builder.add_integer("output.png_compression_level",
                         config.output.png_compression_level);
@@ -2543,11 +2844,201 @@ bool serialize_setup(const RenderConfig& config,
     if (!builder.ok()) {
         return false;
     }
+    return true;
+}
+
+bool serialize_setup(const RenderConfig& config,
+                     std::string& serialized,
+                     std::string* error,
+                     bool enforce_particle_workload = true) {
+    SetupBuilder builder(error);
+    if (!serialize_setup_values(config, builder, error,
+                                enforce_particle_workload)) {
+        return false;
+    }
     serialized = builder.contents();
     return true;
 }
 
-bool consume_audio_input_records(Records& records, std::string_view prefix,
+class RawSetupReader {
+public:
+    static constexpr bool kReading = true;
+
+    RawSetupReader(const std::string& contents, const std::string& strings,
+                   std::string* error)
+        : contents_(contents), strings_(strings), error_(error) {}
+
+    template <typename Integer>
+    bool add_integer(std::string_view, Integer& value) {
+        return integer(value);
+    }
+
+    template <typename Collection>
+    bool add_collection(std::string_view, Collection& values,
+                        std::size_t maximum) {
+        std::uint32_t count = 0U;
+        if (!integer(count) || count > maximum) {
+            return set_failure("Raw snapshot collection count is invalid.");
+        }
+        values.resize(static_cast<std::size_t>(count));
+        return true;
+    }
+
+    template <typename Real>
+    bool add_double(std::string_view, Real& value) {
+        static_assert(std::is_floating_point_v<Real>);
+        return read_native(value)
+               && (std::isfinite(value)
+                   || set_failure(
+                       "Raw configuration contains a non-finite number."));
+    }
+
+    // The preceding flag-bank read populated the same storage that these
+    // named bit views expose. No bit extraction or Boolean assignment exists.
+    bool add_bool(std::string_view, bool) { return true; }
+
+    bool add_flag_bank(std::string_view, std::uint32_t& flags,
+                       std::uint32_t known_flags, unsigned member_count) {
+        return flag_bank(flags, known_flags, member_count);
+    }
+
+    bool add_string(std::string_view, std::string& value) {
+        return string(value);
+    }
+
+    template <typename Enum, std::size_t Count>
+    bool add_enum(
+        std::string_view, Enum& value,
+        const std::array<std::pair<std::string_view, Enum>, Count>& values) {
+        if (!enumeration(value)) return false;
+        return std::any_of(values.begin(), values.end(),
+                           [value](const auto& entry) {
+                               return entry.second == value;
+                           })
+               || set_failure("Raw snapshot contains an unknown enum value.");
+    }
+
+    bool ok() const { return ok_ && empty(); }
+
+    template <typename Integer>
+    bool integer(Integer& value) {
+        static_assert(std::is_integral_v<Integer>
+                      && !std::is_same_v<Integer, bool>);
+        return read_native(value);
+    }
+
+    bool flag_bank(std::uint32_t& flags, std::uint32_t known_flags,
+                   unsigned member_count) {
+        if (member_count == 0U || !read_native(flags)
+            || (flags & ~known_flags) != 0U) {
+            return set_failure(
+                "Raw configuration contains an invalid flag bank.");
+        }
+        return true;
+    }
+
+    bool string(std::string& value) {
+        const std::size_t end = strings_.find('\n', string_offset_);
+        if (end == std::string::npos
+            || end - string_offset_ > kMaximumDecodedStringBytes) {
+            return fail(
+                error_,
+                "Raw configuration string data is truncated or overlong.");
+        }
+        value.assign(strings_.data() + string_offset_, end - string_offset_);
+        string_offset_ = end + 1U;
+        return true;
+    }
+
+    template <typename Enum>
+    bool enumeration(Enum& value) {
+        static_assert(std::is_enum_v<Enum>);
+        return read_native(value);
+    }
+
+    bool empty() const {
+        return offset_ == contents_.size()
+               && string_offset_ == strings_.size();
+    }
+
+private:
+    template <typename Value>
+    bool read_native(Value& value) {
+        static_assert(std::is_trivially_copyable_v<Value>);
+        if (offset_ > contents_.size()
+            || sizeof(Value) > contents_.size() - offset_) {
+            return set_failure(
+                "Raw configuration ended inside a scalar value.");
+        }
+        std::memcpy(&value, contents_.data() + offset_, sizeof(Value));
+        offset_ += sizeof(Value);
+        return true;
+    }
+
+    bool set_failure(const char* message) {
+        ok_ = fail(error_, message);
+        return false;
+    }
+
+    const std::string& contents_;
+    const std::string& strings_;
+    std::string* error_ = nullptr;
+    std::size_t offset_ = 0U;
+    std::size_t string_offset_ = 0U;
+    bool ok_ = true;
+};
+
+bool consume_flag_bank(Records&, const std::string&, std::uint32_t&,
+                       std::uint32_t, unsigned, std::string*) {
+    return true;
+}
+
+// Persistent flags are uint32_t-backed bit fields. A C++ bit field cannot bind
+// to bool&, so the text compatibility reader commits the parsed value through
+// a tiny setter instead of materializing a bool member in the configuration.
+template <typename Reader, typename Setter>
+bool consume_packed_bool(Reader& source, const std::string& key,
+                         Setter&& setter, std::string* error) {
+    bool value = false;
+    if (!consume_bool(source, key, value, error)) return false;
+    setter(value);
+    return true;
+}
+
+template <typename Reader, typename Setter>
+bool consume_optional_packed_bool(Reader& source, const std::string& key,
+                                  Setter&& setter, bool default_value,
+                                  std::string* error) {
+    bool value = default_value;
+    if (!consume_optional_bool(source, key, value, default_value, error)) {
+        return false;
+    }
+    setter(value);
+    return true;
+}
+
+#define consume_bool(source, key, destination, error)                         \
+    consume_packed_bool((source), (key),                                      \
+                        [&](bool pvt_flag_value) {                            \
+                            (destination) = pvt_flag_value;                   \
+                        },                                                    \
+                        (error))
+#define consume_optional_bool(source, key, destination, default_value, error) \
+    consume_optional_packed_bool((source), (key),                             \
+                                 [&](bool pvt_flag_value) {                   \
+                                     (destination) = pvt_flag_value;          \
+                                 },                                           \
+                                 (default_value), (error))
+
+bool has_record_prefix(const Records& records, std::string_view prefix) {
+    return std::any_of(records.begin(), records.end(),
+                       [prefix](const auto& record) {
+                           return starts_with(record.first, prefix);
+                       });
+}
+
+template <typename Reader>
+bool consume_audio_input_records(Reader& records, std::string_view prefix,
                                  AudioInputProcessingConfig& processing,
                                  std::string* error) {
     const auto key = [prefix](std::string_view suffix) {
@@ -2555,6 +3046,14 @@ bool consume_audio_input_records(Records& records, std::string_view prefix,
         result.append(suffix);
         return result;
     };
+    if (!consume_flag_bank(
+            records, key("flags"), processing.flags,
+            AudioInputProcessingConfig::HighPassEnabledFlag
+                | AudioInputProcessingConfig::LowPassEnabledFlag
+                | AudioInputProcessingConfig::EqualizerEnabledFlag,
+            3U, error)) {
+        return false;
+    }
     std::size_t equalizer_count = 0U;
     std::size_t stream_count = 0U;
     if (!consume_bool(records, key("high_pass_enabled"),
@@ -2606,7 +3105,8 @@ bool consume_audio_input_records(Records& records, std::string_view prefix,
     return true;
 }
 
-bool consume_music_extensions(Records& records, std::string_view prefix,
+template <typename Reader>
+bool consume_music_extensions(Reader& records, std::string_view prefix,
                               MusicAnalysis& music, std::string* error) {
     const auto key = [prefix](std::string_view suffix) {
         std::string result(prefix);
@@ -2705,7 +3205,8 @@ bool consume_music_extensions(Records& records, std::string_view prefix,
         records, key("input_processing."), music.input_processing, error);
 }
 
-bool consume_music_records(Records& records, std::string_view prefix,
+template <typename Reader>
+bool consume_music_records(Reader& records, std::string_view prefix,
                            MusicAnalysis& music, bool extended,
                            std::string* error) {
     const auto key = [prefix](std::string_view suffix) {
@@ -2796,7 +3297,8 @@ bool consume_music_records(Records& records, std::string_view prefix,
     return !extended || consume_music_extensions(records, prefix, music, error);
 }
 
-bool consume_clock_records(Records& records, std::string_view prefix,
+template <typename Reader>
+bool consume_clock_records(Reader& records, std::string_view prefix,
                            std::string_view music_prefix,
                            ClockConfig& clock, bool extended,
                            std::string* error) {
@@ -2805,6 +3307,11 @@ bool consume_clock_records(Records& records, std::string_view prefix,
         result.append(suffix);
         return result;
     };
+    if (!consume_flag_bank(
+            records, key("flags"), clock.flags,
+            ClockConfig::ReverseFlag | ClockConfig::DataOnlyFlag, 2U, error)) {
+        return false;
+    }
     return consume_enum(records, key("mode"), clock.mode, kClockModes, error)
            && consume_enum(records, key("interpolation"), clock.interpolation,
                            kClockInterpolations, error)
@@ -2840,7 +3347,8 @@ bool consume_clock_records(Records& records, std::string_view prefix,
                                     extended, error);
 }
 
-bool consume_audio_reactive_records(Records& records,
+template <typename Reader>
+bool consume_audio_reactive_records(Reader& records,
                                     std::string_view prefix,
                                     AudioReactiveConfig& audio,
                                     bool optional_block,
@@ -2851,11 +3359,18 @@ bool consume_audio_reactive_records(Records& records,
         return result;
     };
     if (optional_block) {
-        const bool present = std::any_of(
-            records.begin(), records.end(), [prefix](const auto& record) {
-                return starts_with(record.first, prefix);
-            });
+        const bool present = has_record_prefix(records, prefix);
         if (!present) return true;
+    }
+    if (!consume_flag_bank(
+            records, key("flags"), audio.flags,
+            AudioReactiveConfig::EnabledFlag
+                | AudioReactiveConfig::SynchronizedOnlyFlag
+                | AudioReactiveConfig::WavesEnabledFlag
+                | AudioReactiveConfig::EffectsEnabledFlag
+                | AudioReactiveConfig::ColorEnabledFlag,
+            5U, error)) {
+        return false;
     }
     const bool enabled_ok = optional_block
         ? consume_optional_bool(records, key("enabled"), audio.enabled,
@@ -2884,8 +3399,13 @@ bool consume_audio_reactive_records(Records& records,
                              audio.color_amount_degrees, error);
 }
 
-bool consume_live_records(Records& records, LiveConfig& live, bool extended,
+template <typename Reader>
+bool consume_live_records(Reader& records, LiveConfig& live, bool extended,
                           std::string* error) {
+    if (!consume_flag_bank(records, "live.flags", live.flags,
+                           LiveConfig::EnabledFlag, 1U, error)) {
+        return false;
+    }
     if (!consume_bool(records, "live.enabled", live.enabled, error)) {
         return false;
     }
@@ -2932,7 +3452,11 @@ bool consume_live_records(Records& records, LiveConfig& live, bool extended,
     live.mappings.assign(mapping_count, {});
     for (std::size_t index = 0U; index < mapping_count; ++index) {
         LiveControlMapping& mapping = live.mappings[index];
-        if (!consume_bool(
+        if (!consume_flag_bank(
+                records, indexed_key("live.mappings", index, "flags"),
+                mapping.flags,
+                               LiveControlMapping::EnabledFlag, 1U, error)
+            || !consume_bool(
                 records, indexed_key("live.mappings", index, "enabled"),
                 mapping.enabled, error)
             || !consume_bounded_string(
@@ -3009,7 +3533,13 @@ bool consume_live_records(Records& records, LiveConfig& live, bool extended,
     live.clock_inputs.assign(input_count, {});
     for (std::size_t index = 0U; index < input_count; ++index) {
         LiveClockInputConfig& clock = live.clock_inputs[index];
-        if (!consume_bool(
+        if (!consume_flag_bank(
+                records, indexed_key("live.clock_inputs", index, "flags"),
+                clock.flags,
+                LiveClockInputConfig::EnabledFlag
+                    | LiveClockInputConfig::FollowMidiTransportFlag,
+                2U, error)
+            || !consume_bool(
                 records, indexed_key("live.clock_inputs", index, "enabled"),
                 clock.enabled, error)
             || !consume_enum(
@@ -3059,7 +3589,15 @@ bool consume_live_records(Records& records, LiveConfig& live, bool extended,
     live.midi_clock_outputs.assign(output_count, {});
     for (std::size_t index = 0U; index < output_count; ++index) {
         LiveMidiClockOutputConfig& output = live.midi_clock_outputs[index];
-        if (!consume_bool(
+        if (!consume_flag_bank(
+                records,
+                indexed_key("live.midi_clock_outputs", index, "flags"),
+                output.flags,
+                LiveMidiClockOutputConfig::EnabledFlag
+                    | LiveMidiClockOutputConfig::SendTransportFlag
+                    | LiveMidiClockOutputConfig::SendSongPositionFlag,
+                3U, error)
+            || !consume_bool(
                 records,
                 indexed_key("live.midi_clock_outputs", index, "enabled"),
                 output.enabled, error)
@@ -3135,42 +3673,53 @@ bool consume_live_records(Records& records, LiveConfig& live, bool extended,
         }
     }
 
-    return consume_bounded_string(
-               records, "live.startup_scene_uuid", kMaximumLiveTextBytes,
-               live.startup_scene_uuid, error)
-           && consume_bool(records, "live.output.fullscreen",
-                           live.output.fullscreen, error)
-           && consume_bool(records, "live.output.prefer_secondary_display",
-                           live.output.prefer_secondary_display, error)
-           && consume_bool(records, "live.output.hide_cursor",
-                           live.output.hide_cursor, error)
-           && consume_enum(records, "live.safety.dropout_behavior",
-                           live.safety.dropout_behavior,
-                           kLiveDropoutBehaviors, error)
-           && consume_bool(records,
-                           "live.safety.frame_time_watchdog_enabled",
-                           live.safety.frame_time_watchdog_enabled, error)
-           && consume_integer(records,
-                              "live.safety.watchdog_timeout_milliseconds",
-                              live.safety.watchdog_timeout_milliseconds,
-                              error)
-           && consume_integer(
-               records, "live.safety.audio_dropout_grace_milliseconds",
-               live.safety.audio_dropout_grace_milliseconds, error)
-           && consume_integer(
-               records,
-               "live.safety.last_good_frame_timeout_milliseconds",
-               live.safety.last_good_frame_timeout_milliseconds, error)
-           && (!extended
-               || (consume_bool(records,
-                                "live.safety.prevent_device_sleep",
-                                live.safety.prevent_device_sleep, error)
-                   && consume_audio_input_records(
-                       records, "live.audio_input.", live.audio_processing,
-                       error)));
+    if (!consume_bounded_string(
+            records, "live.startup_scene_uuid", kMaximumLiveTextBytes,
+            live.startup_scene_uuid, error)
+        || !consume_flag_bank(
+            records, "live.output.flags", live.output.flags,
+            LiveOutputConfig::FullscreenFlag
+                | LiveOutputConfig::PreferSecondaryDisplayFlag
+                | LiveOutputConfig::HideCursorFlag,
+            3U, error)
+        || !consume_bool(records, "live.output.fullscreen",
+                         live.output.fullscreen, error)
+        || !consume_bool(records, "live.output.prefer_secondary_display",
+                         live.output.prefer_secondary_display, error)
+        || !consume_bool(records, "live.output.hide_cursor",
+                         live.output.hide_cursor, error)
+        || !consume_enum(records, "live.safety.dropout_behavior",
+                         live.safety.dropout_behavior,
+                         kLiveDropoutBehaviors, error)
+        || !consume_flag_bank(
+            records, "live.safety.flags", live.safety.flags,
+            LiveSafetyConfig::FrameTimeWatchdogEnabledFlag
+                | LiveSafetyConfig::PreventDeviceSleepFlag,
+            2U, error)
+        || !consume_bool(records,
+                         "live.safety.frame_time_watchdog_enabled",
+                         live.safety.frame_time_watchdog_enabled, error)
+        || !consume_integer(records,
+                            "live.safety.watchdog_timeout_milliseconds",
+                            live.safety.watchdog_timeout_milliseconds, error)
+        || !consume_integer(
+            records, "live.safety.audio_dropout_grace_milliseconds",
+            live.safety.audio_dropout_grace_milliseconds, error)
+        || !consume_integer(
+            records, "live.safety.last_good_frame_timeout_milliseconds",
+            live.safety.last_good_frame_timeout_milliseconds, error)) {
+        return false;
+    }
+    return !extended
+           || (consume_bool(records, "live.safety.prevent_device_sleep",
+                            live.safety.prevent_device_sleep, error)
+               && consume_audio_input_records(
+                   records, "live.audio_input.", live.audio_processing,
+                   error));
 }
 
-bool consume_path_binding_records(Records& records,
+template <typename Reader>
+bool consume_path_binding_records(Reader& records,
                                   std::string_view prefix,
                                   PathBinding& binding,
                                   std::string* error) {
@@ -3179,6 +3728,13 @@ bool consume_path_binding_records(Records& records,
         result.append(suffix);
         return result;
     };
+    if (!consume_flag_bank(
+            records, key("flags"), binding.flags,
+            PathBinding::EnabledFlag | PathBinding::SynchronizedFlag
+                | PathBinding::ReverseFlag | PathBinding::FollowTangentFlag,
+            4U, error)) {
+        return false;
+    }
     return consume_bool(records, key("enabled"), binding.enabled, error)
            && consume_integer(records, key("path_id"), binding.path_id, error)
            && consume_bool(records, key("synchronized"),
@@ -3194,7 +3750,8 @@ bool consume_path_binding_records(Records& records,
                            binding.follow_tangent, error);
 }
 
-bool deserialize_setup(Records& records,
+template <typename Reader>
+bool deserialize_setup(Reader& records,
                        std::uint32_t setup_version,
                        RenderConfig& candidate,
                        std::string* error,
@@ -3203,10 +3760,43 @@ bool deserialize_setup(Records& records,
     double legacy_surface_phase = 0.0;
     if (!consume_integer(records, "canvas.width", candidate.width, error)
         || !consume_integer(records, "canvas.height", candidate.height, error)
-        || !consume_integer(records, "canvas.block_size", candidate.block_size, error)
+        || !consume_double(records, "canvas.block_size", candidate.block_size, error)
         || !consume_integer(records, "timing.total_frames", candidate.total_frames, error)
         || !consume_double(records, "timing.fps", candidate.fps, error)) {
         return false;
+    }
+    if (setup_version >= 27U) {
+        BlockSizeModulation& block = candidate.block_size_modulation;
+        if (!consume_flag_bank(
+                records, "canvas.block_size.flags", block.flags,
+                BlockSizeModulation::SynchronizedFlag
+                    | BlockSizeModulation::AlphaGapsFlag
+                    | BlockSizeModulation::LfoEnabledFlag,
+                3U, error)
+            || !consume_bool(records, "canvas.block_size.synchronized",
+                          block.synchronized, error)
+            || !consume_bool(records, "canvas.block_size.alpha_gaps",
+                             block.alpha_gaps, error)
+            || !consume_bool(records, "canvas.block_size.lfo.enabled",
+                             block.lfo_enabled, error)
+            || !consume_string(records, "canvas.block_size.lfo.name",
+                               block.lfo_name, error)
+            || !consume_enum(records, "canvas.block_size.lfo.waveform",
+                             block.waveform, kWaveforms, error)
+            || !consume_double(records, "canvas.block_size.lfo.minimum",
+                               block.minimum, error)
+            || !consume_double(records, "canvas.block_size.lfo.maximum",
+                               block.maximum, error)
+            || !consume_integer(
+                records, "canvas.block_size.lfo.cycles_per_loop",
+                block.cycles_per_loop, error)
+            || !consume_double(records,
+                               "canvas.block_size.lfo.phase_degrees",
+                               block.phase_degrees, error)
+            || !consume_double(records, "canvas.block_size.lfo.shape",
+                               block.shape, error)) {
+            return false;
+        }
     }
 
     if (setup_version >= 8U
@@ -3280,7 +3870,13 @@ bool deserialize_setup(Records& records,
         }
     }
     if (setup_version >= 10U
-        && (!consume_bool(records, "source_image.palette_dither_enabled",
+        && (!consume_flag_bank(
+                records, "source_image.flags",
+                candidate.starting_image.flags,
+                StartingImageConfig::EnabledFlag
+                    | StartingImageConfig::PaletteDitherEnabledFlag,
+                2U, error)
+            || !consume_bool(records, "source_image.palette_dither_enabled",
                           candidate.starting_image.palette_dither_enabled,
                           error)
             || !consume_enum(records, "source_image.palette_dither_method",
@@ -3320,7 +3916,11 @@ bool deserialize_setup(Records& records,
             || !consume_integer(records, "timing.clock.beat_offset_microseconds",
                                 candidate.clock.beat_offset_microseconds, error)
             || !consume_double(records, "timing.clock.phase_offset_degrees",
-                               candidate.clock.phase_offset_degrees, error)
+                                candidate.clock.phase_offset_degrees, error)
+            || !consume_flag_bank(
+                records, "timing.clock.flags", candidate.clock.flags,
+                ClockConfig::ReverseFlag | ClockConfig::DataOnlyFlag, 2U,
+                error)
             || !consume_bool(records, "timing.clock.reverse",
                              candidate.clock.reverse, error)
             || !consume_integer(records, "timing.music.schema_version",
@@ -3487,6 +4087,11 @@ bool deserialize_setup(Records& records,
     if (setup_version >= 6U) {
         if (!consume_bool(records, "timing.clock.data_only",
                           candidate.clock.data_only, error)
+            || !consume_flag_bank(
+                records, "layer_clock.flags", candidate.layer_clock.flags,
+                LayerClockConfig::EnabledFlag
+                    | LayerClockConfig::MixEnabledFlag,
+                2U, error)
             || !consume_bool(records, "layer_clock.enabled",
                              candidate.layer_clock.enabled, error)
             || !consume_enum(records, "layer_clock.scale",
@@ -3521,6 +4126,10 @@ bool deserialize_setup(Records& records,
         WaveConfig& wave = candidate.waves[index];
         if (!consume_integer(records, indexed_key("waves", index, "id"), wave.id, error)
             || !consume_string(records, indexed_key("waves", index, "name"), wave.name, error)
+            || !consume_flag_bank(
+                records, indexed_key("waves", index, "flags"), wave.flags,
+                WaveConfig::EnabledFlag | WaveConfig::SynchronizedFlag, 2U,
+                error)
             || !consume_bool(records, indexed_key("waves", index, "enabled"), wave.enabled, error)
             || !consume_bool(records, indexed_key("waves", index, "synchronized"), wave.synchronized, error)
             || (setup_version >= 9U
@@ -3560,6 +4169,10 @@ bool deserialize_setup(Records& records,
         SwingConfig& swing = candidate.swings[index];
         if (!consume_integer(records, indexed_key("swings", index, "id"), swing.id, error)
             || !consume_string(records, indexed_key("swings", index, "name"), swing.name, error)
+            || !consume_flag_bank(records,
+                                  indexed_key("swings", index, "flags"),
+                                  swing.flags,
+                                  SwingConfig::EnabledFlag, 1U, error)
             || !consume_bool(records, indexed_key("swings", index, "enabled"), swing.enabled, error)
             || !consume_enum(records, indexed_key("swings", index, "waveform"), swing.waveform, kWaveforms, error)
             || !consume_double(records, indexed_key("swings", index, "amount"), swing.amount, error)
@@ -3632,7 +4245,11 @@ bool deserialize_setup(Records& records,
                              effect.space, kEffectSpaces, error)) {
             return false;
         }
-        if (!consume_bool(records, indexed_key("effects", index, "enabled"), effect.enabled, error)
+        if (!consume_flag_bank(
+                records, indexed_key("effects", index, "flags"), effect.flags,
+                EffectConfig::EnabledFlag | EffectConfig::SynchronizedFlag,
+                2U, error)
+            || !consume_bool(records, indexed_key("effects", index, "enabled"), effect.enabled, error)
             || !consume_bool(records, indexed_key("effects", index, "synchronized"), effect.synchronized, error)
             || (setup_version >= 9U
                 && !consume_optional_enum(
@@ -3740,6 +4357,10 @@ bool deserialize_setup(Records& records,
                      records,
                      indexed_key("parameter_lfos", index, "id"),
                      lfo.id, error))
+                || !consume_flag_bank(
+                    records, indexed_key("parameter_lfos", index, "flags"),
+                    lfo.flags,
+                                      ParameterLfo::EnabledFlag, 1U, error)
                 || !consume_bool(
                     records,
                     indexed_key("parameter_lfos", index, "enabled"),
@@ -3800,7 +4421,16 @@ bool deserialize_setup(Records& records,
     }
 
     if (setup_version >= 5U) {
-        if (!consume_bool(records, "rhythm.swings_enabled",
+        if (!consume_flag_bank(
+                records, "render.flags", candidate.flags,
+                RenderData::SwingsEnabledFlag
+                    | RenderData::DisplacementEnabledFlag
+                    | RenderData::LightingEnabledFlag
+                    | RenderData::SpiralEnabledFlag
+                    | RenderData::WallReflectionEnabledFlag
+                    | RenderData::AudioReactiveOverrideEnabledFlag,
+                6U, error)
+            || !consume_bool(records, "rhythm.swings_enabled",
                           candidate.swings_enabled, error)
             || !consume_audio_reactive_records(
                 records, "audio_reactive.", candidate.audio_reactive,
@@ -3810,7 +4440,6 @@ bool deserialize_setup(Records& records,
         if (setup_version >= 8U) {
             // Missing/null is the authored Default state: inherit the project
             // block. Serializers still emit the canonical explicit boolean.
-            candidate.audio_reactive_override_enabled = false;
             if (!consume_optional_bool(
                     records, "audio_reactive.override_enabled",
                     candidate.audio_reactive_override_enabled, false, error)) {
@@ -3841,16 +4470,28 @@ bool deserialize_setup(Records& records,
         return false;
     }
 
-    if (!consume_bool(records, "alpha.enabled", candidate.alpha.enabled, error)
+    if (!consume_flag_bank(
+            records, "alpha.flags", candidate.alpha.flags,
+            AlphaConfig::EnabledFlag | AlphaConfig::UseSourceAlphaFlag, 2U,
+            error)
+        || !consume_bool(records, "alpha.enabled", candidate.alpha.enabled, error)
         || !consume_double(records, "alpha.minimum", candidate.alpha.minimum, error)
         || !consume_double(records, "alpha.maximum", candidate.alpha.maximum, error)
         || !consume_double(records, "alpha.spatial_frequency", candidate.alpha.spatial_frequency, error)
         || !consume_integer(records, "alpha.cycles_per_loop", candidate.alpha.cycles_per_loop, error)
         || !consume_double(records, "alpha.phase_degrees", candidate.alpha.phase_degrees, error)
+        || !consume_flag_bank(records, "quantization.flags",
+                              candidate.quantization.flags,
+                              QuantizationConfig::EnabledFlag, 1U, error)
         || !consume_bool(records, "quantization.enabled", candidate.quantization.enabled, error)
         || !consume_integer(records, "quantization.levels", candidate.quantization.levels, error)
         || !consume_double(records, "quantization.mix", candidate.quantization.mix, error)
         || !consume_enum(records, "quantization.mode", candidate.quantization.mode, kQuantizationModes, error)
+        || !consume_flag_bank(
+            records, "surface.flags", candidate.surface.flags,
+            SurfaceConfig::EnabledFlag | SurfaceConfig::CompositeBackfacesFlag
+                | SurfaceConfig::NormalizeObjFlag,
+            3U, error)
         || !consume_bool(records, "surface.enabled", candidate.surface.enabled, error)
         || !consume_enum(records, "surface.mapping", candidate.surface.mapping, kSurfaceMappings, error)) {
         return false;
@@ -3928,7 +4569,17 @@ bool deserialize_setup(Records& records,
     }
     if (setup_version >= 12U) {
         PostProcessConfig& post = candidate.post_process;
-        if (!consume_bool(records, "post_process.invert_rgb_enabled",
+        if (!consume_flag_bank(
+                records, "post_process.flags", post.flags,
+                PostProcessConfig::InvertRgbEnabledFlag
+                    | PostProcessConfig::InvertRedEnabledFlag
+                    | PostProcessConfig::InvertGreenEnabledFlag
+                    | PostProcessConfig::InvertBlueEnabledFlag
+                    | PostProcessConfig::InvertAlphaEnabledFlag
+                    | PostProcessConfig::AntialiasEnabledFlag
+                    | PostProcessConfig::EffectsAuthoritativeFlag,
+                7U, error)
+            || !consume_bool(records, "post_process.invert_rgb_enabled",
                           post.invert_rgb_enabled, error)
             || !consume_double(records, "post_process.invert_rgb_mix",
                                post.invert_rgb_mix, error)
@@ -3967,7 +4618,10 @@ bool deserialize_setup(Records& records,
     if (setup_version >= 19U) {
         PostProcessConfig& post = candidate.post_process;
         std::size_t order_count = 0U;
-        if (!consume_bool(records, "post_process.channel_map.enabled",
+        if (!consume_flag_bank(records, "post_process.channel_map.flags",
+                               post.channel_map.flags,
+                               ChannelMapConfig::EnabledFlag, 1U, error)
+            || !consume_bool(records, "post_process.channel_map.enabled",
                           post.channel_map.enabled, error)
             || !consume_double(records, "post_process.channel_map.mix",
                                post.channel_map.mix, error)
@@ -4031,6 +4685,10 @@ bool deserialize_setup(Records& records,
                 || !consume_enum(
                     records, indexed_key("post_effects", index, "stage"),
                     effect.stage, kPostProcessStages, error)
+                || !consume_flag_bank(
+                    records, indexed_key("post_effects", index, "flags"),
+                    effect.flags,
+                    PostProcessEffectConfig::EnabledFlag, 1U, error)
                 || !consume_bool(
                     records, indexed_key("post_effects", index, "enabled"),
                     effect.enabled, error)
@@ -4086,6 +4744,11 @@ bool deserialize_setup(Records& records,
         StartingColorConfig& starting = candidate.starting_colors;
         if (!consume_bool(records, "alpha.use_source_alpha",
                           candidate.alpha.use_source_alpha, error)
+            || !consume_flag_bank(
+                records, "starting_colors.flags", starting.flags,
+                StartingColorConfig::IncludeAlphaFlag
+                    | StartingColorConfig::LegacyAlphaOutermostFlag,
+                2U, error)
             || !consume_enum(records, "starting_colors.mode", starting.mode,
                              kStartingColorModes, error)
             || !consume_bool(records, "starting_colors.include_alpha",
@@ -4132,7 +4795,12 @@ bool deserialize_setup(Records& records,
     }
     if (setup_version >= 11U) {
         StartingColorConfig& starting = candidate.starting_colors;
-        if (!consume_bool(records, "starting_colors.kaleidoscope.enabled",
+        if (!consume_flag_bank(
+                records, "starting_colors.kaleidoscope.flags",
+                starting.kaleidoscope.flags,
+                StartingColorConfig::KaleidoscopeConfig::EnabledFlag, 1U,
+                error)
+            || !consume_bool(records, "starting_colors.kaleidoscope.enabled",
                           starting.kaleidoscope.enabled, error)
             || !consume_integer(
                 records,
@@ -4143,6 +4811,11 @@ bool deserialize_setup(Records& records,
                 starting.kaleidoscope.rotation_degrees, error)
             || !consume_double(records, "starting_colors.kaleidoscope.mix",
                                starting.kaleidoscope.mix, error)
+            || !consume_flag_bank(
+                records, "starting_colors.domain_warp.flags",
+                starting.domain_warp.flags,
+                StartingColorConfig::DomainWarpConfig::EnabledFlag, 1U,
+                error)
             || !consume_bool(records, "starting_colors.domain_warp.enabled",
                              starting.domain_warp.enabled, error)
             || !consume_double(records, "starting_colors.domain_warp.strength",
@@ -4180,7 +4853,11 @@ bool deserialize_setup(Records& records,
     if (setup_version >= 13U) {
         PlaneDisplacementConfig& plane =
             candidate.surface.plane_displacement;
-        if (!consume_bool(records, "surface.plane_displacement.enabled",
+        if (!consume_flag_bank(records, "surface.plane_displacement.flags",
+                               plane.flags,
+                               PlaneDisplacementConfig::EnabledFlag, 1U,
+                               error)
+            || !consume_bool(records, "surface.plane_displacement.enabled",
                           plane.enabled, error)
             || !consume_double(records, "surface.plane_displacement.minimum",
                                plane.minimum, error)
@@ -4209,7 +4886,10 @@ bool deserialize_setup(Records& records,
     }
     if (setup_version >= 20U) {
         EnvironmentMapConfig& environment = surface.environment_map;
-        if (!consume_bool(records, "surface.environment_map.enabled",
+        if (!consume_flag_bank(records, "surface.environment_map.flags",
+                               environment.flags,
+                               EnvironmentMapConfig::EnabledFlag, 1U, error)
+            || !consume_bool(records, "surface.environment_map.enabled",
                           environment.enabled, error)
             || !consume_enum(records, "surface.environment_map.encoding",
                              environment.encoding, kEnvironmentMapEncodings,
@@ -4330,7 +5010,10 @@ bool deserialize_setup(Records& records,
 
     if (setup_version >= 4U) {
         std::size_t palette_color_count = 0U;
-        if (!consume_bool(records, "palette.enabled", candidate.palette.enabled, error)
+        if (!consume_flag_bank(records, "palette.flags",
+                               candidate.palette.flags,
+                               PaletteConfig::EnabledFlag, 1U, error)
+            || !consume_bool(records, "palette.enabled", candidate.palette.enabled, error)
             || !consume_string(records, "palette.name", candidate.palette.name, error)
             || (setup_version >= 11U
                 && !consume_count(records, "palette.columns",
@@ -4370,7 +5053,12 @@ bool deserialize_setup(Records& records,
                 return false;
             }
         }
-        if (!consume_bool(records, "transform.flip_horizontal",
+        if (!consume_flag_bank(
+                records, "transform.flags", candidate.transform.flags,
+                LayerTransformConfig::FlipHorizontalFlag
+                    | LayerTransformConfig::FlipVerticalFlag,
+                2U, error)
+            || !consume_bool(records, "transform.flip_horizontal",
                           candidate.transform.flip_horizontal, error)
             || !consume_bool(records, "transform.flip_vertical",
                              candidate.transform.flip_vertical, error)
@@ -4381,7 +5069,9 @@ bool deserialize_setup(Records& records,
     }
 
     if (setup_version >= 6U
-        && (!consume_bool(records, "motion.enabled", candidate.motion.enabled,
+        && (!consume_flag_bank(records, "motion.flags", candidate.motion.flags,
+                               LayerMotionConfig::EnabledFlag, 1U, error)
+            || !consume_bool(records, "motion.enabled", candidate.motion.enabled,
                           error)
             || !consume_enum(records, "motion.path", candidate.motion.path,
                              kLayerMotionPaths, error)
@@ -4443,7 +5133,12 @@ bool deserialize_setup(Records& records,
                             candidate.output.png_compression_level, error)) {
         return false;
     }
-    if (!consume_bool(records, "output.dither_enabled", candidate.output.dither_enabled, error)
+    if (!consume_flag_bank(
+            records, "output.flags", candidate.output.flags,
+            ExportConfig::DitherEnabledFlag | ExportConfig::WriteAlphaFlag
+                | ExportConfig::OverwriteExistingFlag,
+            3U, error)
+        || !consume_bool(records, "output.dither_enabled", candidate.output.dither_enabled, error)
         || !consume_enum(records, "output.dither_method", candidate.output.dither_method, kDitherMethods, error)) {
         return false;
     }
@@ -4495,8 +5190,11 @@ void remember_preserved(ConfigCompatibility& compatibility,
             return record.key == key && record.value == value;
         });
     if (duplicate == compatibility.records.end()) {
-        compatibility.records.push_back(
-            {std::move(key), std::move(value), rejected});
+        PreservedConfigRecord record;
+        record.key = std::move(key);
+        record.value = std::move(value);
+        record.rejected = rejected;
+        compatibility.records.push_back(std::move(record));
     } else if (rejected) {
         duplicate->rejected = true;
     }
@@ -5482,6 +6180,77 @@ bool deserialize_setup_config_without_particle_admission(
             error,
             std::string("Unexpected error while loading layer setup; destination was not changed: ")
                 + exception.what());
+    }
+}
+
+bool serialize_raw_config(const RenderConfig& config,
+                          std::string& numeric,
+                          std::string& strings,
+                          std::string* error,
+                          bool enforce_particle_workload) {
+    clear_error(error);
+    try {
+        // The writer and reader share this one ordered struct walk. Values are
+        // copied in their native representation straight into one contiguous
+        // buffer; no text, field tag, or Boolean expansion is involved.
+        RawSetupBuilder builder(error);
+        static_assert(kRawConfigCurrentLayout == 1U
+                          && kSetupFormatVersion == 27U,
+                      "append a new raw layout instead of changing layout 1");
+        if (!serialize_setup_values(config, builder, error,
+                                    enforce_particle_workload)) {
+            return false;
+        }
+        numeric = builder.numeric_contents();
+        strings = builder.string_contents();
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to dump raw configuration.");
+    } catch (const std::exception& exception) {
+        return fail(error,
+                    std::string("Unexpected raw configuration dump error: ")
+                        + exception.what());
+    }
+}
+
+bool deserialize_raw_config(const std::string& numeric,
+                            const std::string& strings,
+                            RenderConfig& destination,
+                            std::string* error,
+                            bool enforce_particle_workload) {
+    clear_error(error);
+    try {
+        if (numeric.empty() || numeric.size() > kMaximumSetupBytes
+            || strings.size() > kMaximumSetupBytes) {
+            return fail(error, "Raw configuration is empty or overlong.");
+        }
+        RawSetupReader reader(numeric, strings, error);
+        RenderConfig candidate;
+        // Layout 1 is recognized by consuming both raw streams exactly. When
+        // fields are appended, add the frozen older walk here and try complete
+        // layouts without trusting a separate version number.
+        static_assert(kRawConfigCurrentLayout == 1U);
+        if (!serialize_setup_values(candidate, reader, error,
+                                    enforce_particle_workload)) {
+            return false;
+        }
+        const ValidationResult validation = enforce_particle_workload
+            ? validate(candidate)
+            : detail::validate_render_config_structure(candidate);
+        if (!validation.ok) {
+            return fail(error, "Raw configuration is invalid: "
+                                   + validation.message);
+        }
+        if (!validate_persistence_bounds(candidate, error)) return false;
+        destination = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error,
+                    "Not enough memory to load raw configuration; destination was not changed.");
+    } catch (const std::exception& exception) {
+        return fail(error,
+                    std::string("Unexpected raw configuration load error: ")
+                        + exception.what());
     }
 }
 

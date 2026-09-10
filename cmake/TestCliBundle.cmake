@@ -196,7 +196,8 @@ run_cli("unpacked directory save"
     --save DirFire)
 foreach(required_file
         metadata.txt metadata.sha256 current
-        0/metadata.txt 0/render_output.txt 0/0.pvt)
+        0/metadata.txt 0/render_output.pvtdat 0/render_output.pvtstrings
+        0/0.pvtdat 0/0.pvtstrings)
     if(NOT EXISTS "${test_root}/DirFire/${required_file}")
         message(FATAL_ERROR "Unpacked bundle is missing ${required_file}")
     endif()

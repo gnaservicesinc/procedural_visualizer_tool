@@ -1,4 +1,5 @@
 #include "application_settings_dialog.h"
+#include "flexible_spin_box.h"
 #include "localization.h"
 #include "../app/renderer_diagnostics.h"
 
@@ -122,9 +123,9 @@ QScrollArea* scrollable_settings_page(QWidget* content, QWidget* parent,
     return scroll;
 }
 
-class CompactDoubleSpinBox final : public QDoubleSpinBox {
+class CompactDoubleSpinBox final : public FlexibleDoubleSpinBox {
 public:
-    using QDoubleSpinBox::QDoubleSpinBox;
+    using FlexibleDoubleSpinBox::FlexibleDoubleSpinBox;
 
 protected:
     QString textFromValue(double value) const override {
@@ -307,20 +308,21 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     render_backend_->addItem(
         tr("Automatic (GPU-first, Recommended)"),
         static_cast<int>(RenderBackendPreference::Automatic));
-    render_backend_->addItem(tr("CPU"),
-                             static_cast<int>(RenderBackendPreference::Cpu));
     render_backend_->addItem(
-        tr("CPU + GPU"),
+        tr("CPU + GPU (cooperative)"),
         static_cast<int>(RenderBackendPreference::CpuAndGpu));
     render_backend_->addItem(tr("GPU"),
                              static_cast<int>(RenderBackendPreference::Gpu));
+    render_backend_->addItem(
+        tr("CPU only (unsupported)"),
+        static_cast<int>(RenderBackendPreference::Cpu));
     const int backend_index = render_backend_->findData(
         static_cast<int>(performanceSettings.backend));
     render_backend_->setCurrentIndex(backend_index >= 0 ? backend_index : 0);
     render_backend_->setToolTip(
-        tr("Automatic uses the GPU-primary hybrid scheduler, accelerating each "
-           "supported stage and assigning only remaining independent work to "
-           "bounded CPU lanes. CPU is the deterministic reference renderer. "
+        tr("Automatic uses the cooperative CPU + GPU scheduler, striping "
+           "independent work across both processors. CPU only remains usable "
+           "but has no performance or GPU-shader support guarantee. "
            "GPU is strict: runtime acceleration failures are reported instead "
            "of silently restarting the frame on CPU."));
     backend_form->addRow(tr("Backend"), render_backend_);
@@ -370,8 +372,8 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
 #endif
     backend_form->addRow(
         explanatory_label(
-            tr("Used for preview, LIVE, and export. Automatic keeps supported "
-               "work on the GPU and uses bounded CPU lanes for independent work."),
+            tr("Used for preview, LIVE, and export. Automatic stripes supported "
+               "work across CPU and GPU lanes for maximum throughput."),
             backend_group,
             tr("This machine-local backend is used for preview, LIVE, and export. "
                "Automatic is recommended for maximum throughput. On Windows and Linux, "
@@ -386,11 +388,14 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     configure_form(threading_form);
     const int maximum_cpu_workers =
         spin_box_maximum(pvt::kMaximumSequenceWorkers);
-    preview_live_cpu_workers_ = new QSpinBox(threading_group);
+    const int automatic_cpu_workers = std::clamp(
+        QThread::idealThreadCount(), 1, maximum_cpu_workers);
+    preview_live_cpu_workers_ = new ResolvedAutoSpinBox(threading_group);
     preview_live_cpu_workers_->setObjectName(
         QStringLiteral("previewLiveCpuWorkersPreference"));
     preview_live_cpu_workers_->setRange(0, maximum_cpu_workers);
-    preview_live_cpu_workers_->setSpecialValueText(tr("Auto"));
+    static_cast<ResolvedAutoSpinBox*>(preview_live_cpu_workers_)
+        ->setResolvedAutoValue(automatic_cpu_workers, tr("Auto"));
     preview_live_cpu_workers_->setValue(spin_box_value(
         performanceSettings.preview_live_cpu_workers, maximum_cpu_workers));
     preview_live_cpu_workers_->setToolTip(tr(
@@ -400,11 +405,12 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     threading_form->addRow(tr("Preview / LIVE / still CPU workers"),
                            preview_live_cpu_workers_);
 
-    export_frame_workers_ = new QSpinBox(threading_group);
+    export_frame_workers_ = new ResolvedAutoSpinBox(threading_group);
     export_frame_workers_->setObjectName(
         QStringLiteral("exportFrameWorkersPreference"));
     export_frame_workers_->setRange(0, maximum_cpu_workers);
-    export_frame_workers_->setSpecialValueText(tr("Auto"));
+    static_cast<ResolvedAutoSpinBox*>(export_frame_workers_)
+        ->setResolvedAutoValue(automatic_cpu_workers, tr("Auto"));
     export_frame_workers_->setValue(spin_box_value(
         performanceSettings.export_frame_workers, maximum_cpu_workers));
     export_frame_workers_->setToolTip(tr(
@@ -414,11 +420,12 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     threading_form->addRow(tr("Concurrent export frames"),
                            export_frame_workers_);
 
-    export_cpu_workers_ = new QSpinBox(threading_group);
+    export_cpu_workers_ = new ResolvedAutoSpinBox(threading_group);
     export_cpu_workers_->setObjectName(
         QStringLiteral("exportCpuWorkersPreference"));
     export_cpu_workers_->setRange(0, maximum_cpu_workers);
-    export_cpu_workers_->setSpecialValueText(tr("Auto"));
+    static_cast<ResolvedAutoSpinBox*>(export_cpu_workers_)
+        ->setResolvedAutoValue(automatic_cpu_workers, tr("Auto"));
     export_cpu_workers_->setValue(spin_box_value(
         performanceSettings.export_cpu_workers, maximum_cpu_workers));
     export_cpu_workers_->setToolTip(tr(
@@ -430,11 +437,14 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
 
     const int maximum_gpu_frames =
         spin_box_maximum(pvt::kMaximumGpuFramesInFlight);
-    gpu_frames_in_flight_ = new QSpinBox(threading_group);
+    gpu_frames_in_flight_ = new ResolvedAutoSpinBox(threading_group);
     gpu_frames_in_flight_->setObjectName(
         QStringLiteral("gpuFramesInFlightPreference"));
     gpu_frames_in_flight_->setRange(0, maximum_gpu_frames);
-    gpu_frames_in_flight_->setSpecialValueText(tr("Auto"));
+    static_cast<ResolvedAutoSpinBox*>(gpu_frames_in_flight_)
+        ->setResolvedAutoValue(
+            std::clamp((automatic_cpu_workers + 1) / 2,
+                       1, maximum_gpu_frames), tr("Auto"));
     gpu_frames_in_flight_->setValue(spin_box_value(
         performanceSettings.gpu_frames_in_flight, maximum_gpu_frames));
     gpu_frames_in_flight_->setToolTip(
@@ -735,20 +745,25 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     const int maximum_memory_mib = spin_box_maximum(
         (std::numeric_limits<std::size_t>::max)() / kMebibyte);
     const int maximum_entries = spin_box_maximum(pvt::kMaximumUiItems);
+    const pvt::RuntimeResourceLimits automatic_limits =
+        pvt::automatic_resource_limits();
     const auto add_mib_control = [resources_group, resources_form,
                                   maximum_memory_mib](
                                      QSpinBox*& field,
                                      const char* object_name,
                                      const QString& label,
                                      std::size_t bytes,
+                                     std::size_t automatic_bytes,
                                      const QString& tooltip,
                                      int maximum_override = -1) {
-        field = new QSpinBox(resources_group);
+        field = new ResolvedAutoSpinBox(resources_group);
         field->setObjectName(QString::fromLatin1(object_name));
         const int maximum = maximum_override >= 0
             ? maximum_override : maximum_memory_mib;
         field->setRange(0, maximum);
-        field->setSpecialValueText(tr("Auto"));
+        static_cast<ResolvedAutoSpinBox*>(field)->setResolvedAutoValue(
+            std::max(1, mebibyte_editor_value(automatic_bytes, maximum)),
+            tr("Auto"));
         field->setSuffix(tr(" MiB"));
         field->setAccelerated(true);
         field->setValue(mebibyte_editor_value(bytes, maximum));
@@ -761,11 +776,14 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
                                        const char* object_name,
                                        const QString& label,
                                        std::size_t entries,
+                                       std::size_t automatic_entries,
                                        const QString& tooltip) {
-        field = new QSpinBox(resources_group);
+        field = new ResolvedAutoSpinBox(resources_group);
         field->setObjectName(QString::fromLatin1(object_name));
         field->setRange(0, maximum_entries);
-        field->setSpecialValueText(tr("Auto"));
+        static_cast<ResolvedAutoSpinBox*>(field)->setResolvedAutoValue(
+            std::max(1, spin_box_value(automatic_entries, maximum_entries)),
+            tr("Auto"));
         field->setAccelerated(true);
         field->setValue(spin_box_value(entries, maximum_entries));
         field->setToolTip(tooltip);
@@ -775,52 +793,62 @@ ApplicationSettingsDialog::ApplicationSettingsDialog(
     add_mib_control(
         maximum_decoded_image_mib_, "maximumDecodedImageMiBPreference",
         tr("Maximum decoded image"), authored_limits.maximum_decoded_image_bytes,
+        automatic_limits.maximum_decoded_image_bytes,
         tr("Per-image limit after PNG or OpenEXR decoding. Raise this for very "
            "large starting images, environment maps, or height maps."));
     add_mib_control(
         maximum_obj_file_mib_, "maximumObjFileMiBPreference",
         tr("Maximum OBJ file"), authored_limits.maximum_obj_file_bytes,
+        automatic_limits.maximum_obj_file_bytes,
         tr("Maximum source bytes read by the OBJ parser. Parsing remains "
            "transactional and checked even when this override is raised."));
     add_mib_control(
         maximum_obj_mesh_mib_, "maximumObjMeshMiBPreference",
         tr("Maximum expanded OBJ mesh"), authored_limits.maximum_obj_mesh_bytes,
+        automatic_limits.maximum_obj_mesh_bytes,
         tr("Per-OBJ retained geometry after parsing and triangulation."));
     add_mib_control(
         maximum_project_bundle_mib_, "maximumProjectBundleMiBPreference",
         tr("Maximum expanded project bundle"),
         authored_limits.maximum_project_bundle_expanded_bytes,
+        automatic_limits.maximum_project_bundle_expanded_bytes,
         tr("Total uncompressed bytes accepted while loading or saving a ZIP or "
            "unpacked bundle. Individual entries retain independent format "
            "and API representation bounds."));
     add_mib_control(
         source_image_cache_mib_, "sourceImageCacheMiBPreference",
         tr("Decoded image cache"), authored_limits.source_image_cache_bytes,
+        automatic_limits.source_image_cache_bytes,
         tr("Reusable decoded starting images, environment maps, and height "
            "images retained between frames."));
     add_entry_control(
         source_image_cache_entries_, "sourceImageCacheEntriesPreference",
         tr("Decoded image cache entries"),
         authored_limits.source_image_cache_entries,
+        automatic_limits.source_image_cache_entries,
         tr("Maximum number of decoded image variants retained between frames."));
     add_mib_control(
         obj_mesh_cache_mib_, "objMeshCacheMiBPreference",
         tr("OBJ mesh cache"), authored_limits.obj_mesh_cache_bytes,
+        automatic_limits.obj_mesh_cache_bytes,
         tr("Reusable parsed OBJ geometry retained between frames and projects."));
     add_entry_control(
         obj_mesh_cache_entries_, "objMeshCacheEntriesPreference",
         tr("OBJ mesh cache entries"), authored_limits.obj_mesh_cache_entries,
+        automatic_limits.obj_mesh_cache_entries,
         tr("Maximum number of parsed OBJ variants retained between frames."));
     add_mib_control(
         displacement_mesh_cache_mib_, "displacementMeshCacheMiBPreference",
         tr("Height-mesh cache"),
         authored_limits.displacement_mesh_cache_bytes,
+        automatic_limits.displacement_mesh_cache_bytes,
         tr("Reusable subdivision meshes generated from height maps."));
     add_entry_control(
         displacement_mesh_cache_entries_,
         "displacementMeshCacheEntriesPreference",
         tr("Height-mesh cache entries"),
         authored_limits.displacement_mesh_cache_entries,
+        automatic_limits.displacement_mesh_cache_entries,
         tr("Maximum number of generated height-mesh variants retained."));
 
     resource_limits_status_ = explanatory_label(QString{}, resources_group);

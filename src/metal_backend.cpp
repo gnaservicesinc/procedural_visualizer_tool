@@ -74,6 +74,8 @@ struct alignas(16) GpuFrameConstants {
     Float4 post_values; // invert mixes, antialias strength, threshold
     UInt4 post_channel_flags; // invert red, green, blue, reserved
     Float4 post_channel_mixes; // red, green, blue, reserved
+    Float4 block_grid; // requested size, X/Y lattice offsets, reference size
+    UInt4 block_flags; // alpha gaps, fractional, columns, rows
 };
 
 struct alignas(16) GpuWave {
@@ -150,7 +152,7 @@ struct alignas(16) GpuParticleGrid {
 static_assert(sizeof(UInt4) == 16U);
 static_assert(sizeof(Int4) == 16U);
 static_assert(sizeof(Float4) == 16U);
-static_assert(sizeof(GpuFrameConstants) == 352U);
+static_assert(sizeof(GpuFrameConstants) == 384U);
 static_assert(sizeof(GpuChannelMap) == 32U);
 static_assert(sizeof(GpuWave) == 48U);
 static_assert(sizeof(GpuSwing) == 16U);
@@ -165,6 +167,43 @@ static_assert(sizeof(GpuParticleGrid) == 16U);
 // At and above this size, the serial per-block fill is large enough to justify
 // splitting per-pixel alpha and expansion across the complete GPU.
 constexpr int kTwoPassBaseMinimumBlockSize = 64;
+
+std::uint64_t block_grid_hash(std::uint64_t value) {
+    value ^= value >> 30U;
+    value *= UINT64_C(0xbf58476d1ce4e5b9);
+    value ^= value >> 27U;
+    value *= UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31U);
+}
+
+double block_grid_offset(const RenderConfig& config,
+                         const PreparedFrame& prepared,
+                         std::uint64_t axis_seed) {
+    if (std::floor(config.block_size) == config.block_size) return 0.0;
+    constexpr double kTau = 6.283185307179586476925286766559;
+    double normalized = std::fmod(prepared.loop_phase / kTau, 1.0);
+    if (normalized < 0.0) normalized += 1.0;
+    const std::uint64_t synchronized_seed =
+        config.block_size_modulation.synchronized
+            ? static_cast<std::uint64_t>(std::llround(
+                  normalized * static_cast<double>(config.total_frames)))
+            : 0U;
+    const std::uint64_t random = block_grid_hash(
+        axis_seed ^ synchronized_seed);
+    return static_cast<double>(random >> 11U) * 0x1.0p-53;
+}
+
+std::size_t block_axis_count(int extent, double size, double offset) {
+    if (std::floor(size) == size) {
+        const std::size_t integral = static_cast<std::size_t>(size);
+        return static_cast<std::size_t>(extent) / integral
+               + (static_cast<std::size_t>(extent) % integral != 0U ? 1U
+                                                                     : 0U);
+    }
+    return std::max<std::size_t>(
+        1U, static_cast<std::size_t>(std::ceil(
+                (static_cast<double>(extent) - offset) / size)));
+}
 
 bool cancelled(const std::atomic_bool* cancel) {
     return cancel != nullptr && cancel->load(std::memory_order_relaxed);
@@ -478,11 +517,14 @@ std::uint64_t generated_block_count(const RenderConfig& config) {
         starting.reference_width > 0 ? starting.reference_width : config.width);
     const std::uint64_t reference_height = static_cast<std::uint64_t>(
         starting.reference_height > 0 ? starting.reference_height : config.height);
-    const std::uint64_t reference_block = static_cast<std::uint64_t>(
+    const double reference_block =
         starting.reference_block_size > 0
-            ? starting.reference_block_size : config.block_size);
-    return ((reference_width + reference_block - 1U) / reference_block)
-           * ((reference_height + reference_block - 1U) / reference_block);
+            ? static_cast<double>(starting.reference_block_size)
+            : config.block_size;
+    return static_cast<std::uint64_t>(std::ceil(
+               static_cast<double>(reference_width) / reference_block))
+           * static_cast<std::uint64_t>(std::ceil(
+               static_cast<double>(reference_height) / reference_block));
 }
 
 bool generated_capacity_reaches(std::uint64_t levels,
@@ -519,10 +561,19 @@ std::uint64_t generated_channel_levels(std::uint64_t block_count,
 GpuFrameConstants make_constants(const RenderConfig& config,
                                  const PreparedFrame& prepared) {
     GpuFrameConstants result;
+    const double block_offset_x = block_grid_offset(
+        config, prepared, UINT64_C(0x243f6a8885a308d3));
+    const double block_offset_y = block_grid_offset(
+        config, prepared, UINT64_C(0x13198a2e03707344));
+    const std::size_t block_columns = block_axis_count(
+        config.width, config.block_size, block_offset_x);
+    const std::size_t block_rows = block_axis_count(
+        config.height, config.block_size, block_offset_y);
     result.dimensions_counts = {
         static_cast<std::uint32_t>(config.width),
         static_cast<std::uint32_t>(config.height),
-        static_cast<std::uint32_t>(config.block_size),
+        static_cast<std::uint32_t>(std::max(
+            1.0, std::floor(config.block_size + 0.5))),
         static_cast<std::uint32_t>(prepared.waves.size())};
     result.counts_flags = {
         static_cast<std::uint32_t>(prepared.spatial_swings.size()),
@@ -614,8 +665,10 @@ GpuFrameConstants make_constants(const RenderConfig& config,
             starting.reference_height > 0
                 ? starting.reference_height : config.height),
         static_cast<std::uint32_t>(
-            starting.reference_block_size > 0
-                ? starting.reference_block_size : config.block_size),
+            std::max(1.0, std::floor(
+                (starting.reference_block_size > 0
+                     ? starting.reference_block_size : config.block_size)
+                + 0.5))),
         static_cast<std::uint32_t>(generated_levels)};
     result.starting_minimum = {
         static_cast<float>(starting.red_minimum),
@@ -660,6 +713,19 @@ GpuFrameConstants make_constants(const RenderConfig& config,
         static_cast<float>(config.post_process.invert_green_mix),
         static_cast<float>(config.post_process.invert_blue_mix),
         0.0F};
+    const double reference_block = config.starting_colors.reference_block_size > 0
+        ? static_cast<double>(config.starting_colors.reference_block_size)
+        : config.block_size;
+    result.block_grid = {
+        static_cast<float>(config.block_size),
+        static_cast<float>(block_offset_x),
+        static_cast<float>(block_offset_y),
+        static_cast<float>(reference_block)};
+    result.block_flags = {
+        config.block_size_modulation.alpha_gaps ? 1U : 0U,
+        std::floor(config.block_size) != config.block_size ? 1U : 0U,
+        static_cast<std::uint32_t>(block_columns),
+        static_cast<std::uint32_t>(block_rows)};
     return result;
 }
 
@@ -1440,19 +1506,18 @@ bool render_prepared_frame_metal(const RenderConfig& config,
         return fail(error, "Metal working buffer size overflowed.");
     }
     const std::size_t frame_working_bytes = frame_bytes * 3U;
-    const std::size_t block_size =
-        static_cast<std::size_t>(config.block_size);
-    const std::size_t block_columns =
-        static_cast<std::size_t>(config.width) / block_size
-        + (static_cast<std::size_t>(config.width) % block_size != 0U
-               ? 1U : 0U);
-    const std::size_t block_rows =
-        static_cast<std::size_t>(config.height) / block_size
-        + (static_cast<std::size_t>(config.height) % block_size != 0U
-               ? 1U : 0U);
+    const double block_offset_x = block_grid_offset(
+        config, prepared, UINT64_C(0x243f6a8885a308d3));
+    const double block_offset_y = block_grid_offset(
+        config, prepared, UINT64_C(0x13198a2e03707344));
+    const std::size_t block_columns = block_axis_count(
+        config.width, config.block_size, block_offset_x);
+    const std::size_t block_rows = block_axis_count(
+        config.height, config.block_size, block_offset_y);
     const bool use_two_pass_base =
         !starting_image
-        && config.block_size >= kTwoPassBaseMinimumBlockSize;
+        && (config.block_size >= kTwoPassBaseMinimumBlockSize
+            || std::floor(config.block_size) != config.block_size);
     std::size_t base_block_count = 0U;
     std::size_t generated_block_bytes = 0U;
     if (use_two_pass_base

@@ -314,13 +314,17 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                           layer.render.*member = static_cast<int>(std::llround(v));
                       });
         };
-        const auto add_render_bool = [&](const QString& key, const QString& label,
+        const auto add_render_flag = [&](const QString& key, const QString& label,
                                          const QString& section, bool current,
-                                         auto member) {
+                                         std::uint32_t mask) {
             add_layer(key, label, section, LiveTargetKind::Boolean, 0.0, 1.0,
                       current ? 1.0 : 0.0,
-                      [member](pvt::LayerConfig& layer, double v) {
-                          layer.render.*member = v >= 0.5;
+                      [mask](pvt::LayerConfig& layer, double v) {
+                          if (v >= 0.5) {
+                              layer.render.flags |= mask;
+                          } else {
+                              layer.render.flags &= ~mask;
+                          }
                       });
         };
         add_render_real(QStringLiteral("phrase_warp"), QObject::tr("Phrase warp"),
@@ -334,23 +338,23 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                         QObject::tr("Rhythm"), -kMaximumRenderParameter,
                         kMaximumRenderParameter,
                         render.ghost_lag_degrees, &pvt::RenderData::ghost_lag_degrees);
-        add_render_bool(QStringLiteral("displacement_enabled"), QObject::tr("Displacement"),
+        add_render_flag(QStringLiteral("displacement_enabled"), QObject::tr("Displacement"),
                         QObject::tr("Modifiers"), render.displacement_enabled,
-                        &pvt::RenderData::displacement_enabled);
+                        pvt::RenderData::DisplacementEnabledFlag);
         add_render_real(QStringLiteral("displacement"), QObject::tr("Displacement amount"),
                         QObject::tr("Modifiers"), 0.0,
                         kMaximumRenderParameter, render.displacement,
                         &pvt::RenderData::displacement);
-        add_render_bool(QStringLiteral("lighting_enabled"), QObject::tr("Slope lighting"),
+        add_render_flag(QStringLiteral("lighting_enabled"), QObject::tr("Slope lighting"),
                         QObject::tr("Modifiers"), render.lighting_enabled,
-                        &pvt::RenderData::lighting_enabled);
+                        pvt::RenderData::LightingEnabledFlag);
         add_render_real(QStringLiteral("wave_depth"), QObject::tr("Lighting depth"),
                         QObject::tr("Modifiers"), 0.0,
                         kMaximumRenderParameter, render.wave_depth,
                         &pvt::RenderData::wave_depth);
-        add_render_bool(QStringLiteral("spiral_enabled"), QObject::tr("Spiral"),
+        add_render_flag(QStringLiteral("spiral_enabled"), QObject::tr("Spiral"),
                         QObject::tr("Modifiers"), render.spiral_enabled,
-                        &pvt::RenderData::spiral_enabled);
+                        pvt::RenderData::SpiralEnabledFlag);
         add_render_real(QStringLiteral("spiral_frequency"), QObject::tr("Spiral frequency"),
                         QObject::tr("Modifiers"), 0.0, kMaximumRenderParameter,
                         render.spiral_frequency, &pvt::RenderData::spiral_frequency);
@@ -358,9 +362,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                        QObject::tr("Modifiers"), kMinimumIntegerParameter,
                        kMaximumIntegerParameter,
                        render.spiral_arms, &pvt::RenderData::spiral_arms);
-        add_render_bool(QStringLiteral("wall_enabled"), QObject::tr("Wall reflection"),
+        add_render_flag(QStringLiteral("wall_enabled"), QObject::tr("Wall reflection"),
                         QObject::tr("Modifiers"), render.wall_reflection_enabled,
-                        &pvt::RenderData::wall_reflection_enabled);
+                        pvt::RenderData::WallReflectionEnabledFlag);
         add_render_real(QStringLiteral("wall_frequency"), QObject::tr("Wall frequency"),
                         QObject::tr("Modifiers"), 0.0, kMaximumRenderParameter,
                         render.wall_frequency, &pvt::RenderData::wall_frequency);
@@ -375,9 +379,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
         add_render_real(QStringLiteral("saturation"), QObject::tr("Saturation"),
                         QObject::tr("Color"), 0.0, 1.0, render.saturation,
                         &pvt::RenderData::saturation);
-        add_render_bool(QStringLiteral("swings_enabled"), QObject::tr("Swing master"),
+        add_render_flag(QStringLiteral("swings_enabled"), QObject::tr("Swing master"),
                         QObject::tr("Rhythm"), render.swings_enabled,
-                        &pvt::RenderData::swings_enabled);
+                        pvt::RenderData::SwingsEnabledFlag);
 
         const auto add_nested = [&](const QString& key, const QString& label,
                                     const QString& section, LiveTargetKind kind,

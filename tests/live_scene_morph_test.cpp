@@ -16,6 +16,31 @@ int main(int argc, char** argv) {
     };
     auto project = pvt::default_project();
     const auto registry = buildLiveTargetRegistry(project);
+    const QString layer_prefix = QStringLiteral("layer/%1/")
+        .arg(QString::fromStdString(project.layers.front().uuid));
+    const auto displacement_target = std::find_if(
+        registry.begin(), registry.end(), [&layer_prefix](const auto& target) {
+            return target.path
+                   == layer_prefix + QStringLiteral("displacement_enabled");
+        });
+    check(displacement_target != registry.end(),
+          "The layer displacement flag must be a LIVE target.");
+    if (displacement_target != registry.end()) {
+        const std::uint32_t other_flags =
+            project.layers.front().render.flags
+            & ~pvt::RenderData::DisplacementEnabledFlag;
+        check(displacement_target->apply(project, 0.0)
+                  && !project.layers.front().render.displacement_enabled
+                  && (project.layers.front().render.flags
+                      & ~pvt::RenderData::DisplacementEnabledFlag)
+                         == other_flags,
+              "LIVE must clear the packed flag directly without disturbing its bank.");
+        check(displacement_target->apply(project, 1.0)
+                  && project.layers.front().render.displacement_enabled
+                  && (project.layers.front().render.flags
+                      & pvt::RenderData::DisplacementEnabledFlag) != 0U,
+              "LIVE must set the packed flag directly without a Boolean copy.");
+    }
     pvt::LiveSceneConfig a;
     pvt::LiveSceneConfig b;
     using Type = pvt::LiveSceneValueType;

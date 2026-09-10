@@ -297,6 +297,12 @@ bool is_setup_v25_key(std::string_view key) {
            && has_suffix(key, ".id");
 }
 
+bool is_setup_v27_key(std::string_view key) {
+    // Block-size modulation is project-global. Older synthesized layer setups
+    // must not preserve current defaults as unknown layer compatibility data.
+    return starts_with(key, "canvas.block_size.");
+}
+
 bool supported_layer_version(const std::string& serialized,
                              std::uint32_t& layer_version,
                              std::uint32_t& setup_version) {
@@ -346,7 +352,8 @@ bool supported_render_output_version(const std::string& serialized,
                     : output_version == 5U ? 8U
                     : output_version == 6U ? 12U
                     : output_version == 7U ? 14U
-                    : output_version == 8U ? 23U : 24U;
+                    : output_version == 8U ? 23U
+                    : output_version == 9U ? 24U : 27U;
     return true;
 }
 
@@ -615,6 +622,9 @@ bool synthesize_setup(const std::string& partial,
             continue;
         }
         if (setup_version < 25U && is_setup_v25_key(key)) {
+            continue;
+        }
+        if (setup_version < 27U && is_setup_v27_key(key)) {
             continue;
         }
         if (is_render_key(key) != partial_is_render) {
@@ -959,6 +969,8 @@ bool deserialize_render_output_config(const std::string& serialized,
         candidate_canvas.audio_reactive_defaults =
             loaded.audio_reactive_defaults;
         candidate_canvas.live = std::move(loaded.live);
+        candidate_canvas.block_size_modulation =
+            std::move(loaded.block_size_modulation);
         candidate_canvas.motion_paths = std::move(loaded.motion_paths);
         candidate_canvas.output_compatibility =
             std::move(loaded.output_compatibility);

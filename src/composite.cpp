@@ -36,6 +36,39 @@ constexpr std::size_t kMaximumProjectNameBytes = kMaximumUiItems;
 bool fail(std::string* error, std::string message);
 bool cancelled(const std::atomic_bool* cancel);
 
+bool render_project_blackout_if_requested(
+    const ProjectConfig& project, Image& destination,
+    const std::atomic_bool* cancel, std::string* error, bool& handled) {
+    handled = project.canvas.block_size == 0.0;
+    if (!handled) return true;
+    if (cancelled(cancel)) {
+        return fail(error, "Project blackout was cancelled.");
+    }
+    if (project.canvas.width < 1 || project.canvas.height < 1
+        || static_cast<std::size_t>(project.canvas.width)
+               > (std::numeric_limits<std::size_t>::max)()
+                     / static_cast<std::size_t>(project.canvas.height)
+        || static_cast<std::size_t>(project.canvas.width)
+                   * static_cast<std::size_t>(project.canvas.height)
+               > (std::numeric_limits<std::size_t>::max)() / 4U) {
+        return fail(error, "Project blackout dimensions overflow the pixel buffer.");
+    }
+    Image blackout;
+    blackout.width = project.canvas.width;
+    blackout.height = project.canvas.height;
+    blackout.pixels.assign(
+        static_cast<std::size_t>(blackout.width)
+            * static_cast<std::size_t>(blackout.height) * 4U,
+        0.0F);
+    for (std::size_t offset = 3U; offset < blackout.pixels.size();
+         offset += 4U) {
+        blackout.pixels[offset] = 1.0F;
+    }
+    destination = std::move(blackout);
+    if (error != nullptr) error->clear();
+    return true;
+}
+
 struct LayerPoolTask {
     std::size_t position = 0U;
     std::size_t layer_index = 0U;
@@ -2033,6 +2066,12 @@ bool detail::render_project_frame_validated(
     const FrameRenderOptions& options, const ProjectRenderMemory& memory,
     Image& destination, const std::atomic_bool* cancel,
     std::string* error) {
+    bool blackout = false;
+    if (!render_project_blackout_if_requested(
+            project, destination, cancel, error, blackout)) {
+        return false;
+    }
+    if (blackout) return true;
     if (frame_count < 1 || frame_index < 0 || frame_index >= frame_count) {
         return fail(error,
                     "The prevalidated project frame is outside its timeline.");
@@ -2088,6 +2127,12 @@ bool render_project_frame_at_phase(const ProjectConfig& project,
                                    std::string* error) {
     clear_error(error);
     try {
+        bool blackout = false;
+        if (!render_project_blackout_if_requested(
+                project, destination, cancel, error, blackout)) {
+            return false;
+        }
+        if (blackout) return true;
         detail::prune_render_asset_caches(project);
         detail::ProjectRenderMemory memory;
         const ValidationResult validation = detail::validate_project_render_memory(project, memory);
@@ -2120,6 +2165,12 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
                           std::string* error) {
     clear_error(error);
     try {
+        bool blackout = false;
+        if (!render_project_blackout_if_requested(
+                project, destination, cancel, error, blackout)) {
+            return false;
+        }
+        if (blackout) return true;
         detail::prune_render_asset_caches(project);
         detail::ProjectRenderMemory memory;
         const ValidationResult validation = detail::validate_project_render_memory(project, memory);
@@ -2168,6 +2219,12 @@ bool render_project_frame_at_phase(
     std::string* error) {
     clear_error(error);
     try {
+        bool blackout = false;
+        if (!render_project_blackout_if_requested(
+                project, destination, cancel, error, blackout)) {
+            return false;
+        }
+        if (blackout) return true;
         detail::prune_render_asset_caches(project);
         detail::ProjectRenderMemory memory;
         const ValidationResult validation = detail::validate_project_render_memory(project, memory);
@@ -2201,6 +2258,12 @@ bool render_project_frame(const ProjectConfig& project, int frame_index,
                           std::string* error) {
     clear_error(error);
     try {
+        bool blackout = false;
+        if (!render_project_blackout_if_requested(
+                project, destination, cancel, error, blackout)) {
+            return false;
+        }
+        if (blackout) return true;
         detail::prune_render_asset_caches(project);
         detail::ProjectRenderMemory memory;
         const ValidationResult validation = detail::validate_project_render_memory(project, memory);

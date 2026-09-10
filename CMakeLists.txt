@@ -442,7 +442,7 @@ if(PVT_NEEDS_BUNDLE_SUPPORT)
     add_library(ProceduralVisualizerBundle STATIC
         src/bundle_archive.cpp
         src/bundle_archive.h
-        src/config_codec.cpp
+    src/config_codec.cpp
         src/config_codec.h
         src/palette_io.cpp
         src/palette_io.h
@@ -569,6 +569,8 @@ if(PVT_BUILD_QT_GUI)
         gui/main.cpp
         gui/localization.cpp
         gui/localization.h
+        gui/flexible_spin_box.cpp
+        gui/flexible_spin_box.h
         gui/main_window.cpp
         gui/main_window.h
         gui/live_midi.h
@@ -983,6 +985,7 @@ if(BUILD_TESTING)
                 -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ExpectCliFailure.cmake)
         add_test(NAME pvt_cli_custom_obj_render
             COMMAND pvt_render_cli --render
+                --backend cpu
                 --width 32 --height 32 --block-size 2 --frames 2
                 --obj ${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/obj/closed_cube.obj
                 --png-compression 0
@@ -990,6 +993,7 @@ if(BUILD_TESTING)
                 --prefix obj_ --overwrite)
         add_test(NAME pvt_cli_displacement_plane_render
             COMMAND pvt_render_cli --render
+                --backend cpu
                 --width 32 --height 32 --block-size 2 --frames 2
                 --height-map ${CMAKE_CURRENT_SOURCE_DIR}/icon/icon.png
                 --height-min -0.3 --height-max 0.45
@@ -999,6 +1003,7 @@ if(BUILD_TESTING)
                 --prefix height_ --overwrite)
         add_test(NAME pvt_cli_starting_image_render
             COMMAND pvt_render_cli --render
+                --backend cpu
                 --width 32 --height 32 --block-size 2 --frames 2
                 --starting-image ${CMAKE_CURRENT_SOURCE_DIR}/icon/icon.png
                 --image-fit contain --png-compression 0

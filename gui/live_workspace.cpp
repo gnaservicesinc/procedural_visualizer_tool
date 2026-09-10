@@ -3,6 +3,7 @@
 
 #include "audio_processing_dialog.h"
 #include "device_sleep_guard.h"
+#include "flexible_spin_box.h"
 #include "live_frame_controller.h"
 #include "live_midi.h"
 #include "live_osc.h"
@@ -1009,7 +1010,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gain->setValue(static_cast<int>(std::lround(
         std::min(stored_gain, 400.0))));
     gain->setUnit(QStringLiteral("%"));
-    gain_value = new QDoubleSpinBox;
+    gain_value = new FlexibleDoubleSpinBox;
     gain_value->setObjectName(QStringLiteral("liveAudioGainValue"));
     gain_value->setDecimals(3);
     gain_value->setSingleStep(0.1);
@@ -1018,7 +1019,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gain_value->setSuffix(QStringLiteral("%"));
     gain_value->setValue(stored_gain);
     gain_value->setMaximumWidth(145);
-    gain_decibels = new QDoubleSpinBox;
+    gain_decibels = new FlexibleDoubleSpinBox;
     gain_decibels->setObjectName(QStringLiteral("liveAudioGainDecibels"));
     gain_decibels->setRange(kMinimumInputTrimDecibels,
                             kMaximumInputTrimDecibels);
@@ -1036,7 +1037,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     sensitivity->setValue(static_cast<int>(std::lround(
         std::min(stored_sensitivity, 400.0))));
     sensitivity->setUnit(QStringLiteral("%"));
-    sensitivity_value = new QDoubleSpinBox;
+    sensitivity_value = new FlexibleDoubleSpinBox;
     sensitivity_value->setObjectName(
         QStringLiteral("liveAudioSensitivityValue"));
     sensitivity_value->setDecimals(3);
@@ -1086,7 +1087,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_enabled->setObjectName(QStringLiteral("liveNoiseGateEnabled"));
     gate_enabled->setChecked(QSettings().value(
         QStringLiteral("live/noiseGateEnabled"), false).toBool());
-    gate_threshold = new QDoubleSpinBox;
+    gate_threshold = new FlexibleDoubleSpinBox;
     gate_threshold->setObjectName(QStringLiteral("liveNoiseGateThreshold"));
     gate_threshold->setRange(-96.0, 0.0);
     gate_threshold->setDecimals(1);
@@ -1097,7 +1098,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_threshold->setToolTip(LiveWorkspace::tr(
         "The post-EQ dBFS level that opens the gate. Compare it with the "
         "pre-gate meter while the wanted source is playing."));
-    gate_hysteresis = new QDoubleSpinBox;
+    gate_hysteresis = new FlexibleDoubleSpinBox;
     gate_hysteresis->setObjectName(
         QStringLiteral("liveNoiseGateHysteresis"));
     gate_hysteresis->setRange(0.0, 24.0);
@@ -1109,7 +1110,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     gate_hysteresis->setToolTip(LiveWorkspace::tr(
         "How much quieter the signal must become before the gate may close. "
         "A few dB prevents chatter near the opening threshold."));
-    gate_attack = new QDoubleSpinBox;
+    gate_attack = new FlexibleDoubleSpinBox;
     gate_attack->setObjectName(QStringLiteral("liveNoiseGateAttack"));
     gate_attack->setRange(0.1, 1000.0);
     gate_attack->setDecimals(1);
@@ -1697,7 +1698,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     morph_slider->setRange(0, 1000);
     morph_slider->setPageStep(100);
     morph_slider->setAccessibleName(LiveWorkspace::tr("Scene morph position"));
-    morph_amount = new QDoubleSpinBox;
+    morph_amount = new FlexibleDoubleSpinBox;
     morph_amount->setObjectName(QStringLiteral("liveSceneMorphAmount"));
     morph_amount->setRange(0.0, 100.0);
     morph_amount->setDecimals(1);
@@ -3822,10 +3823,10 @@ void LiveWorkspace::Impl::editMapping(int index) {
     outer->addWidget(targets);
 
     auto* transform = new QFormLayout;
-    auto* input_min = new QDoubleSpinBox;
-    auto* input_max = new QDoubleSpinBox;
-    auto* output_min = new QDoubleSpinBox;
-    auto* output_max = new QDoubleSpinBox;
+    auto* input_min = new FlexibleDoubleSpinBox;
+    auto* input_max = new FlexibleDoubleSpinBox;
+    auto* output_min = new FlexibleDoubleSpinBox;
+    auto* output_max = new FlexibleDoubleSpinBox;
     for (auto* spin : {input_min, input_max, output_min, output_max}) {
         spin->setDecimals(6);
         spin->setRange(-kMaximumLiveMappingMagnitude,
@@ -3841,11 +3842,11 @@ void LiveWorkspace::Impl::editMapping(int index) {
                                  : selected_target_value(Qt::UserRole + 1).toDouble());
     output_max->setValue(editing ? initial.output_maximum
                                  : selected_target_value(Qt::UserRole + 2).toDouble());
-    auto* curve = new QDoubleSpinBox;
+    auto* curve = new FlexibleDoubleSpinBox;
     curve->setDecimals(6);
     curve->setRange(0.000001, kMaximumLiveMappingMagnitude);
     curve->setValue(editing ? initial.curve : 1.0);
-    auto* dead = new QDoubleSpinBox;
+    auto* dead = new FlexibleDoubleSpinBox;
     dead->setDecimals(6);
     dead->setRange(0.0, 0.999999);
     dead->setValue(editing ? initial.dead_zone : 0.0);

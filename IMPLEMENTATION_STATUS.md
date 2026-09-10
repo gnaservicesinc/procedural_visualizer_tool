@@ -1,10 +1,53 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-09
+Last updated: 2026-09-10
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 18.0.0 fractional blocks, raw project I/O, and explicit history modes
+
+Project block size is now double precision and accepts decimals, conventional
+fractions/mixed numbers, and Unicode vulgar fractions in every decimal editor.
+Floor/ceiling grids distribute the requested fraction deterministically across
+each frame, with either blended seams or alpha gaps. Project-clock synchronization
+and a named one-click block-size LFO are persisted. Sub-one values supersample;
+zero produces BLACKOUT without entering the renderer. CPU, Metal, and OpenGL
+implement the same grid/materialization contract.
+
+Binary project storage is the speed-oriented default. The `.pvtdat` numeric
+payload is one ordered native-width byte stream; strings remain exact ordered
+newline records in `.pvtstrings`. Packed `uint32_t` flag banks are authoritative
+in memory and are copied directly, while named bit fields are views and add no
+binary work. Binary data has no version/header/field-name codec and no live file
+change scan. Exact byte consumption plus post-load sanity validation identifies
+the current frozen layout; future layouts must preserve existing fields and only
+append, with frozen older walks retained for migration. Human directories keep
+their relative `current` symlink and optional one-hop deltas for old revisions.
+
+Revision history is explicit Full, Partial, or Disabled state. Partial mode has
+manual Create Revision, retention, pin, and delete controls; ordinary Save only
+updates the current unpinned working revision. Manual and pinned revisions are
+immutable. Discarded lineage cannot be promoted in place: returning to Full uses
+a renamed Save Copy and a fresh version-zero tree. Add Layer now supplies blank,
+template/default, current-layer, imported-project, and constrained-random sources,
+four placement choices, smart names, and attachment/path migration.
+
+CPU + GPU is cooperative independent-work striping, not fallback. Missing GPU
+support fails both accelerated modes. CPU-only remains available but unsupported;
+startup can switch to it in one click. A new project is timed against its own FPS
+budget before any smaller starting resolution is offered, and existing projects
+are never resized. Numeric Auto/named values reveal the resolved number on focus
+and restore the label when left unchanged or cleared.
+
+The 2,000-item Release persistence probe measured 835,154 binary bytes versus
+4,377,608 text bytes, 6.994/6.418 ms median binary save/load versus
+25.075/69.108 ms for text, and roughly 10.8 MB versus 82.3 MB peak RSS. The
+public by-value structures and packed storage change ABI, so the release advances
+to SONAME 18. The clean Apple-Clang Release build passes 40/40 CTests and both
+released translations are complete at 3,060/3,060 messages. Cross-platform and
+packaged-artifact evidence remains gated on the main and tagged workflows.
 
 ## 17.11.0 persistence, sequence, and adaptive-resource performance
 

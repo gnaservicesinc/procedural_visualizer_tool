@@ -11,12 +11,27 @@ struct BundleFileSet {
     std::string root_name;
     std::map<std::string, std::string> files;
     // In-memory commit metadata, never serialized or included in state
-    // digests. Project-format migrations may atomically add or replace only
-    // these explicitly verified files inside existing immutable versions.
+    // digests. Project-format migrations and the explicitly mutable current
+    // snapshot in partial-history mode may atomically add or replace only
+    // these narrowly recognized files inside existing version directories.
     std::set<std::string> transactional_updates;
-    // Verified redundant content-addressed assets may be removed after their
-    // one surviving byte-identical object and root controls are durable.
+    // Verified redundant content-addressed assets and obsolete full/delta
+    // forms of human-readable version payloads may be removed after their
+    // replacement and root controls are durable.
     std::set<std::string> transactional_removals;
+    // Immutable version directories deliberately retired by the persisted
+    // revision policy. They are removed only after the new root metadata and
+    // current pointer are durable.
+    std::set<std::uint64_t> retired_versions;
+    // ZIP deflate level, 0..9. This write policy is intentionally excluded
+    // from the semantic file-set digest.
+    int zip_compression_level = 6;
+    bool force_zip_recompression = false;
+    // Human-editable directory bundles expose current as a relative symlink
+    // to the numeric version directory. The logical in-memory `current`
+    // record remains present for checksums and ZIP portability.
+    bool current_as_relative_symlink = false;
+    std::uint64_t current_symlink_version = 0U;
     bool from_zip = false;
 };
 

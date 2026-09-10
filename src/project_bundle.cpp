@@ -63,10 +63,11 @@ constexpr std::size_t kMaximumVersions = kMaximumUiItems;
 constexpr std::size_t kMaximumLineageAliases = kMaximumUiItems;
 constexpr std::size_t kMaximumProjectNameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumPortableRootBytes = 240U;
-constexpr std::uint32_t kProjectVersionFormatVersion = 5U;
+constexpr std::uint32_t kProjectVersionFormatVersion = 7U;
 constexpr std::uint32_t kSplitLayerFormatVersion = 2U;
 constexpr std::uint32_t kLegacySplitLayerFormatVersion = 1U;
 constexpr std::uint32_t kLayerFormatVersionWithAlphaOrdering = 20U;
+constexpr std::string_view kTextDeltaSuffix = ".pvtdiff";
 constexpr std::string_view kSplitLayerVersionKey =
     "split.layer_format_version";
 
@@ -88,6 +89,7 @@ struct RootMetadata {
     std::string last_saved_utc;
     std::string created_with_version;
     std::string last_changed_with_version;
+    ProjectFileIoSettings file_io;
     std::map<std::uint64_t, std::string> version_digests;
     std::map<std::uint64_t, std::string> version_tree_digests;
     // Parent-digest identities retained after an externally deleted history
@@ -108,6 +110,9 @@ struct VersionManifest {
     std::uint32_t format_version = kProjectVersionFormatVersion;
     BundleVersionInfo info;
     std::string project_name;
+    ProjectStorageEncoding storage_encoding =
+        ProjectStorageEncoding::HumanEditable;
+    std::string semantic_digest;
     std::string render_output_digest;
     std::string music_analysis_digest;
     std::vector<LayerConfig> layers;
@@ -147,6 +152,7 @@ bool valid_key(std::string_view key) {
     }
     return true;
 }
+
 
 bool unreserved(unsigned char character) {
     return (character >= 'a' && character <= 'z')
@@ -412,6 +418,15 @@ bool take_bool(Records& records, const std::string& key,
     if (text == "0") value = false;
     else if (text == "1") value = true;
     else return fail(error, "Invalid Boolean metadata key '" + key + "'.");
+    return true;
+}
+
+template <typename Setter>
+bool take_packed_bool(Records& records, const std::string& key,
+                      Setter&& setter, std::string* error) {
+    bool value = false;
+    if (!take_bool(records, key, value, error)) return false;
+    setter(value);
     return true;
 }
 
@@ -945,6 +960,33 @@ bool serialize_root_metadata(const RootMetadata& metadata,
     builder.string("project.created_with_version", metadata.created_with_version);
     builder.string("project.last_changed_with_version",
                    metadata.last_changed_with_version);
+    if (metadata.format_version >= 2U) {
+        builder.add("file.encoding",
+                    metadata.file_io.encoding == ProjectStorageEncoding::Binary
+                        ? "binary" : "human_editable");
+        const char* revision_mode =
+            metadata.file_io.revision_history == RevisionHistoryMode::Full
+                ? "full"
+                : metadata.file_io.revision_history
+                          == RevisionHistoryMode::Partial
+                      ? "partial" : "disabled";
+        builder.add("revisions.mode", revision_mode);
+        builder.integer("revisions.partial_keep_count",
+                        metadata.file_io.partial_keep_count);
+        builder.integer("revisions.pinned.count",
+                        metadata.file_io.pinned_versions.size());
+        for (std::size_t pinned_index = 0U;
+             pinned_index < metadata.file_io.pinned_versions.size();
+             ++pinned_index) {
+            builder.integer(indexed("revisions.pinned", pinned_index,
+                                    "version"),
+                            metadata.file_io.pinned_versions[pinned_index]);
+        }
+        builder.integer("zip.compression_level",
+                        metadata.file_io.zip_compression_level);
+        builder.boolean("human.version_deltas",
+                        metadata.file_io.human_version_deltas);
+    }
     builder.integer("versions.count", metadata.version_digests.size());
     std::size_t index = 0U;
     for (const auto& version : metadata.version_digests) {
@@ -1014,6 +1056,59 @@ bool parse_root_metadata(const std::string& bytes,
                         candidate.created_with_version, error)
         || !take_string(records, "project.last_changed_with_version",
                         candidate.last_changed_with_version, error)) return false;
+    if (format_version >= 2U) {
+        std::string encoding;
+        std::string revision_mode;
+        std::size_t pinned_count = 0U;
+        if (!take(records, "file.encoding", encoding, error)
+            || (encoding != "binary" && encoding != "human_editable")
+            || !take(records, "revisions.mode", revision_mode, error)
+            || (revision_mode != "full" && revision_mode != "partial"
+                && revision_mode != "disabled")
+            || !take_integer(records, "revisions.partial_keep_count",
+                             candidate.file_io.partial_keep_count, error)
+            || candidate.file_io.partial_keep_count > kMaximumVersions
+            || !take_integer(records, "revisions.pinned.count",
+                             pinned_count, error)
+            || pinned_count > kMaximumVersions
+            || !take_integer(records, "zip.compression_level",
+                             candidate.file_io.zip_compression_level, error)
+            || candidate.file_io.zip_compression_level < 0
+            || candidate.file_io.zip_compression_level > 9
+            || !take_bool(records, "human.version_deltas",
+                          candidate.file_io.human_version_deltas, error)) {
+            return fail(error, "Root metadata has invalid file-I/O settings.");
+        }
+        candidate.file_io.encoding = encoding == "binary"
+            ? ProjectStorageEncoding::Binary
+            : ProjectStorageEncoding::HumanEditable;
+        candidate.file_io.revision_history = revision_mode == "full"
+            ? RevisionHistoryMode::Full
+            : revision_mode == "partial" ? RevisionHistoryMode::Partial
+                                           : RevisionHistoryMode::Disabled;
+        candidate.file_io.pinned_versions.reserve(pinned_count);
+        for (std::size_t pinned_index = 0U; pinned_index < pinned_count;
+             ++pinned_index) {
+            std::uint64_t pinned = 0U;
+            if (!take_integer(records,
+                              indexed("revisions.pinned", pinned_index,
+                                      "version"),
+                              pinned, error)
+                || (!candidate.file_io.pinned_versions.empty()
+                    && pinned <= candidate.file_io.pinned_versions.back())) {
+                return fail(error,
+                            "Root metadata has invalid pinned revisions.");
+            }
+            candidate.file_io.pinned_versions.push_back(pinned);
+        }
+    } else {
+        candidate.file_io.encoding = ProjectStorageEncoding::HumanEditable;
+        candidate.file_io.revision_history = RevisionHistoryMode::Full;
+        candidate.file_io.partial_keep_count = 10U;
+        candidate.file_io.pinned_versions.clear();
+        candidate.file_io.zip_compression_level = 6;
+        candidate.file_io.human_version_deltas = false;
+    }
     std::size_t count = 0U;
     if (!take_integer(records, "versions.count", count, error)
         || count > kMaximumVersions) {
@@ -1528,6 +1623,10 @@ bool serialize_version_manifest(const VersionManifest& manifest,
     builder.string("version.saved_with_version", manifest.info.saved_with_version);
     builder.string("version.reverted_from_digest", manifest.reverted_from_digest);
     builder.string("project.name", manifest.project_name);
+    builder.add("storage.encoding",
+                manifest.storage_encoding == ProjectStorageEncoding::Binary
+                    ? "binary" : "human_editable");
+    builder.add("project.semantic_sha256", manifest.semantic_digest);
     builder.add("render_output.sha256", manifest.render_output_digest);
     builder.string("music_analysis.sha256", manifest.music_analysis_digest);
     builder.integer("groups.count", manifest.groups.size());
@@ -1608,6 +1707,26 @@ bool parse_version_manifest(const std::string& bytes,
         || !take_string(records, "project.name", candidate.project_name, error)
         || !take(records, "render_output.sha256",
                  candidate.render_output_digest, error)) return false;
+    if (format_version >= 6U) {
+        std::string encoding;
+        if (!take(records, "storage.encoding", encoding, error)
+            || (encoding != "binary" && encoding != "human_editable")) {
+            return fail(error, "Version metadata has an invalid storage encoding.");
+        }
+        candidate.storage_encoding = encoding == "binary"
+            ? ProjectStorageEncoding::Binary
+            : ProjectStorageEncoding::HumanEditable;
+    }
+    if (format_version >= 7U
+        && (!take(records, "project.semantic_sha256",
+                  candidate.semantic_digest, error)
+            || (candidate.storage_encoding == ProjectStorageEncoding::Binary
+                    ? !canonical_hash(candidate.semantic_digest)
+                    : !candidate.semantic_digest.empty()
+                          && !canonical_hash(candidate.semantic_digest)))) {
+        return fail(error,
+                    "Version metadata has an invalid semantic identity.");
+    }
     if (format_version >= 4U
         && !take_string(records, "music_analysis.sha256",
                         candidate.music_analysis_digest, error)) return false;
@@ -1625,10 +1744,12 @@ bool parse_version_manifest(const std::string& bytes,
                              group.uuid, error)
                 || !take_string(records, indexed("groups", index, "name"),
                                 group.name, error)
-                || !take_bool(records, indexed("groups", index, "enabled"),
-                              group.enabled, error)
-                || !take_bool(records, indexed("groups", index, "locked"),
-                              group.locked, error)
+                || !take_packed_bool(
+                    records, indexed("groups", index, "enabled"),
+                    [&](bool value) { group.enabled = value; }, error)
+                || !take_packed_bool(
+                    records, indexed("groups", index, "locked"),
+                    [&](bool value) { group.locked = value; }, error)
                 || !canonical_uuid(group.uuid)
                 || group.name.empty()
                 || !valid_semantic_group_name(group.name)
@@ -1657,8 +1778,9 @@ bool parse_version_manifest(const std::string& bytes,
                             layer.uuid, error)
             || !take_string(records, indexed("layers", index, "name"),
                             layer.name, error)
-            || !take_bool(records, indexed("layers", index, "enabled"),
-                          layer.enabled, error)
+            || !take_packed_bool(
+                records, indexed("layers", index, "enabled"),
+                [&](bool value) { layer.enabled = value; }, error)
             || !take(records, indexed("layers", index, "blend_mode"),
                      blend, error)
             || (format_version >= 5U
@@ -1675,7 +1797,10 @@ bool parse_version_manifest(const std::string& bytes,
             || (format_version >= 5U
                 && !parse_alpha_mode(alpha_mode, layer.alpha_mode))
             || !canonical_uuid(layer.uuid)
-            || !canonical_hash(candidate.layer_digests[index])
+            || (candidate.storage_encoding
+                        == ProjectStorageEncoding::HumanEditable
+                    ? !canonical_hash(candidate.layer_digests[index])
+                    : !candidate.layer_digests[index].empty())
             || !file_ids.insert(layer.file_id).second
             || !uuids.insert(layer.uuid).second) {
             return fail(error, "Version metadata has an invalid layer entry.");
@@ -1722,7 +1847,10 @@ bool parse_version_manifest(const std::string& bytes,
         || !canonical_timestamp(candidate.info.saved_utc)
         || !valid_semantic_project_name(candidate.project_name)
         || candidate.info.reason.empty() || candidate.info.saved_with_version.empty()
-        || !canonical_hash(candidate.render_output_digest)
+        || (candidate.storage_encoding
+                    == ProjectStorageEncoding::HumanEditable
+                ? !canonical_hash(candidate.render_output_digest)
+                : !candidate.render_output_digest.empty())
         || (!candidate.music_analysis_digest.empty()
             && !canonical_hash(candidate.music_analysis_digest))) {
         return fail(error, "Version metadata failed validation.");
@@ -1756,6 +1884,43 @@ std::set<std::uint64_t> numeric_version_directories(
 
 std::string version_path(std::uint64_t version, std::string_view filename) {
     return std::to_string(version) + "/" + std::string(filename);
+}
+
+std::string render_output_filename(ProjectStorageEncoding encoding) {
+    return encoding == ProjectStorageEncoding::Binary
+               ? "render_output.pvtdat" : "render_output.txt";
+}
+
+std::string render_output_strings_filename() {
+    return "render_output.pvtstrings";
+}
+
+std::string layer_filename(std::uint64_t file_id,
+                           ProjectStorageEncoding encoding) {
+    return std::to_string(file_id)
+           + (encoding == ProjectStorageEncoding::Binary
+                  ? ".pvtdat" : ".pvt");
+}
+
+std::string layer_strings_filename(std::uint64_t file_id) {
+    return std::to_string(file_id) + ".pvtstrings";
+}
+
+void extract_raw_globals(RenderConfig loaded,
+                         CanvasLoopConfig& canvas,
+                         ExportConfig& output) {
+    canvas.width = loaded.width;
+    canvas.height = loaded.height;
+    canvas.block_size = loaded.block_size;
+    canvas.total_frames = loaded.total_frames;
+    canvas.fps = loaded.fps;
+    canvas.clock = std::move(loaded.clock);
+    canvas.motion_paths = std::move(loaded.motion_paths);
+    canvas.output_compatibility = std::move(loaded.output_compatibility);
+    canvas.audio_reactive_defaults = std::move(loaded.audio_reactive_defaults);
+    canvas.live = std::move(loaded.live);
+    canvas.block_size_modulation = std::move(loaded.block_size_modulation);
+    output = std::move(loaded.output);
 }
 
 std::string layer_music_analysis_reference_path(
@@ -1811,6 +1976,291 @@ bool find_file(const detail::BundleFileSet& files, const std::string& path,
         return fail(error, "Bundle is missing required file '" + path + "'.");
     }
     bytes = &found->second;
+    return true;
+}
+
+bool decode_text_delta(const detail::BundleFileSet& files,
+                       const std::string& logical_path,
+                       const std::string& delta_bytes,
+                       std::string& restored,
+                       std::string* error) {
+    const std::size_t payload_marker = delta_bytes.find("\n\n");
+    if (payload_marker == std::string::npos) {
+        return fail(error, "Text revision delta has no payload boundary.");
+    }
+    Records records;
+    if (!parse_text(delta_bytes.substr(0U, payload_marker),
+                    "PVT_TEXT_DELTA", 1U, records, error)) {
+        return false;
+    }
+    std::uint64_t base_version = 0U;
+    bool base_present = false;
+    std::size_t prefix_bytes = 0U;
+    std::size_t suffix_bytes = 0U;
+    std::size_t replacement_bytes = 0U;
+    if (!take_integer(records, "base.version", base_version, error)
+        || !take_bool(records, "base.present", base_present, error)
+        || !take_integer(records, "prefix.bytes", prefix_bytes, error)
+        || !take_integer(records, "suffix.bytes", suffix_bytes, error)
+        || !take_integer(records, "replacement.bytes", replacement_bytes,
+                         error)
+        || !records.empty()) {
+        return fail(error, "Text revision delta metadata is incomplete.");
+    }
+    const std::size_t payload_begin = payload_marker + 2U;
+    if (replacement_bytes != delta_bytes.size() - payload_begin) {
+        return fail(error, "Text revision delta payload size disagrees with its metadata.");
+    }
+    const std::size_t slash = logical_path.find('/');
+    if (slash == std::string::npos || slash + 1U == logical_path.size()) {
+        return fail(error, "Text revision delta has an invalid logical path.");
+    }
+    std::string_view base;
+    if (base_present) {
+        const std::string base_path = version_path(
+            base_version, logical_path.substr(slash + 1U));
+        const auto found = files.files.find(base_path);
+        if (found == files.files.end()) {
+            return fail(error,
+                        "Text revision delta references a missing full current payload '"
+                            + base_path + "'.");
+        }
+        base = found->second;
+    }
+    if ((!base_present && (prefix_bytes != 0U || suffix_bytes != 0U))
+        || prefix_bytes > base.size()
+        || suffix_bytes > base.size() - prefix_bytes) {
+        return fail(error, "Text revision delta has invalid unchanged ranges.");
+    }
+    if (prefix_bytes > restored.max_size() - replacement_bytes
+        || prefix_bytes + replacement_bytes
+               > restored.max_size() - suffix_bytes) {
+        return fail(error, "Text revision delta expands beyond string limits.");
+    }
+    restored.clear();
+    restored.reserve(prefix_bytes + replacement_bytes + suffix_bytes);
+    if (prefix_bytes != 0U) restored.append(base.data(), prefix_bytes);
+    restored.append(delta_bytes.data() + payload_begin, replacement_bytes);
+    if (suffix_bytes != 0U) {
+        restored.append(base.data() + (base.size() - suffix_bytes),
+                        suffix_bytes);
+    }
+    return true;
+}
+
+bool resolve_text_payload(const detail::BundleFileSet& files,
+                          const std::string& logical_path,
+                          const std::string*& bytes,
+                          std::string& restored,
+                          std::string& physical_path,
+                          std::string* error) {
+    const auto full = files.files.find(logical_path);
+    if (full != files.files.end()) {
+        bytes = &full->second;
+        physical_path = logical_path;
+        return true;
+    }
+    const std::string delta_path = logical_path + std::string(kTextDeltaSuffix);
+    const auto delta = files.files.find(delta_path);
+    if (delta == files.files.end()) {
+        return fail(error, "Bundle is missing required text payload '"
+                               + logical_path + "'.");
+    }
+    if (!decode_text_delta(files, logical_path, delta->second,
+                           restored, error)) {
+        return false;
+    }
+    bytes = &restored;
+    physical_path = delta_path;
+    return true;
+}
+
+bool encode_text_delta(std::uint64_t base_version,
+                       bool base_present,
+                       std::string_view base,
+                       std::string_view target,
+                       std::string& delta,
+                       std::string* error) {
+    std::size_t prefix = 0U;
+    if (base_present) {
+        const std::size_t common = (std::min)(base.size(), target.size());
+        while (prefix < common && base[prefix] == target[prefix]) ++prefix;
+    }
+    std::size_t suffix = 0U;
+    if (base_present) {
+        const std::size_t remaining_base = base.size() - prefix;
+        const std::size_t remaining_target = target.size() - prefix;
+        const std::size_t common = (std::min)(remaining_base, remaining_target);
+        while (suffix < common
+               && base[base.size() - 1U - suffix]
+                      == target[target.size() - 1U - suffix]) {
+            ++suffix;
+        }
+    }
+    const std::size_t replacement_size = target.size() - prefix - suffix;
+    TextBuilder builder("PVT_TEXT_DELTA", 1U);
+    builder.integer("base.version", base_version);
+    builder.boolean("base.present", base_present);
+    builder.integer("prefix.bytes", prefix);
+    builder.integer("suffix.bytes", suffix);
+    builder.integer("replacement.bytes", replacement_size);
+    if (!builder.ok()) {
+        return fail(error, "Could not serialize text revision delta metadata.");
+    }
+    delta = builder.bytes();
+    delta.push_back('\n');
+    if (replacement_size != 0U) {
+        delta.append(target.data() + prefix, replacement_size);
+    }
+    return true;
+}
+
+bool materialize_text_revision_deltas(
+    detail::BundleFileSet& files,
+    std::set<std::string>& originally_delta,
+    std::string* error) {
+    std::vector<std::pair<std::string, std::string>> restored;
+    for (const auto& entry : files.files) {
+        if (entry.first.size() <= kTextDeltaSuffix.size()
+            || entry.first.compare(entry.first.size() - kTextDeltaSuffix.size(),
+                                   kTextDeltaSuffix.size(),
+                                   kTextDeltaSuffix) != 0) {
+            continue;
+        }
+        const std::string logical = entry.first.substr(
+            0U, entry.first.size() - kTextDeltaSuffix.size());
+        std::string bytes;
+        if (!decode_text_delta(files, logical, entry.second, bytes, error)) {
+            return false;
+        }
+        originally_delta.insert(logical);
+        restored.emplace_back(logical, std::move(bytes));
+    }
+    for (auto& item : restored) {
+        files.files.erase(item.first + std::string(kTextDeltaSuffix));
+        files.files[item.first] = std::move(item.second);
+    }
+    return true;
+}
+
+bool apply_text_revision_delta_policy(
+    detail::BundleFileSet& files,
+    std::vector<BundleVersionInfo>& versions,
+    std::uint64_t current_version,
+    bool enabled,
+    const std::set<std::string>& originally_delta,
+    bool& changed,
+    std::string* error) {
+    changed = false;
+    std::map<std::string, std::string_view> current_payloads;
+    std::map<std::uint64_t, std::vector<std::string>> payloads;
+    for (const BundleVersionInfo& version : versions) {
+        const auto metadata = files.files.find(
+            version_path(version.number, "metadata.txt"));
+        if (metadata == files.files.end()) continue;
+        VersionManifest manifest;
+        std::string ignored;
+        if (!parse_version_manifest(metadata->second, manifest, &ignored)
+            || manifest.storage_encoding
+                   != ProjectStorageEncoding::HumanEditable) {
+            continue;
+        }
+        auto& paths = payloads[version.number];
+        paths.push_back(version_path(version.number, "render_output.txt"));
+        for (const LayerConfig& layer : manifest.layers) {
+            paths.push_back(version_path(
+                version.number, layer_filename(
+                    layer.file_id, ProjectStorageEncoding::HumanEditable)));
+        }
+        if (version.number == current_version) {
+            for (const std::string& path : paths) {
+                const auto found = files.files.find(path);
+                if (found == files.files.end()) {
+                    return fail(error,
+                                "Current human-readable revision is missing a full payload.");
+                }
+                const std::size_t slash = path.find('/');
+                current_payloads[path.substr(slash + 1U)] = found->second;
+            }
+        }
+    }
+
+    for (const auto& version_payloads : payloads) {
+        const bool make_delta = enabled
+            && version_payloads.first != current_version;
+        for (const std::string& logical : version_payloads.second) {
+            const auto full = files.files.find(logical);
+            if (full == files.files.end()) {
+                return fail(error,
+                            "Human-readable revision payload could not be materialized.");
+            }
+            const std::string delta_path =
+                logical + std::string(kTextDeltaSuffix);
+            const bool was_delta = originally_delta.find(logical)
+                                   != originally_delta.end();
+            if (!make_delta) {
+                if (was_delta) {
+                    files.transactional_removals.insert(delta_path);
+                    files.transactional_updates.insert(logical);
+                    auto info = std::find_if(
+                        versions.begin(), versions.end(),
+                        [&version_payloads](const BundleVersionInfo& candidate) {
+                            return candidate.number == version_payloads.first;
+                        });
+                    if (info != versions.end()) {
+                        info->changed_since_recorded = true;
+                    }
+                    changed = true;
+                }
+                continue;
+            }
+
+            const std::size_t slash = logical.find('/');
+            const std::string filename = logical.substr(slash + 1U);
+            const auto base = current_payloads.find(filename);
+            const bool base_present = base != current_payloads.end();
+            std::string delta;
+            if (!encode_text_delta(
+                    current_version, base_present,
+                    base_present ? base->second : std::string_view{},
+                    full->second, delta, error)) {
+                return false;
+            }
+            if (!base_present || delta.size() >= full->second.size()) {
+                if (was_delta) {
+                    files.transactional_removals.insert(delta_path);
+                    files.transactional_updates.insert(logical);
+                    auto info = std::find_if(
+                        versions.begin(), versions.end(),
+                        [&version_payloads](const BundleVersionInfo& candidate) {
+                            return candidate.number == version_payloads.first;
+                        });
+                    if (info != versions.end()) {
+                        info->changed_since_recorded = true;
+                    }
+                    changed = true;
+                }
+                continue;
+            }
+            files.files.erase(full);
+            files.files[delta_path] = std::move(delta);
+            files.transactional_updates.erase(logical);
+            files.transactional_removals.erase(delta_path);
+            if (was_delta) {
+                files.transactional_updates.insert(delta_path);
+            } else {
+                files.transactional_removals.insert(logical);
+                files.transactional_updates.insert(delta_path);
+            }
+            auto info = std::find_if(
+                versions.begin(), versions.end(),
+                [&version_payloads](const BundleVersionInfo& candidate) {
+                    return candidate.number == version_payloads.first;
+                });
+            if (info != versions.end()) info->changed_since_recorded = true;
+            changed = true;
+        }
+    }
     return true;
 }
 
@@ -2211,25 +2661,53 @@ bool load_snapshot(const detail::BundleFileSet& files,
             preserved->second.observed_metadata_digest == actual_metadata_digest;
     }
     bool external = !metadata_recorded;
-    std::string actual_tree_digest;
-    if (!version_tree_digest(
-            files, version, actual_tree_digest, error)) {
-        return false;
-    }
-    const auto recorded_tree = root.version_tree_digests.find(version);
-    bool tree_recorded = recorded_tree != root.version_tree_digests.end()
-                         && recorded_tree->second == actual_tree_digest;
-    if (indexed_digest == root.version_digests.end()
-        && preserved != root.preserved_versions.end()) {
-        tree_recorded = preserved->second.tree_digest == actual_tree_digest;
+    bool tree_recorded = true;
+    if (manifest.storage_encoding == ProjectStorageEncoding::HumanEditable) {
+        std::string actual_tree_digest;
+        if (!version_tree_digest(
+                files, version, actual_tree_digest, error)) {
+            return false;
+        }
+        const auto recorded_tree = root.version_tree_digests.find(version);
+        tree_recorded = recorded_tree != root.version_tree_digests.end()
+                        && recorded_tree->second == actual_tree_digest;
+        if (indexed_digest == root.version_digests.end()
+            && preserved != root.preserved_versions.end()) {
+            tree_recorded =
+                preserved->second.tree_digest == actual_tree_digest;
+        }
     }
 
-    const std::string* output_bytes = nullptr;
-    if (!find_file(files, version_path(version, "render_output.txt"),
-                   output_bytes, error)) return false;
+    const std::string* stored_output_bytes = nullptr;
+    const std::string output_logical_path = version_path(
+        version, render_output_filename(manifest.storage_encoding));
+    std::string restored_output_bytes;
+    std::string output_physical_path = output_logical_path;
+    if (manifest.storage_encoding == ProjectStorageEncoding::HumanEditable) {
+        if (!resolve_text_payload(
+                files, output_logical_path, stored_output_bytes,
+                restored_output_bytes, output_physical_path, error)) {
+            return false;
+        }
+    } else if (!find_file(files, output_logical_path,
+                          stored_output_bytes, error)) {
+        return false;
+    }
+    const std::string* stored_output_strings = nullptr;
+    if (manifest.storage_encoding == ProjectStorageEncoding::Binary
+        && !find_file(files,
+                      version_path(version,
+                                   render_output_strings_filename()),
+                      stored_output_strings, error)) {
+        return false;
+    }
     std::string stored_output_digest;
-    if (!detail::sha256_hex(*output_bytes,
-                            stored_output_digest, error)) return false;
+    if (manifest.storage_encoding == ProjectStorageEncoding::HumanEditable
+        && !detail::sha256_hex(*stored_output_bytes,
+                               stored_output_digest, error)) {
+        return false;
+    }
+    const std::string* output_bytes = stored_output_bytes;
 
     ProjectConfig candidate;
     candidate.uuid = root.project_uuid;
@@ -2246,7 +2724,8 @@ bool load_snapshot(const detail::BundleFileSet& files,
     }
 
     const bool split_output =
-        output_bytes->rfind("PVT_RENDER_OUTPUT_SPLIT\t", 0U) == 0U;
+        manifest.storage_encoding == ProjectStorageEncoding::HumanEditable
+        && output_bytes->rfind("PVT_RENDER_OUTPUT_SPLIT\t", 0U) == 0U;
     const std::string* shared_analysis_bytes = nullptr;
     std::string actual_analysis_digest;
     if (has_analysis_reference) {
@@ -2289,7 +2768,9 @@ bool load_snapshot(const detail::BundleFileSet& files,
     }
 
     const std::string global_cache_key =
-        stored_output_digest + ":" + actual_analysis_digest;
+        manifest.storage_encoding == ProjectStorageEncoding::Binary
+            ? "binary:" + std::to_string(version) + ":output"
+            : stored_output_digest + ":" + actual_analysis_digest;
     std::string canonical_output_digest;
     bool found_cached_global = false;
     std::string codec_error;
@@ -2305,7 +2786,16 @@ bool load_snapshot(const detail::BundleFileSet& files,
         }
     }
     if (!found_cached_global) {
-        if (split_output) {
+        if (manifest.storage_encoding == ProjectStorageEncoding::Binary) {
+            RenderConfig raw_config;
+            if (!detail::deserialize_raw_config(
+                    *stored_output_bytes, *stored_output_strings,
+                    raw_config, error, true)) {
+                return false;
+            }
+            extract_raw_globals(std::move(raw_config), candidate.canvas,
+                                candidate.output);
+        } else if (split_output) {
             if (shared_analysis_bytes == nullptr
                 || !detail::deserialize_split_render_output_config(
                     *output_bytes, *shared_analysis_bytes,
@@ -2344,12 +2834,16 @@ bool load_snapshot(const detail::BundleFileSet& files,
                 candidate.canvas.clock.music = std::move(shared_analysis);
             }
         }
-        std::string canonical_output;
-        if (!detail::serialize_render_output_config(
-                candidate.canvas, candidate.output,
-                canonical_output, error)
-            || !detail::sha256_hex(canonical_output,
-                                   canonical_output_digest, error)) return false;
+        if (manifest.storage_encoding == ProjectStorageEncoding::HumanEditable) {
+            std::string canonical_output;
+            if (!detail::serialize_render_output_config(
+                    candidate.canvas, candidate.output,
+                    canonical_output, error)
+                || !detail::sha256_hex(canonical_output,
+                                       canonical_output_digest, error)) {
+                return false;
+            }
+        }
         if (validation_cache != nullptr) {
             validation_cache->global_configs.emplace(
                 global_cache_key,
@@ -2363,11 +2857,14 @@ bool load_snapshot(const detail::BundleFileSet& files,
                     "Version render/output storage does not match its declared format.");
     }
 
-    bool output_hash_matches = false;
-    if (manifest.format_version >= 4U) {
+    bool output_hash_matches =
+        manifest.storage_encoding == ProjectStorageEncoding::Binary;
+    if (manifest.storage_encoding == ProjectStorageEncoding::HumanEditable
+        && manifest.format_version >= 4U) {
         output_hash_matches = stored_output_digest
                               == manifest.render_output_digest;
-    } else {
+    } else if (manifest.storage_encoding
+               == ProjectStorageEncoding::HumanEditable) {
         output_hash_matches = canonical_output_digest
                               == manifest.render_output_digest;
     }
@@ -2376,7 +2873,11 @@ bool load_snapshot(const detail::BundleFileSet& files,
     candidate.groups = manifest.groups;
     std::set<std::string> expected_paths{
         version_path(version, "metadata.txt"),
-        version_path(version, "render_output.txt")};
+        output_physical_path};
+    if (manifest.storage_encoding == ProjectStorageEncoding::Binary) {
+        expected_paths.insert(version_path(
+            version, render_output_strings_filename()));
+    }
     if (has_analysis_reference) {
         expected_paths.insert(analysis_reference_path);
     }
@@ -2384,16 +2885,44 @@ bool load_snapshot(const detail::BundleFileSet& files,
     canonical_layer_digests.reserve(candidate.layers.size());
     for (std::size_t index = 0U; index < candidate.layers.size(); ++index) {
         LayerConfig& layer = candidate.layers[index];
-        const std::string filename = std::to_string(layer.file_id) + ".pvt";
+        const std::string filename = layer_filename(
+            layer.file_id, manifest.storage_encoding);
         const std::string path = version_path(version, filename);
-        expected_paths.insert(path);
-        const std::string* layer_bytes = nullptr;
-        if (!find_file(files, path, layer_bytes, error)) return false;
+        const std::string* stored_layer_bytes = nullptr;
+        std::string restored_layer_bytes;
+        std::string physical_path = path;
+        if (manifest.storage_encoding
+            == ProjectStorageEncoding::HumanEditable) {
+            if (!resolve_text_payload(
+                    files, path, stored_layer_bytes, restored_layer_bytes,
+                    physical_path, error)) {
+                return false;
+            }
+        } else if (!find_file(files, path, stored_layer_bytes, error)) {
+            return false;
+        }
+        expected_paths.insert(physical_path);
+
+        const std::string* stored_layer_strings = nullptr;
+        if (manifest.storage_encoding == ProjectStorageEncoding::Binary
+            && !find_file(files,
+                          version_path(
+                              version,
+                              layer_strings_filename(layer.file_id)),
+                          stored_layer_strings, error)) {
+            return false;
+        }
 
         std::string stored_layer_digest;
-        if (!detail::sha256_hex(
-                *layer_bytes, stored_layer_digest, error)) {
+        if (manifest.storage_encoding == ProjectStorageEncoding::HumanEditable
+            && !detail::sha256_hex(*stored_layer_bytes,
+                                   stored_layer_digest, error)) {
             return false;
+        }
+        const std::string* layer_bytes = stored_layer_bytes;
+        if (manifest.storage_encoding == ProjectStorageEncoding::Binary) {
+            expected_paths.insert(version_path(
+                version, layer_strings_filename(layer.file_id)));
         }
         const std::string layer_analysis_reference_path =
             layer_music_analysis_reference_path(version, layer.file_id);
@@ -2512,7 +3041,10 @@ bool load_snapshot(const detail::BundleFileSet& files,
         }
 
         const std::string layer_cache_key =
-            stored_layer_digest + ":" + actual_layer_analysis_digest;
+            manifest.storage_encoding == ProjectStorageEncoding::Binary
+                ? "binary:" + std::to_string(version) + ":layer:"
+                      + std::to_string(layer.file_id)
+                : stored_layer_digest + ":" + actual_layer_analysis_digest;
         bool found_cached_layer = false;
         if (validation_cache != nullptr) {
             const auto cached =
@@ -2523,13 +3055,25 @@ bool load_snapshot(const detail::BundleFileSet& files,
             }
         }
         if (!found_cached_layer) {
-            const bool decoded = layer_analysis_bytes == nullptr
-                ? detail::deserialize_layer_config(
-                    *layer_bytes, layer.render, &codec_error,
-                    &candidate.canvas.motion_paths)
-                : deserialize_split_layer_and_music(
-                    *layer_bytes, *layer_analysis_placeholder, layer.render,
-                    candidate.canvas.motion_paths, &codec_error);
+            bool decoded = false;
+            if (manifest.storage_encoding == ProjectStorageEncoding::Binary) {
+                RenderConfig raw_config;
+                decoded = detail::deserialize_raw_config(
+                    *stored_layer_bytes, *stored_layer_strings,
+                    raw_config, &codec_error, false);
+                if (decoded) {
+                    layer.render = std::move(
+                        static_cast<RenderData&>(raw_config));
+                }
+            } else {
+                decoded = layer_analysis_bytes == nullptr
+                    ? detail::deserialize_layer_config(
+                        *layer_bytes, layer.render, &codec_error,
+                        &candidate.canvas.motion_paths)
+                    : deserialize_split_layer_and_music(
+                        *layer_bytes, *layer_analysis_placeholder, layer.render,
+                        candidate.canvas.motion_paths, &codec_error);
+            }
             if (!decoded) {
                 return fail(error,
                             "Could not recover layer '" + layer.name
@@ -2549,16 +3093,21 @@ bool load_snapshot(const detail::BundleFileSet& files,
         }
 
         bool layer_hash_matches =
-            stored_layer_digest == manifest.layer_digests[index];
+            manifest.storage_encoding == ProjectStorageEncoding::Binary
+            || stored_layer_digest == manifest.layer_digests[index];
         std::string canonical_layer_digest = stored_layer_digest;
-        if (has_layer_analysis_reference && tree_recorded
+        if (manifest.storage_encoding == ProjectStorageEncoding::Binary) {
+            canonical_layer_digest.clear();
+        } else if (manifest.format_version < 6U && has_layer_analysis_reference
+            && tree_recorded
             && layer_analysis_identity_matches) {
             // The exact compact layer/reference tree is authenticated by the
             // root tree digest, and the shared object matches its content
             // identity. The migration already proved that this pair
             // reconstructs the manifest's complete-layer digest.
-            layer_hash_matches = true;
-            canonical_layer_digest = manifest.layer_digests[index];
+            if (manifest.format_version < 6U) layer_hash_matches = true;
+            canonical_layer_digest = manifest.format_version < 6U
+                ? manifest.layer_digests[index] : stored_layer_digest;
         } else if (has_layer_analysis_reference) {
             std::string reconstructed_digest;
             bool found_cached_digest = false;
@@ -2593,7 +3142,8 @@ bool load_snapshot(const detail::BundleFileSet& files,
             const std::string current_layer_header =
                 "PVT_LAYER\t"
                 + std::to_string(detail::kLayerConfigFormatVersion) + "\n";
-            if (!layer_hash_matches
+            if (manifest.storage_encoding == ProjectStorageEncoding::Binary
+                || !layer_hash_matches
                 || layer_bytes->rfind(current_layer_header, 0U) != 0U) {
                 std::string canonical_layer;
                 if (!detail::serialize_layer_config(
@@ -2878,10 +3428,18 @@ bool load_snapshot(const detail::BundleFileSet& files,
     if (!validation.ok) {
         return fail(error, "Version project failed validation: " + validation.message);
     }
-    if (!project_content_digest_from_component_digests(
-            candidate, manifest.attachments, canonical_output_digest,
-            canonical_layer_digests, semantic_digest, error)) {
-        return false;
+    if (manifest.storage_encoding == ProjectStorageEncoding::Binary) {
+        semantic_digest = manifest.semantic_digest;
+    } else {
+        if (!project_content_digest_from_component_digests(
+                candidate, manifest.attachments, canonical_output_digest,
+                canonical_layer_digests, semantic_digest, error)) {
+            return false;
+        }
+        if (!manifest.semantic_digest.empty()
+            && manifest.semantic_digest != semantic_digest) {
+            external = true;
+        }
     }
     const bool changed_since_recorded = !tree_recorded;
     external = external || changed_since_recorded;
@@ -3318,27 +3876,33 @@ bool collect_version_infos(const detail::BundleFileSet& files,
             info.layer_count = manifest.info.layer_count;
         }
 
+        bool metadata_recorded = false;
+        bool tree_recorded = metadata_valid
+            && manifest.storage_encoding == ProjectStorageEncoding::Binary;
         std::string actual_tree_digest;
-        if (!version_tree_digest(files, number,
-                                 actual_tree_digest, error)) {
+        if (!tree_recorded
+            && !version_tree_digest(files, number,
+                                    actual_tree_digest, error)) {
             return false;
         }
-        bool metadata_recorded = false;
-        bool tree_recorded = false;
         const auto indexed = root.version_digests.find(number);
         if (indexed != root.version_digests.end()) {
             metadata_recorded = indexed->second == actual_metadata_digest;
-            const auto tree = root.version_tree_digests.find(number);
-            tree_recorded = tree != root.version_tree_digests.end()
-                            && tree->second == actual_tree_digest;
+            if (!tree_recorded) {
+                const auto tree = root.version_tree_digests.find(number);
+                tree_recorded = tree != root.version_tree_digests.end()
+                                && tree->second == actual_tree_digest;
+            }
         } else {
             const auto preserved = root.preserved_versions.find(number);
             if (preserved != root.preserved_versions.end()) {
                 metadata_recorded =
                     preserved->second.observed_metadata_digest
                     == actual_metadata_digest;
-                tree_recorded = preserved->second.tree_digest
-                                == actual_tree_digest;
+                if (!tree_recorded) {
+                    tree_recorded = preserved->second.tree_digest
+                                    == actual_tree_digest;
+                }
             }
         }
 
@@ -3352,6 +3916,10 @@ bool collect_version_infos(const detail::BundleFileSet& files,
         } else if (info.externally_modified) {
             info.integrity_message =
                 "Version metadata or files changed since the last explicit save.";
+        } else if (manifest.storage_encoding
+                   == ProjectStorageEncoding::Binary) {
+            info.integrity_message =
+                "Opaque binary snapshot; payload change scanning is disabled.";
         } else {
             info.integrity_message =
                 "Recorded snapshot; contents validate when opened, compared, reverted, or explicitly checked.";
@@ -3485,6 +4053,7 @@ bool preserve_raw_version(RootMetadata& root,
 
 bool build_version(ProjectConfig project,
                    std::vector<ProjectAttachment> attachments,
+                   ProjectStorageEncoding storage_encoding,
                    std::uint64_t number,
                    const std::string& parent_digest,
                    const std::string& reason,
@@ -3509,22 +4078,47 @@ bool build_version(ProjectConfig project,
     manifest.info.valid = true;
     manifest.reverted_from_digest = reverted_from_digest;
     manifest.project_name = project.name;
+    manifest.storage_encoding = storage_encoding;
+    manifest.semantic_digest = semantic_digest;
     manifest.layers = project.layers;
     manifest.groups = project.groups;
     manifest.attachments = std::move(attachments);
 
     std::string output_bytes;
-    std::string analysis_bytes;
-    if (!split_render_output_and_music(
-            project.canvas, project.output, output_bytes, analysis_bytes,
-            manifest.music_analysis_digest, error)
-        || !detail::sha256_hex(output_bytes,
-                               manifest.render_output_digest, error)
-        || !stage_music_analysis(files, analysis_bytes,
-                                 manifest.music_analysis_digest, error)) {
+    std::string output_strings;
+    if (storage_encoding == ProjectStorageEncoding::Binary) {
+        const ProjectConfig defaults = default_project();
+        const RenderData empty_render = defaults.layers.empty()
+            ? RenderData{} : defaults.layers.front().render;
+        const RenderConfig raw_config = apply_global_config(
+            project.canvas, project.output, empty_render);
+        if (!detail::serialize_raw_config(
+                raw_config, output_bytes, output_strings, error)) {
+            return false;
+        }
+    } else {
+        std::string analysis_bytes;
+        if (!split_render_output_and_music(
+                project.canvas, project.output, output_bytes, analysis_bytes,
+                manifest.music_analysis_digest, error)
+            || !stage_music_analysis(files, analysis_bytes,
+                                     manifest.music_analysis_digest, error)) {
+            return false;
+        }
+    }
+    if (storage_encoding == ProjectStorageEncoding::HumanEditable
+        && !detail::sha256_hex(output_bytes,
+                               manifest.render_output_digest, error)) {
         return false;
     }
-    files.files[version_path(number, "render_output.txt")] = std::move(output_bytes);
+    files.files[version_path(number,
+                            render_output_filename(storage_encoding))] =
+        std::move(output_bytes);
+    if (storage_encoding == ProjectStorageEncoding::Binary) {
+        files.files[version_path(
+            number, render_output_strings_filename())] =
+            std::move(output_strings);
+    }
     if (!manifest.music_analysis_digest.empty()) {
         std::string reference;
         if (!serialize_music_analysis_reference(
@@ -3535,18 +4129,33 @@ bool build_version(ProjectConfig project,
     manifest.layer_digests.reserve(project.layers.size());
     for (const LayerConfig& layer : project.layers) {
         std::string layer_bytes;
+        std::string layer_strings;
         std::string layer_analysis_bytes;
         std::string layer_analysis_digest;
         std::string digest;
-        if (!split_layer_and_music(
-                layer.render, project.canvas.motion_paths,
-                layer_bytes, layer_analysis_bytes,
-                layer_analysis_digest,
-                digest, error)) {
+        if (storage_encoding == ProjectStorageEncoding::Binary) {
+            const RenderConfig raw_config = apply_global_config(
+                project.canvas, project.output, layer.render);
+            if (!detail::serialize_raw_config(
+                    raw_config, layer_bytes, layer_strings, error, false)) {
+                return false;
+            }
+        } else if (!split_layer_and_music(
+                       layer.render, project.canvas.motion_paths,
+                       layer_bytes, layer_analysis_bytes,
+                       layer_analysis_digest,
+                       digest, error)) {
             return false;
         }
-        files.files[version_path(number, std::to_string(layer.file_id) + ".pvt")] =
+        files.files[version_path(number,
+                                layer_filename(layer.file_id,
+                                               storage_encoding))] =
             std::move(layer_bytes);
+        if (storage_encoding == ProjectStorageEncoding::Binary) {
+            files.files[version_path(
+                number, layer_strings_filename(layer.file_id))] =
+                std::move(layer_strings);
+        }
         if (!layer_analysis_digest.empty()) {
             if (!stage_music_analysis(
                     files, layer_analysis_bytes,
@@ -3600,7 +4209,9 @@ bool compact_embedded_music_analysis(
         VersionManifest manifest;
         std::string ignored;
         if (!parse_version_manifest(metadata->second, manifest, &ignored)
-            || manifest.format_version >= 4U) {
+            || manifest.format_version >= 4U
+            || manifest.storage_encoding
+                   != ProjectStorageEncoding::HumanEditable) {
             continue;
         }
         std::string actual_output_digest;
@@ -3671,6 +4282,10 @@ bool compact_embedded_layer_music_analysis(
         std::string load_error;
         if (!parse_version_manifest(
                 metadata->second, manifest, &load_error)) {
+            continue;
+        }
+        if (manifest.storage_encoding
+            != ProjectStorageEncoding::HumanEditable) {
             continue;
         }
         const bool has_embedded_layer_analysis = std::any_of(
@@ -3775,13 +4390,33 @@ bool write_root_files(const ProjectDocument& document,
     root.last_saved_utc = document.last_saved_utc;
     root.created_with_version = document.created_with_version;
     root.last_changed_with_version = document.last_changed_with_version;
+    root.file_io = document.file_io;
     if (previous_root != nullptr) {
-        root.format_version = previous_root->format_version;
+        root.format_version = (std::max)(previous_root->format_version,
+                                         kProjectBundleFormatVersion);
         root.version_digests = previous_root->version_digests;
         root.version_tree_digests = previous_root->version_tree_digests;
         root.lineage_aliases = previous_root->lineage_aliases;
         root.preserved_versions = previous_root->preserved_versions;
         root.preserved_records = previous_root->preserved_records;
+    }
+    for (const std::uint64_t retired : files.retired_versions) {
+        const auto indexed = root.version_digests.find(retired);
+        if (indexed != root.version_digests.end()) {
+            // A retained child may still name this immutable metadata digest
+            // as its parent. Preserve only that small lineage identity after
+            // the revision payload itself is deliberately retired.
+            root.lineage_aliases.insert(indexed->second);
+        }
+        const auto preserved = root.preserved_versions.find(retired);
+        if (preserved != root.preserved_versions.end()) {
+            root.lineage_aliases.insert(
+                preserved->second.lineage_aliases.begin(),
+                preserved->second.lineage_aliases.end());
+        }
+        root.version_digests.erase(retired);
+        root.version_tree_digests.erase(retired);
+        root.preserved_versions.erase(retired);
     }
     const BundleVersionInfo* current = nullptr;
     for (const BundleVersionInfo& version : versions) {
@@ -3813,6 +4448,39 @@ bool write_root_files(const ProjectDocument& document,
         }
         if (version.valid && version.number == current_version) current = &version;
     }
+    std::set<std::string> indexed_identities;
+    for (const auto& version : root.version_digests) {
+        indexed_identities.insert(version.second);
+    }
+    std::set<std::string> preserved_identities;
+    for (const auto& preserved : root.preserved_versions) {
+        if (!preserved.second.observed_metadata_digest.empty()) {
+            preserved_identities.insert(
+                preserved.second.observed_metadata_digest);
+        }
+        preserved_identities.insert(
+            preserved.second.lineage_aliases.begin(),
+            preserved.second.lineage_aliases.end());
+    }
+    std::set<std::string> required_aliases;
+    for (const BundleVersionInfo& version : versions) {
+        if (version.parent_digest.empty()
+            || indexed_identities.find(version.parent_digest)
+                   != indexed_identities.end()
+            || preserved_identities.find(version.parent_digest)
+                   != preserved_identities.end()) {
+            continue;
+        }
+        required_aliases.insert(version.parent_digest);
+    }
+    for (auto alias = root.lineage_aliases.begin();
+         alias != root.lineage_aliases.end();) {
+        if (required_aliases.find(*alias) == required_aliases.end()) {
+            alias = root.lineage_aliases.erase(alias);
+        } else {
+            ++alias;
+        }
+    }
     if (!validate_history_accounting(files, root, error)) return false;
     if (current == nullptr) {
         return fail(error, "Cannot write current pointer to an unknown version.");
@@ -3834,6 +4502,7 @@ bool write_root_files(const ProjectDocument& document,
     files.files["metadata.txt"] = std::move(metadata);
     files.files["metadata.sha256"] = std::move(checksum);
     files.files["current"] = std::move(current_bytes);
+    files.current_symlink_version = current_version;
     return true;
 }
 
@@ -4418,11 +5087,16 @@ bool load_project_document(const std::string& path,
                 display_name_external = project.name != root.project_name;
                 if (display_name_external) {
                     project.name = root.project_name;
-                    if (!project_content_digest_from_component_digests(
+                    const bool redigested = component_digests.output.empty()
+                        ? project_content_digest(
+                            project, snapshot_attachments,
+                            semantic_digest, &load_error)
+                        : project_content_digest_from_component_digests(
                             project, snapshot_attachments,
                             component_digests.output,
                             component_digests.layers,
-                            semantic_digest, &load_error)) {
+                            semantic_digest, &load_error);
+                    if (!redigested) {
                         last_failure = std::move(load_error);
                         continue;
                     }
@@ -4466,6 +5140,7 @@ bool load_project_document(const std::string& path,
             document.last_saved_utc = root.last_saved_utc;
             document.created_with_version = root.created_with_version;
             document.last_changed_with_version = root.last_changed_with_version;
+            document.file_io = root.file_io;
             document.loaded_snapshot_digest = std::move(semantic_digest);
             document.loaded_bundle_state_digest = bundle_state_digest;
             document.current_version = candidate_number;
@@ -5317,6 +5992,55 @@ bool compact_duplicate_attachment_assets(
     return true;
 }
 
+bool apply_revision_policy(const ProjectFileIoSettings& settings,
+                           std::uint64_t current_version,
+                           std::vector<BundleVersionInfo>& versions,
+                           detail::BundleFileSet& files,
+                           std::string* error) {
+    if (settings.revision_history == RevisionHistoryMode::Full) return true;
+
+    std::set<std::uint64_t> keep{current_version};
+    if (settings.revision_history == RevisionHistoryMode::Partial) {
+        keep.insert(settings.pinned_versions.begin(),
+                    settings.pinned_versions.end());
+        std::size_t recent = 0U;
+        const std::size_t requested =
+            (std::max)(std::size_t{1U}, settings.partial_keep_count);
+        for (auto version = versions.rbegin(); version != versions.rend();
+             ++version) {
+            if (!version->valid || !version->indexed) continue;
+            if (recent++ < requested) keep.insert(version->number);
+        }
+    }
+
+    const std::set<std::uint64_t> directories =
+        numeric_version_directories(files);
+    for (const std::uint64_t number : directories) {
+        if (keep.find(number) != keep.end()) continue;
+        const std::string prefix = std::to_string(number) + "/";
+        auto entry = files.files.lower_bound(prefix);
+        while (entry != files.files.end()
+               && entry->first.compare(0U, prefix.size(), prefix) == 0U) {
+            entry = files.files.erase(entry);
+        }
+        files.retired_versions.insert(number);
+    }
+    versions.erase(
+        std::remove_if(
+            versions.begin(), versions.end(), [&keep](const auto& version) {
+                return keep.find(version.number) == keep.end();
+            }),
+        versions.end());
+    const auto current = std::find_if(
+        versions.begin(), versions.end(), [current_version](const auto& version) {
+            return version.number == current_version && version.valid;
+        });
+    if (current == versions.end()) {
+        return fail(error, "Revision policy could not retain current.");
+    }
+    return true;
+}
+
 bool target_exists(const std::string& path) {
     std::error_code error;
     return fs::exists(fs::symlink_status(detail::path_from_utf8(path), error));
@@ -5390,6 +6114,21 @@ bool save_with_reason(ProjectDocument& document,
         have_root = true;
     }
 
+    std::set<std::string> originally_delta_payloads;
+    if (have_root
+        && !materialize_text_revision_deltas(
+            files, originally_delta_payloads, error)) {
+        return false;
+    }
+
+    if (have_root
+        && root.file_io.revision_history != RevisionHistoryMode::Full
+        && document.file_io.revision_history == RevisionHistoryMode::Full) {
+        return fail(
+            error,
+            "A partial or disabled revision tree cannot become full history in place; rename the project and use Save Copy to create a new version-0 project.");
+    }
+
     if (!stage_attachment_assets(document, files, error)) return false;
     std::string current_fast_fingerprint;
     if (!fast_project_fingerprint(
@@ -5403,6 +6142,7 @@ bool save_with_reason(ProjectDocument& document,
         && current_fast_fingerprint
                == document.loaded_fast_project_fingerprint
         && !document.externally_modified && !root_external
+        && reason_override.empty()
         && !document.loaded_snapshot_digest.empty();
     if (fast_unchanged) {
         semantic_digest = document.loaded_snapshot_digest;
@@ -5411,9 +6151,12 @@ bool save_with_reason(ProjectDocument& document,
                    semantic_digest, error)) {
         return false;
     }
+    const bool encoding_changed = have_root
+        && root.file_io.encoding != document.file_io.encoding;
     const bool needs_version = versions.empty() || document.externally_modified
                                || root_external || document.legacy_import
                                || !reason_override.empty()
+                               || encoding_changed
                                || semantic_digest != document.loaded_snapshot_digest;
     const std::string now = utc_now();
     if (document.last_opened_utc.empty()) document.last_opened_utc = now;
@@ -5426,6 +6169,8 @@ bool save_with_reason(ProjectDocument& document,
 
     std::uint64_t current_version = document.current_version;
     bool promoted_external = false;
+    bool replaced_partial_working_state = false;
+    std::vector<std::string> replaced_partial_paths;
     if (needs_version) {
         if (have_root) {
             std::vector<std::uint64_t> missing_preserved;
@@ -5451,20 +6196,6 @@ bool save_with_reason(ProjectDocument& document,
                 }
             }
         }
-        const std::set<std::uint64_t> directory_versions =
-            numeric_version_directories(files);
-        if (directory_versions.size() >= kMaximumVersions) {
-            return fail(error,
-                        "Bundle history has reached the signed-int metadata/API index limit.");
-        }
-        const std::uint64_t number = directory_versions.empty()
-                                         ? 0U : (*directory_versions.rbegin()
-                                                  == std::numeric_limits<std::uint64_t>::max()
-                                                      ? 0U
-                                                      : *directory_versions.rbegin() + 1U);
-        if (!directory_versions.empty() && number == 0U) {
-            return fail(error, "Bundle version number space is exhausted.");
-        }
         auto parent = std::find_if(
             versions.begin(), versions.end(), [&document](const BundleVersionInfo& value) {
                 return value.number == document.current_version && value.valid;
@@ -5477,8 +6208,61 @@ bool save_with_reason(ProjectDocument& document,
             // origin before the canonical new version is appended.
             parent->indexed = true;
         }
-        const std::string parent_digest = parent == versions.end()
-                                              ? std::string{} : parent->metadata_digest;
+        const std::set<std::uint64_t> directory_versions =
+            numeric_version_directories(files);
+        const bool current_is_latest = parent != versions.end()
+            && !directory_versions.empty()
+            && parent->number == *directory_versions.rbegin();
+        const bool current_has_child = parent != versions.end()
+            && std::any_of(
+                versions.begin(), versions.end(), [&parent](const auto& item) {
+                    return item.parent_digest == parent->metadata_digest;
+                });
+        const bool current_is_pinned = parent != versions.end()
+            && std::binary_search(
+                document.file_io.pinned_versions.begin(),
+                document.file_io.pinned_versions.end(), parent->number);
+        const bool replace_partial_working =
+            document.file_io.revision_history == RevisionHistoryMode::Partial
+            && reason_override.empty() && have_root
+            && !document.externally_modified && !root_external
+            && !encoding_changed && current_is_latest && !current_has_child
+            && !current_is_pinned && parent->reason == "save";
+
+        std::uint64_t number = 0U;
+        std::string parent_digest;
+        if (replace_partial_working) {
+            number = parent->number;
+            parent_digest = parent->parent_digest;
+            root.version_digests.erase(number);
+            root.version_tree_digests.erase(number);
+            const std::string prefix = std::to_string(number) + "/";
+            auto entry = files.files.lower_bound(prefix);
+            while (entry != files.files.end()
+                   && entry->first.compare(0U, prefix.size(), prefix) == 0U) {
+                replaced_partial_paths.push_back(entry->first);
+                entry = files.files.erase(entry);
+            }
+            versions.erase(parent);
+            replaced_partial_working_state = true;
+        } else {
+            if (directory_versions.size() >= kMaximumVersions) {
+                return fail(error,
+                            "Bundle history has reached the signed-int metadata/API index limit.");
+            }
+            number = directory_versions.empty()
+                ? 0U : (*directory_versions.rbegin()
+                             == std::numeric_limits<std::uint64_t>::max()
+                         ? 0U : *directory_versions.rbegin() + 1U);
+            if (!directory_versions.empty() && number == 0U) {
+                return fail(error, "Bundle version number space is exhausted.");
+            }
+            parent_digest =
+                document.file_io.revision_history == RevisionHistoryMode::Disabled
+                    ? std::string{}
+                    : parent == versions.end() ? std::string{}
+                                               : parent->metadata_digest;
+        }
         std::string reason = reason_override;
         if (reason.empty()) {
             reason = (document.externally_modified || root_external)
@@ -5487,9 +6271,17 @@ bool save_with_reason(ProjectDocument& document,
         }
         BundleVersionInfo new_version;
         if (!build_version(document.project, document.attachments,
+                           document.file_io.encoding,
                            number, parent_digest, reason,
                            reverted_from, files, new_version,
                            semantic_digest, error)) return false;
+        for (const std::string& replaced_path : replaced_partial_paths) {
+            if (files.files.find(replaced_path) != files.files.end()) {
+                files.transactional_updates.insert(replaced_path);
+            } else {
+                files.transactional_removals.insert(replaced_path);
+            }
+        }
         versions.push_back(new_version);
         std::sort(versions.begin(), versions.end(),
                   [](const BundleVersionInfo& a, const BundleVersionInfo& b) {
@@ -5503,9 +6295,15 @@ bool save_with_reason(ProjectDocument& document,
                 files, root, root_external, versions, error)) return false;
     }
 
+    if (!apply_revision_policy(document.file_io, current_version,
+                               versions, files, error)) {
+        return false;
+    }
+
     bool compacted_global_analysis = false;
     bool compacted_layer_analysis = false;
     bool compacted_duplicate_assets = false;
+    bool compacted_text_revisions = false;
     if (!compact_embedded_music_analysis(
             files, versions, compacted_global_analysis, error)
         || !compact_embedded_layer_music_analysis(
@@ -5515,13 +6313,33 @@ bool save_with_reason(ProjectDocument& document,
             compacted_duplicate_assets, error)) {
         return false;
     }
+    const bool use_text_revision_deltas =
+        document.file_io.human_version_deltas
+        && document.file_io.encoding
+               == ProjectStorageEncoding::HumanEditable
+        && !detail::path_is_zip_bundle(path);
+    if (!apply_text_revision_delta_policy(
+            files, versions, current_version, use_text_revision_deltas,
+            originally_delta_payloads, compacted_text_revisions, error)) {
+        return false;
+    }
     const bool compacted_storage = compacted_global_analysis
                                    || compacted_layer_analysis
-                                   || compacted_duplicate_assets;
+                                   || compacted_duplicate_assets
+                                   || compacted_text_revisions;
 
     if (!destination_exists) {
         files.root_name = portable_root_name(document.project.name);
     }
+    files.zip_compression_level = document.file_io.zip_compression_level;
+    files.force_zip_recompression = have_root
+        && root.file_io.zip_compression_level
+               != document.file_io.zip_compression_level;
+    files.current_symlink_version = current_version;
+    files.current_as_relative_symlink =
+        !detail::path_is_zip_bundle(path)
+        && document.file_io.encoding
+               == ProjectStorageEncoding::HumanEditable;
     if (!write_root_files(document, versions, current_version,
                           have_root ? &root : nullptr, files, error)) return false;
     if (!detail::write_bundle_file_set_if_unchanged(
@@ -5582,7 +6400,8 @@ bool save_with_reason(ProjectDocument& document,
     BundleSaveReport completed_report;
     completed_report.path = path;
     completed_report.version = current_version;
-    completed_report.created_version = needs_version;
+    completed_report.created_version = needs_version
+                                       && !replaced_partial_working_state;
     completed_report.validated_only = !needs_version;
     completed_report.compacted_storage = compacted_storage;
     completed_report.wrote_zip = detail::path_is_zip_bundle(path);
@@ -5800,6 +6619,224 @@ bool revert_project_as_new(ProjectDocument& document,
         return fail(error, "Not enough memory to revert project.");
     } catch (const std::exception& exception) {
         return fail(error, std::string("Unexpected revert error: ")
+                               + exception.what());
+    }
+}
+
+bool create_project_revision(ProjectDocument& document,
+                             BundleSaveReport* report,
+                             std::string* error) {
+    clear_error(error);
+    try {
+        if (document.file_io.revision_history
+            != RevisionHistoryMode::Partial) {
+            return fail(error,
+                        "Manual revision creation is available only for partial history.");
+        }
+        if (document.source_path.empty() || document.legacy_import) {
+            return fail(error,
+                        "Save the project before creating a manual revision.");
+        }
+        return save_with_reason(document, document.source_path,
+                                "manual_revision", {}, report, error);
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to create a project revision.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected manual-revision error: ")
+                               + exception.what());
+    }
+}
+
+bool delete_project_version(ProjectDocument& document,
+                            std::uint64_t version,
+                            BundleSaveReport* report,
+                            std::string* error) {
+    clear_error(error);
+    try {
+        if (document.file_io.revision_history
+            != RevisionHistoryMode::Partial) {
+            return fail(error,
+                        "Version deletion is available only for partial history.");
+        }
+        if (document.source_path.empty() || document.legacy_import) {
+            return fail(error, "Unsaved document has no revision to delete.");
+        }
+        if (document.dirty) {
+            return fail(error,
+                        "Save project changes before deleting a revision.");
+        }
+        if (version == document.current_version) {
+            return fail(error, "The current revision cannot be deleted.");
+        }
+
+        detail::BundleFileSet files;
+        RootMetadata root;
+        bool root_external = false;
+        if (!read_document_source(document.source_path, files, root,
+                                  root_external, error)) {
+            return false;
+        }
+        if (root_external) {
+            return fail(error,
+                        "Project metadata changed on disk; refusing revision deletion until the project is reloaded or saved.");
+        }
+        std::string actual_state;
+        if (!detail::bundle_file_set_digest(files, actual_state, error)) {
+            return false;
+        }
+        if (document.loaded_bundle_state_digest.empty()
+            || actual_state != document.loaded_bundle_state_digest) {
+            return fail(error,
+                        "Project changed on disk since it was loaded; refusing stale revision deletion.");
+        }
+        std::vector<BundleVersionInfo> versions;
+        if (!collect_version_infos(files, root, versions, error)) return false;
+        const auto selected = std::find_if(
+            versions.begin(), versions.end(),
+            [version](const BundleVersionInfo& item) {
+                return item.number == version;
+            });
+        if (selected == versions.end()) {
+            return fail(error, "Requested revision is unknown.");
+        }
+
+        const std::string prefix = std::to_string(version) + "/";
+        auto entry = files.files.lower_bound(prefix);
+        while (entry != files.files.end()
+               && entry->first.compare(0U, prefix.size(), prefix) == 0U) {
+            entry = files.files.erase(entry);
+        }
+        files.retired_versions.insert(version);
+        versions.erase(selected);
+
+        ProjectDocument updated = document;
+        updated.file_io.pinned_versions.erase(
+            std::remove(updated.file_io.pinned_versions.begin(),
+                        updated.file_io.pinned_versions.end(), version),
+            updated.file_io.pinned_versions.end());
+        updated.last_saved_utc = utc_now();
+        updated.last_changed_with_version = PVT_PROGRAM_VERSION;
+        files.zip_compression_level = updated.file_io.zip_compression_level;
+        files.current_symlink_version = updated.current_version;
+        files.current_as_relative_symlink =
+            !detail::path_is_zip_bundle(updated.source_path)
+            && updated.file_io.encoding
+                   == ProjectStorageEncoding::HumanEditable;
+        if (!write_root_files(updated, versions, updated.current_version,
+                              &root, files, error)
+            || !detail::write_bundle_file_set_if_unchanged(
+                updated.source_path, files, true, actual_state, error)) {
+            return false;
+        }
+
+        ProjectDocument reloaded;
+        if (!load_project_document(updated.source_path, reloaded, error)) {
+            return false;
+        }
+        reloaded.last_opened_utc = updated.last_opened_utc;
+        BundleSaveReport completed;
+        completed.path = updated.source_path;
+        completed.version = updated.current_version;
+        completed.wrote_zip = updated.source_is_zip;
+        document = std::move(reloaded);
+        if (report != nullptr) *report = std::move(completed);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to delete a project revision.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected revision-deletion error: ")
+                               + exception.what());
+    }
+}
+
+bool set_project_version_pinned(ProjectDocument& document,
+                                std::uint64_t version,
+                                bool pinned,
+                                std::string* error) {
+    clear_error(error);
+    try {
+        if (document.file_io.revision_history
+            != RevisionHistoryMode::Partial) {
+            return fail(error,
+                        "Pinned revisions are available only for partial history.");
+        }
+        if (document.source_path.empty() || document.legacy_import) {
+            return fail(error, "Unsaved document has no revision to pin.");
+        }
+        if (document.dirty) {
+            return fail(error,
+                        "Save project changes before changing a revision pin.");
+        }
+        const BundleVersionInfo* selected = find_version(document, version);
+        if (selected == nullptr || !selected->indexed || !selected->valid) {
+            return fail(error, "Only a valid indexed revision can be pinned.");
+        }
+        const bool already_pinned = std::binary_search(
+            document.file_io.pinned_versions.begin(),
+            document.file_io.pinned_versions.end(), version);
+        if (already_pinned == pinned) return true;
+
+        ProjectDocument updated = document;
+        if (pinned) {
+            updated.file_io.pinned_versions.insert(
+                std::lower_bound(updated.file_io.pinned_versions.begin(),
+                                 updated.file_io.pinned_versions.end(),
+                                 version),
+                version);
+        } else {
+            updated.file_io.pinned_versions.erase(
+                std::lower_bound(updated.file_io.pinned_versions.begin(),
+                                 updated.file_io.pinned_versions.end(),
+                                 version));
+        }
+
+        detail::BundleFileSet files;
+        RootMetadata root;
+        bool root_external = false;
+        if (!read_document_source(updated.source_path, files, root,
+                                  root_external, error)) {
+            return false;
+        }
+        if (root_external) {
+            return fail(error,
+                        "Project metadata changed on disk; refusing revision pin change until the project is reloaded or saved.");
+        }
+        std::string actual_state;
+        if (!detail::bundle_file_set_digest(files, actual_state, error)) {
+            return false;
+        }
+        if (updated.loaded_bundle_state_digest.empty()
+            || actual_state != updated.loaded_bundle_state_digest) {
+            return fail(error,
+                        "Project changed on disk since it was loaded; refusing stale revision pin change.");
+        }
+        std::vector<BundleVersionInfo> versions;
+        if (!collect_version_infos(files, root, versions, error)) return false;
+        updated.last_saved_utc = utc_now();
+        updated.last_changed_with_version = PVT_PROGRAM_VERSION;
+        files.zip_compression_level = updated.file_io.zip_compression_level;
+        files.current_symlink_version = updated.current_version;
+        files.current_as_relative_symlink =
+            !detail::path_is_zip_bundle(updated.source_path)
+            && updated.file_io.encoding
+                   == ProjectStorageEncoding::HumanEditable;
+        if (!write_root_files(updated, versions, updated.current_version,
+                              &root, files, error)
+            || !detail::write_bundle_file_set_if_unchanged(
+                updated.source_path, files, true, actual_state, error)) {
+            return false;
+        }
+        ProjectDocument reloaded;
+        if (!load_project_document(updated.source_path, reloaded, error)) {
+            return false;
+        }
+        reloaded.last_opened_utc = updated.last_opened_utc;
+        document = std::move(reloaded);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(error, "Not enough memory to change the revision pin.");
+    } catch (const std::exception& exception) {
+        return fail(error, std::string("Unexpected revision-pin error: ")
                                + exception.what());
     }
 }

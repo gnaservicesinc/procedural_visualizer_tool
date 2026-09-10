@@ -585,7 +585,7 @@ void test_parameter_lfos() {
     animated.parameter_lfos.front().delay_fraction = 0.125;
     animated.parameter_lfos.front().skip_cycles = 2;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t26\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t27\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -1715,17 +1715,36 @@ void test_live_control_model_and_setup_codec() {
     audio_bass.smoothing_milliseconds = 80;
     live.mappings = {midi, osc, audio_bass};
 
-    live.clock_inputs = {
-        {true, pvt::LiveClockTarget::Project, {},
-         pvt::LiveClockInputSource::MidiClock, midi_uuid, 0, true, 600, {}},
-        {true, pvt::LiveClockTarget::Layer, project.layers.front().uuid,
-         pvt::LiveClockInputSource::AudioStream, audio_uuid, 1, false, 250, {}},
-    };
-    live.midi_clock_outputs = {
-        {true, pvt::LiveClockTarget::Project, {}, midi_uuid, true, true},
-        {true, pvt::LiveClockTarget::Layer, project.layers.front().uuid,
-         layer_midi_output_uuid, false, false},
-    };
+    pvt::LiveClockInputConfig project_clock_input;
+    project_clock_input.enabled = true;
+    project_clock_input.target = pvt::LiveClockTarget::Project;
+    project_clock_input.source = pvt::LiveClockInputSource::MidiClock;
+    project_clock_input.endpoint_uuid = midi_uuid;
+    project_clock_input.follow_midi_transport = true;
+    project_clock_input.holdover_milliseconds = 600;
+    pvt::LiveClockInputConfig layer_clock_input;
+    layer_clock_input.enabled = true;
+    layer_clock_input.target = pvt::LiveClockTarget::Layer;
+    layer_clock_input.layer_uuid = project.layers.front().uuid;
+    layer_clock_input.source = pvt::LiveClockInputSource::AudioStream;
+    layer_clock_input.endpoint_uuid = audio_uuid;
+    layer_clock_input.audio_channel = 1;
+    layer_clock_input.follow_midi_transport = false;
+    layer_clock_input.holdover_milliseconds = 250;
+    live.clock_inputs = {project_clock_input, layer_clock_input};
+
+    pvt::LiveMidiClockOutputConfig project_clock_output;
+    project_clock_output.enabled = true;
+    project_clock_output.source = pvt::LiveClockTarget::Project;
+    project_clock_output.endpoint_uuid = midi_uuid;
+    pvt::LiveMidiClockOutputConfig layer_clock_output;
+    layer_clock_output.enabled = true;
+    layer_clock_output.source = pvt::LiveClockTarget::Layer;
+    layer_clock_output.layer_uuid = project.layers.front().uuid;
+    layer_clock_output.endpoint_uuid = layer_midi_output_uuid;
+    layer_clock_output.send_transport = false;
+    layer_clock_output.send_song_position = false;
+    live.midi_clock_outputs = {project_clock_output, layer_clock_output};
     live.safety.watchdog_timeout_milliseconds = 75;
     live.safety.audio_dropout_grace_milliseconds = 325;
     live.safety.last_good_frame_timeout_milliseconds = 3000;
@@ -1765,7 +1784,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t26\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t27\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -2236,8 +2255,9 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
             exhaustive, 0.0, combinations, &error));
         std::set<std::array<float, 4U>> observed;
         std::array<bool, 3U> dominant_channels{};
-        for (int y = 0; y < exhaustive.height; y += exhaustive.block_size) {
-            for (int x = 0; x < exhaustive.width; x += exhaustive.block_size) {
+        const int block_size = static_cast<int>(exhaustive.block_size);
+        for (int y = 0; y < exhaustive.height; y += block_size) {
+            for (int x = 0; x < exhaustive.width; x += block_size) {
                 if (const float* pixel = combinations.pixel(x, y)) {
                     observed.insert({pixel[0], pixel[1], pixel[2], pixel[3]});
                     const std::size_t dominant = static_cast<std::size_t>(
@@ -2317,10 +2337,9 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
         CHECK(pvt::render_frame_at_phase(
             rectangular, 0.0, pattern, &error));
         std::set<std::array<float, 3U>> observed;
-        for (int y = 0; y < rectangular.height;
-             y += rectangular.block_size) {
-            for (int x = 0; x < rectangular.width;
-                 x += rectangular.block_size) {
+        const int block_size = static_cast<int>(rectangular.block_size);
+        for (int y = 0; y < rectangular.height; y += block_size) {
+            for (int x = 0; x < rectangular.width; x += block_size) {
                 if (const float* pixel = pattern.pixel(x, y)) {
                     observed.insert({pixel[0], pixel[1], pixel[2]});
                 }
@@ -2504,19 +2523,20 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     if (!blocked_ok) std::cerr << "blocked generated render: " << error << '\n';
     CHECK(blocked_ok);
     std::set<std::array<float, 3U>> block_colors;
+    const int blocked_block_size = static_cast<int>(blocked.block_size);
     for (int block_y = 0; block_y < blocked.height;
-         block_y += blocked.block_size) {
+         block_y += blocked_block_size) {
         for (int block_x = 0; block_x < blocked.width;
-             block_x += blocked.block_size) {
+             block_x += blocked_block_size) {
             const float* first = blocked_image.pixel(block_x, block_y);
             CHECK(first != nullptr);
             if (first == nullptr) continue;
             block_colors.insert({first[0], first[1], first[2]});
             for (int y = block_y;
-                 y < std::min(block_y + blocked.block_size, blocked.height);
+                 y < std::min(block_y + blocked_block_size, blocked.height);
                  ++y) {
                 for (int x = block_x;
-                     x < std::min(block_x + blocked.block_size, blocked.width);
+                     x < std::min(block_x + blocked_block_size, blocked.width);
                      ++x) {
                     const float* pixel = blocked_image.pixel(x, y);
                     CHECK(pixel != nullptr
@@ -2527,8 +2547,8 @@ void test_starting_images_and_reusable_paths(const fs::path& directory) {
     }
     CHECK(block_colors.size()
           == static_cast<std::size_t>(
-              (blocked.width / blocked.block_size)
-              * (blocked.height / blocked.block_size)));
+              (blocked.width / blocked_block_size)
+              * (blocked.height / blocked_block_size)));
 
     pvt::RenderConfig ranged = scaled;
     ranged.width = 16;
@@ -5653,6 +5673,98 @@ void test_validation_limits(const fs::path& source_root) {
     CHECK(!pvt::validate(config).ok);
 }
 
+void test_raw_config_snapshot() {
+    pvt::RenderConfig config = pvt::default_config();
+    config.width = 321;
+    config.height = 123;
+    config.block_size = 2.5;
+    config.block_size_modulation.synchronized = true;
+    config.block_size_modulation.alpha_gaps = true;
+    config.block_size_modulation.lfo_enabled = true;
+    config.block_size_modulation.lfo_name = "Raw pulse name";
+    config.output.filename_prefix = "literal-prefix";
+    config.waves.front().name = "literal-wave";
+
+    std::string numeric;
+    std::string strings;
+    std::string error;
+    CHECK(pvt::detail::serialize_raw_config(
+        config, numeric, strings, &error));
+    CHECK(!numeric.empty());
+    CHECK(numeric.find("PVT_") == std::string::npos);
+    CHECK(numeric.find("canvas.width") == std::string::npos);
+    CHECK(numeric.find("literal-wave") == std::string::npos);
+    CHECK(strings.find("literal-wave\n") != std::string::npos);
+    CHECK(strings.find("literal-prefix\n") != std::string::npos);
+
+    // Native float members stay floats in the numeric dump. Adding one music
+    // feature record contributes exactly its ten float members, not ten
+    // promoted doubles or a field-described codec representation.
+    pvt::RenderConfig with_float_record = config;
+    with_float_record.clock.music.feature_samples.emplace_back();
+    std::string float_numeric;
+    std::string float_strings;
+    CHECK(pvt::detail::serialize_raw_config(
+        with_float_record, float_numeric, float_strings, &error));
+    CHECK(float_strings == strings);
+    CHECK(float_numeric.size() == numeric.size()
+                                      + sizeof(pvt::MusicFeatureSample));
+
+    // The named members are direct bit-field views of the one authoritative
+    // integer. The raw snapshot begins with width, height, block size, then
+    // writes that same integer; it never emits three Boolean copies.
+    const std::uint32_t expected_block_flags =
+        pvt::BlockSizeModulation::SynchronizedFlag
+        | pvt::BlockSizeModulation::AlphaGapsFlag
+        | pvt::BlockSizeModulation::LfoEnabledFlag;
+    CHECK(config.block_size_modulation.flags == expected_block_flags);
+    CHECK(numeric.size() >= sizeof(int) * 2U + sizeof(double)
+                                + sizeof(std::uint32_t));
+    std::uint32_t stored_block_flags = 0U;
+    std::memcpy(&stored_block_flags,
+                numeric.data() + sizeof(int) * 2U + sizeof(double),
+                sizeof(stored_block_flags));
+    CHECK(stored_block_flags == config.block_size_modulation.flags);
+    config.block_size_modulation.alpha_gaps = false;
+    CHECK(config.block_size_modulation.flags
+          == (expected_block_flags
+              & ~pvt::BlockSizeModulation::AlphaGapsFlag));
+    config.block_size_modulation.flags =
+        pvt::BlockSizeModulation::AlphaGapsFlag;
+    CHECK(!config.block_size_modulation.synchronized);
+    CHECK(config.block_size_modulation.alpha_gaps);
+    CHECK(!config.block_size_modulation.lfo_enabled);
+
+    config.block_size_modulation.flags = expected_block_flags;
+
+    pvt::RenderConfig loaded;
+    CHECK(pvt::detail::deserialize_raw_config(
+        numeric, strings, loaded, &error));
+    std::string expected;
+    std::string actual;
+    CHECK(pvt::detail::serialize_setup_config(config, expected, &error));
+    CHECK(pvt::detail::serialize_setup_config(loaded, actual, &error));
+    CHECK(actual == expected);
+
+    pvt::RenderConfig unchanged = pvt::default_config();
+    unchanged.width = 777;
+    const std::string truncated = numeric.substr(0U, numeric.size() - 1U);
+    CHECK(!pvt::detail::deserialize_raw_config(
+        truncated, strings, unchanged, &error));
+    CHECK(unchanged.width == 777);
+    CHECK(!pvt::detail::deserialize_raw_config(
+        numeric, strings + "extra\n", unchanged, &error));
+    CHECK(unchanged.width == 777);
+    CHECK(!pvt::detail::deserialize_raw_config(
+        numeric + '\0', strings, unchanged, &error));
+    CHECK(unchanged.width == 777);
+
+    pvt::RenderConfig invalid_string = config;
+    invalid_string.waves.front().name = "two\nlines";
+    CHECK(!pvt::detail::serialize_raw_config(
+        invalid_string, numeric, strings, &error));
+}
+
 void test_setup_round_trip_and_transaction(const fs::path& directory) {
     auto original = pvt::default_config();
     make_small(original);
@@ -6341,7 +6453,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-              .rfind("PVT_SETUP\t26\n", 0U) == 0U);
+        .rfind("PVT_SETUP\t27\n", 0U) == 0U);
     std::string version_twenty_four(current_version_bytes.begin(),
                                     current_version_bytes.end());
     version_twenty_four.replace(0U, std::string("PVT_SETUP\t26").size(),
@@ -7918,6 +8030,7 @@ int main(int argc, char** argv) {
     test_block_scale_and_default_glow_visibility();
     test_palettes_transforms_and_spatial_stages();
     test_validation_limits(source_root);
+    test_raw_config_snapshot();
     test_setup_round_trip_and_transaction(test_directory);
     test_maximum_music_analysis_setup(test_directory);
     test_image_formats_and_dither(test_directory);

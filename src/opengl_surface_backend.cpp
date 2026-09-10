@@ -37,6 +37,40 @@ namespace {
 thread_local bool g_surface_acceleration_active = false;
 thread_local const PreparedFrame* g_prepared_frame = nullptr;
 
+std::uint64_t block_grid_hash(std::uint64_t value) {
+    value ^= value >> 30U;
+    value *= UINT64_C(0xbf58476d1ce4e5b9);
+    value ^= value >> 27U;
+    value *= UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31U);
+}
+
+double block_grid_offset(const RenderConfig& config,
+                         const PreparedFrame& prepared,
+                         std::uint64_t axis_seed) {
+    if (std::floor(config.block_size) == config.block_size) return 0.0;
+    constexpr double kTau = 6.283185307179586476925286766559;
+    double normalized = std::fmod(prepared.loop_phase / kTau, 1.0);
+    if (normalized < 0.0) normalized += 1.0;
+    const std::uint64_t synchronized_seed =
+        config.block_size_modulation.synchronized
+            ? static_cast<std::uint64_t>(std::llround(
+                  normalized * static_cast<double>(config.total_frames)))
+            : 0U;
+    return static_cast<double>(
+               block_grid_hash(axis_seed ^ synchronized_seed) >> 11U)
+           * 0x1.0p-53;
+}
+
+int block_axis_count(int extent, double size, double offset) {
+    if (std::floor(size) == size) {
+        const int integral = static_cast<int>(size);
+        return extent / integral + (extent % integral != 0 ? 1 : 0);
+    }
+    return std::max(1, static_cast<int>(std::ceil(
+                           (static_cast<double>(extent) - offset) / size)));
+}
+
 constexpr const char* kVertexShader = R"PVT_GLSL(#version 330 core
 out vec2 unusedUv;
 void main() {
@@ -837,7 +871,11 @@ void main() {
 
 constexpr const char* kGeneratedBaseFragmentShader = R"PVT_GLSL(#version 330 core
 uniform ivec2 imageSize;
-uniform int blockSize;
+uniform float blockSize;
+uniform vec2 blockOffset;
+uniform ivec2 blockCount;
+uniform int fractionalBlocks;
+uniform int alphaGaps;
 uniform int expandBlocks;
 uniform sampler2D blockImage;
 uniform int waveCount;
@@ -1025,26 +1063,65 @@ void main() {
     if (expandBlocks != 0) {
         // RGB is shared by the authored block; procedural alpha is evaluated
         // at every output pixel and must remain smooth across block interiors.
-        vec3 rgb = texelFetch(blockImage,
-                              ivec2(x / blockSize, y / blockSize), 0).rgb;
+        int blockXIndex = clamp(int(ceil(
+            (float(x) + 1.0 - blockOffset.x) / blockSize)) - 1,
+            0, blockCount.x - 1);
+        int blockYIndex = clamp(int(ceil(
+            (float(y) + 1.0 - blockOffset.y) / blockSize)) - 1,
+            0, blockCount.y - 1);
+        ivec2 blockIndex = ivec2(blockXIndex, blockYIndex);
+        int startX = blockXIndex == 0 ? 0 : int(floor(
+            float(blockXIndex) * blockSize + blockOffset.x));
+        int startY = blockYIndex == 0 ? 0 : int(floor(
+            float(blockYIndex) * blockSize + blockOffset.y));
+        bool verticalTransition = false;
+        bool horizontalTransition = false;
+        if (fractionalBlocks != 0 && blockXIndex > 0 && x == startX) {
+            int priorStart = blockXIndex == 1 ? 0 : int(floor(
+                float(blockXIndex - 1) * blockSize + blockOffset.x));
+            int end = min(imageSize.x, int(floor(
+                float(blockXIndex + 1) * blockSize + blockOffset.x)));
+            verticalTransition = startX - priorStart != end - startX;
+        }
+        if (fractionalBlocks != 0 && blockYIndex > 0 && y == startY) {
+            int priorStart = blockYIndex == 1 ? 0 : int(floor(
+                float(blockYIndex - 1) * blockSize + blockOffset.y));
+            int end = min(imageSize.y, int(floor(
+                float(blockYIndex + 1) * blockSize + blockOffset.y)));
+            horizontalTransition = startY - priorStart != end - startY;
+        }
+        if ((verticalTransition || horizontalTransition) && alphaGaps != 0) {
+            outputColor = vec4(0.0);
+            return;
+        }
+        vec3 rgb = texelFetch(blockImage, blockIndex, 0).rgb;
+        if (verticalTransition) {
+            rgb = 0.5 * (rgb + texelFetch(
+                blockImage, blockIndex - ivec2(1, 0), 0).rgb);
+        } else if (horizontalTransition) {
+            rgb = 0.5 * (rgb + texelFetch(
+                blockImage, blockIndex - ivec2(0, 1), 0).rgb);
+        }
         outputColor = vec4(rgb, clampUnit(proceduralAlpha(x, y)));
         return;
     }
     // This pass shades one fragment per block, including partial edge blocks.
-    int blockX = x * blockSize;
-    int blockY = y * blockSize;
+    int blockX = x == 0 ? 0 : int(floor(
+        float(x) * blockSize + blockOffset.x));
+    int blockY = y == 0 ? 0 : int(floor(
+        float(y) * blockSize + blockOffset.y));
     float sourceX = float(blockX);
     float sourceY = float(blockY);
     float motion = motionPhaseAt(sourceX, sourceY);
     float motionRight = swingCount == 0
-        ? motion : motionPhaseAt(sourceX + float(blockSize), sourceY);
+        ? motion : motionPhaseAt(sourceX + blockSize, sourceY);
     float motionDown = swingCount == 0
-        ? motion : motionPhaseAt(sourceX, sourceY + float(blockSize));
+        ? motion : motionPhaseAt(sourceX, sourceY + blockSize);
     float heightHere = waveHeight(sourceX, sourceY, motion);
     float heightRight = waveHeight(
-        sourceX + float(blockSize), sourceY, motionRight);
+        sourceX + blockSize, sourceY, motionRight);
     float heightDown = waveHeight(
-        sourceX, sourceY + float(blockSize), motionDown);
+        sourceX, sourceY + blockSize, motionDown);
     float slopeX = heightRight - heightHere;
     float slopeY = heightDown - heightHere;
     float displacement = displacementEnabled != 0
@@ -1458,6 +1535,10 @@ struct GeneratedBaseUniformLocations {
     GLint swing_data = -1;
     GLint image_size = -1;
     GLint block_size = -1;
+    GLint block_offset = -1;
+    GLint block_count = -1;
+    GLint fractional_blocks = -1;
+    GLint alpha_gaps = -1;
     GLint expand_blocks = -1;
     GLint block_image = -1;
     GLint wave_count = -1;
@@ -1559,6 +1640,11 @@ GeneratedBaseUniformLocations load_generated_base_uniform_locations(
     result.swing_data = gl->glGetUniformLocation(program, "swingData");
     result.image_size = gl->glGetUniformLocation(program, "imageSize");
     result.block_size = gl->glGetUniformLocation(program, "blockSize");
+    result.block_offset = gl->glGetUniformLocation(program, "blockOffset");
+    result.block_count = gl->glGetUniformLocation(program, "blockCount");
+    result.fractional_blocks =
+        gl->glGetUniformLocation(program, "fractionalBlocks");
+    result.alpha_gaps = gl->glGetUniformLocation(program, "alphaGaps");
     result.expand_blocks = gl->glGetUniformLocation(program, "expandBlocks");
     result.block_image = gl->glGetUniformLocation(program, "blockImage");
     result.wave_count = gl->glGetUniformLocation(program, "waveCount");
@@ -2907,9 +2993,17 @@ private:
             1U, prepared.waves.size() * 3U);
         const std::size_t swing_texels = std::max<std::size_t>(
             1U, prepared.spatial_swings.size());
-        const int block_columns = 1 + (config.width - 1) / config.block_size;
-        const int block_rows = 1 + (config.height - 1) / config.block_size;
-        const bool expand_blocks = config.block_size > 1;
+        const double block_offset_x = block_grid_offset(
+            config, prepared, UINT64_C(0x243f6a8885a308d3));
+        const double block_offset_y = block_grid_offset(
+            config, prepared, UINT64_C(0x13198a2e03707344));
+        const int block_columns = block_axis_count(
+            config.width, config.block_size, block_offset_x);
+        const int block_rows = block_axis_count(
+            config.height, config.block_size, block_offset_y);
+        const bool fractional_blocks =
+            std::floor(config.block_size) != config.block_size;
+        const bool expand_blocks = config.block_size > 1.0;
 
         if (!context_->makeCurrent(surface_)) {
             return fail(error,
@@ -3048,8 +3142,17 @@ private:
         gl->glUniform1i(base_uniforms_.swing_data, 1);
         gl->glUniform2i(base_uniforms_.image_size,
                         config.width, config.height);
-        gl->glUniform1i(base_uniforms_.block_size,
-                        config.block_size);
+        gl->glUniform1f(base_uniforms_.block_size,
+                        static_cast<float>(config.block_size));
+        gl->glUniform2f(base_uniforms_.block_offset,
+                        static_cast<float>(block_offset_x),
+                        static_cast<float>(block_offset_y));
+        gl->glUniform2i(base_uniforms_.block_count,
+                        block_columns, block_rows);
+        gl->glUniform1i(base_uniforms_.fractional_blocks,
+                        fractional_blocks ? 1 : 0);
+        gl->glUniform1i(base_uniforms_.alpha_gaps,
+                        config.block_size_modulation.alpha_gaps ? 1 : 0);
         gl->glUniform1i(base_uniforms_.expand_blocks, 0);
         gl->glUniform1i(base_uniforms_.block_image, 2);
         gl->glActiveTexture(GL_TEXTURE2);

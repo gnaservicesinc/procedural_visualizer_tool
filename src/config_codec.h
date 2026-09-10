@@ -8,7 +8,7 @@
 namespace pvt::detail {
 
 inline constexpr std::uint32_t kLayerConfigFormatVersion = 23U;
-inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 9U;
+inline constexpr std::uint32_t kRenderOutputConfigFormatVersion = 10U;
 inline constexpr std::uint32_t kMusicAnalysisConfigFormatVersion = 2U;
 inline constexpr std::uint32_t kSplitRenderOutputConfigFormatVersion = 7U;
 
@@ -90,6 +90,28 @@ bool deserialize_split_render_output_config(
     CanvasLoopConfig& canvas,
     ExportConfig& output,
     std::string* error = nullptr);
+
+// Headerless native-value dump used by .pvtdat project payloads. It writes the
+// complete current RenderConfig field sequence in one buffer, uses native
+// scalar representations, and writes each in-memory uint32_t flag bank as the
+// same uint32_t. There are no separate Boolean values, field names, type tags,
+// magic bytes, or version headers in the file.
+// Layouts are append-only: existing slots may become ignored tombstones but
+// must never move or change representation. The loader identifies a historical
+// layout from the complete byte streams themselves and accepts it only when
+// every byte is consumed and the resulting values are sane. No independent
+// version field can become detached from the raw data.
+inline constexpr std::uint32_t kRawConfigCurrentLayout = 1U;
+bool serialize_raw_config(const RenderConfig& config,
+                          std::string& numeric,
+                          std::string& strings,
+                          std::string* error = nullptr,
+                          bool enforce_particle_workload = true);
+bool deserialize_raw_config(const std::string& numeric,
+                            const std::string& strings,
+                            RenderConfig& destination,
+                            std::string* error = nullptr,
+                            bool enforce_particle_workload = true);
 
 } // namespace pvt::detail
 

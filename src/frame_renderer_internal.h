@@ -350,6 +350,10 @@ PVT_API RenderConfig materialize_parameter_lfos(const RenderConfig& config,
                                                 double normalized_phase);
 PVT_API RenderConfig materialize_parameter_lfos_at_frame(
     const RenderConfig& config, int frame_index);
+PVT_API RenderConfig materialize_block_size_modulation(
+    const RenderConfig& config, double normalized_phase);
+PVT_API RenderConfig materialize_block_size_modulation_at_frame(
+    const RenderConfig& config, int frame_index);
 inline bool has_enabled_parameter_lfo(const RenderData& render) {
     return std::any_of(render.parameter_lfos.begin(), render.parameter_lfos.end(),
         [](const ParameterLfo& lfo) { return lfo.enabled; });

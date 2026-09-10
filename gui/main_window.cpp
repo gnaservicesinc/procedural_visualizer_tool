@@ -7,6 +7,7 @@
 #include "application_settings_dialog.h"
 #include "audio_processing_dialog.h"
 #include "display_color.h"
+#include "flexible_spin_box.h"
 #include "live_target_registry.h"
 #include "live_workspace.h"
 #include "preview_widget.h"
@@ -52,6 +53,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFocusEvent>
 #include <QFormLayout>
 #include <QFrame>
 #include <QFuture>
@@ -82,6 +84,7 @@
 #include <QProcess>
 #include <QPixmap>
 #include <QRandomGenerator>
+#include <QRegularExpression>
 #include <QScrollArea>
 #include <QSaveFile>
 #include <QScreen>
@@ -512,13 +515,11 @@ pvt::RenderBackend resolved_render_backend(
     bool allow_capability_probe = true) {
     switch (preference) {
         case RenderBackendPreference::Automatic: {
-            if (!allow_capability_probe) return pvt::RenderBackend::Cpu;
+            if (!allow_capability_probe) return pvt::RenderBackend::CpuAndGpu;
             const pvt::RendererCapabilities capabilities =
                 pvt::renderer_capabilities();
-            return capabilities.metal_available
-                       || capabilities.opengl_surface_available
-                ? pvt::RenderBackend::CpuAndGpu
-                : pvt::RenderBackend::Cpu;
+            Q_UNUSED(capabilities);
+            return pvt::RenderBackend::CpuAndGpu;
         }
         case RenderBackendPreference::CpuAndGpu:
             return pvt::RenderBackend::CpuAndGpu;
@@ -890,9 +891,53 @@ void append_copy_suffix(std::string& name) {
     }
 }
 
+std::string smart_unique_layer_name(const pvt::ProjectConfig& project,
+                                    const std::string& source = {}) {
+    const auto in_use = [&project](const QString& candidate) {
+        return std::any_of(
+            project.layers.begin(), project.layers.end(),
+            [&candidate](const pvt::LayerConfig& layer) {
+                return QString::fromStdString(layer.name).compare(
+                           candidate, Qt::CaseInsensitive) == 0;
+            });
+    };
+    QString source_name = QString::fromStdString(source).trimmed();
+    static const QRegularExpression generic_layer(
+        QStringLiteral(R"(^layer(?:\s+(?:one|\d+))?$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    if (source_name.isEmpty() || generic_layer.match(source_name).hasMatch()) {
+        for (std::size_t index = 1U; index <= project.layers.size() + 1U;
+             ++index) {
+            const QString candidate = QObject::tr("Layer %1").arg(index);
+            if (!in_use(candidate)) return candidate.toStdString();
+        }
+    }
+
+    static const QRegularExpression numeric_suffix(
+        QStringLiteral(R"(^(.*?)(?:\s+copy|\s+(\d+))$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch suffix = numeric_suffix.match(source_name);
+    QString base = suffix.hasMatch() ? suffix.captured(1).trimmed()
+                                     : source_name;
+    if (base.isEmpty()) base = QObject::tr("Layer");
+    for (std::size_t index = 2U; index <= project.layers.size() + 2U;
+         ++index) {
+        const QString tail = QStringLiteral(" %1").arg(index);
+        QString fitted = base;
+        while (!fitted.isEmpty()
+               && (fitted + tail).toUtf8().size()
+                      > static_cast<qsizetype>(kMaximumNameBytes)) {
+            fitted.chop(1);
+        }
+        const QString candidate = fitted.trimmed() + tail;
+        if (!in_use(candidate)) return candidate.toStdString();
+    }
+    return QObject::tr("Layer").toStdString();
+}
+
 QDoubleSpinBox* real_editor(double minimum, double maximum, int decimals = 4,
                             double step = 0.01) {
-    auto* editor = new QDoubleSpinBox;
+    auto* editor = new FlexibleDoubleSpinBox;
     editor->setDecimals(decimals);
     editor->setRange(minimum, maximum);
     editor->setSingleStep(step);
@@ -1689,7 +1734,7 @@ bool visible_stack_requires_alpha(
 void scale_project_for_preview(pvt::ProjectConfig& project) {
     const int source_width = project.canvas.width;
     const int source_height = project.canvas.height;
-    const int source_block_size = project.canvas.block_size;
+    const double source_block_size = project.canvas.block_size;
     const int source_short_edge =
         std::max(1, std::min(project.canvas.width, project.canvas.height));
     const double scale = std::min(
@@ -1723,8 +1768,8 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
     }
     project.canvas.width = preview_width;
     project.canvas.height = preview_height;
-    project.canvas.block_size = std::max(
-        1, static_cast<int>(std::lround(project.canvas.block_size * scale)));
+    project.canvas.block_size = source_block_size == 0.0
+        ? 0.0 : std::max(0.000001, source_block_size * scale);
 }
 
 void set_form_label(QFormLayout* form, QWidget* field, const QString& text) {
@@ -2717,6 +2762,7 @@ MainWindow::MainWindow(QWidget* parent)
                     }
                     status_->setText(summary);
                 }
+                considerCpuOnlyNewProjectResolution(result);
             } else {
                 if (live_workspace_ == nullptr
                     || !live_workspace_->isRealtimeOutputActive()) {
@@ -2843,6 +2889,13 @@ MainWindow::MainWindow(QWidget* parent)
                     } else {
                         finishProjectSave(std::move(*result.document),
                                           result.save_report, result.path);
+                        if (result.operation
+                            == ProjectIoOperation::CreateRevision) {
+                            status_->setText(
+                                tr("Created revision %1 in %2")
+                                    .arg(result.save_report.version)
+                                    .arg(result.path));
+                        }
                         adopted = true;
                     }
                 }
@@ -2851,19 +2904,26 @@ MainWindow::MainWindow(QWidget* parent)
                     && compatibility_warning_.isEmpty()) {
                     status_->setText(tr("Loaded %1").arg(result.path));
                 } else if (!adopted) {
-                    status_->setText(result.operation == ProjectIoOperation::Load
+                    const bool loading = result.operation
+                                         == ProjectIoOperation::Load;
+                    const bool creating_revision = result.operation
+                                                   == ProjectIoOperation::CreateRevision;
+                    status_->setText(loading
                                          ? tr("Load failed")
-                                         : tr("Save failed"));
+                                         : creating_revision
+                                               ? tr("Revision failed")
+                                               : tr("Save failed"));
                     QMessageBox::critical(
                         this,
-                        result.operation == ProjectIoOperation::Load
-                            ? tr("Load failed") : tr("Save failed"),
-                        result.operation == ProjectIoOperation::Load
+                        loading ? tr("Load failed")
+                                : creating_revision ? tr("Revision failed")
+                                                    : tr("Save failed"),
+                        loading
                             ? tr("The active project was not changed.\n\n%1")
                                   .arg(result.error)
                             : result.error);
                 }
-                if (adopted && result.operation == ProjectIoOperation::Save) {
+                if (adopted && result.operation != ProjectIoOperation::Load) {
                     addRecentProject(result.path);
                 }
                 if (close_after_project_io_) {
@@ -2873,7 +2933,7 @@ MainWindow::MainWindow(QWidget* parent)
                 std::function<void()> continuation =
                     std::move(project_io_success_continuation_);
                 project_io_success_continuation_ = {};
-                if (adopted && result.operation == ProjectIoOperation::Save
+                if (adopted && result.operation != ProjectIoOperation::Load
                     && continuation) {
                     continuation();
                 }
@@ -2952,6 +3012,9 @@ MainWindow::MainWindow(QWidget* parent)
         // block inside a vendor driver and cannot be bounded by Qt. The normal
         // application path still probes and reports the real accelerator.
         render_backend_ = pvt::RenderBackend::Cpu;
+    } else {
+        QTimer::singleShot(0, this,
+                           &MainWindow::offerCpuOnlyRescueIfNeeded);
     }
     setDriversExpanded(false);
     setWorkflowStage(0);
@@ -6096,6 +6159,64 @@ QWidget* MainWindow::createOutputPage() {
     compatibility_warning_label_->hide();
     canvas_layout->addWidget(compatibility_warning_label_);
 
+    auto* file_io_group = new QGroupBox(tr("Save File I/O"));
+    file_io_group->setObjectName(QStringLiteral("projectFileIoGroup"));
+    project_file_io_form_ = new QFormLayout(file_io_group);
+    auto* file_io_form = project_file_io_form_;
+    project_storage_encoding_ = new QComboBox;
+    project_storage_encoding_->setObjectName(
+        QStringLiteral("projectStorageEncoding"));
+    project_storage_encoding_->addItem(
+        tr("Binary — speed optimized, smaller, recommended"),
+        static_cast<int>(pvt::ProjectStorageEncoding::Binary));
+    project_storage_encoding_->addItem(
+        tr("Human editable — named text values"),
+        static_cast<int>(pvt::ProjectStorageEncoding::HumanEditable));
+    project_storage_encoding_->setToolTip(tr(
+        "Binary writes native numeric values and packed flag integers directly; strings remain exact newline-ordered bytes. Human editable writes named text records."));
+    project_revision_mode_ = new QComboBox;
+    project_revision_mode_->setObjectName(
+        QStringLiteral("projectRevisionMode"));
+    project_revision_mode_->addItem(
+        tr("Full — retain immutable history"),
+        static_cast<int>(pvt::RevisionHistoryMode::Full));
+    project_revision_mode_->addItem(
+        tr("Partial — recent and pinned revisions"),
+        static_cast<int>(pvt::RevisionHistoryMode::Partial));
+    project_revision_mode_->addItem(
+        tr("Disabled — current state only"),
+        static_cast<int>(pvt::RevisionHistoryMode::Disabled));
+    project_revision_keep_ = integer_editor(
+        1, static_cast<int>((std::min)(
+               pvt::kMaximumUiItems,
+               static_cast<std::size_t>((std::numeric_limits<int>::max)()))));
+    project_revision_keep_->setObjectName(
+        QStringLiteral("projectRevisionKeepCount"));
+    project_revision_keep_->setToolTip(tr(
+        "Partial history retains this many recent revisions plus every explicitly pinned revision."));
+    project_human_deltas_ = new QCheckBox(
+        tr("Store non-current text revisions as deltas"));
+    project_human_deltas_->setObjectName(
+        QStringLiteral("projectHumanVersionDeltas"));
+    project_human_deltas_->setToolTip(tr(
+        "Directory projects keep the current human-editable snapshot complete and may compact older text snapshots against it."));
+    project_zip_compression_ = integer_editor(0, 9);
+    project_zip_compression_->setObjectName(
+        QStringLiteral("projectZipCompression"));
+    project_zip_compression_->setToolTip(tr(
+        "ZIP deflate level: 0 stores quickly without compression; 9 spends more CPU for the smallest archive."));
+    project_file_io_status_ = new QLabel;
+    project_file_io_status_->setObjectName(
+        QStringLiteral("projectFileIoStatus"));
+    project_file_io_status_->setWordWrap(true);
+    file_io_form->addRow(tr("Storage"), project_storage_encoding_);
+    file_io_form->addRow(tr("Revision history"), project_revision_mode_);
+    file_io_form->addRow(tr("Recent revisions"), project_revision_keep_);
+    file_io_form->addRow(QString{}, project_human_deltas_);
+    file_io_form->addRow(tr("ZIP compression"), project_zip_compression_);
+    file_io_form->addRow(QString{}, project_file_io_status_);
+    canvas_layout->addWidget(file_io_group);
+
     auto* export_intro = new QLabel(tr(
         "Everything needed to understand or start an export is collected here. Canvas size and frame timing are summarized below and remain editable in Project; encoding, destination, and file naming are editable on this page."));
     export_intro->setWordWrap(true);
@@ -6105,7 +6226,11 @@ QWidget* MainWindow::createOutputPage() {
     auto* canvas = new QFormLayout(canvas_group);
     width_ = integer_editor(16, (std::numeric_limits<int>::max)());
     height_ = integer_editor(16, (std::numeric_limits<int>::max)());
-    block_size_ = integer_editor(1, (std::numeric_limits<int>::max)());
+    block_size_ = real_editor(
+        0.0, static_cast<double>((std::numeric_limits<int>::max)()), 6, 0.25);
+    block_size_->setObjectName(QStringLiteral("projectBlockSize"));
+    block_size_->setToolTip(tr(
+        "Fractional sizes distribute floor/ceiling blocks without changing the canvas extent. Values below 1 use subpixel supersampling; 0 is an immediate blackout."));
     frames_ = integer_editor(2, (std::numeric_limits<int>::max)());
     frames_->setObjectName(QStringLiteral("manualFrameCount"));
     fps_ = real_editor(
@@ -6116,10 +6241,57 @@ QWidget* MainWindow::createOutputPage() {
     canvas->addRow(tr("Width"), width_);
     canvas->addRow(tr("Height"), height_);
     canvas->addRow(tr("Block size"), block_size_);
+    block_size_sync_ = new QCheckBox(
+        tr("Sync fractional grid changes to the project clock"));
+    block_size_sync_->setToolTip(tr(
+        "Keeps the floor/ceiling distribution deterministic and loop-safe while allowing it to change on project frames."));
+    canvas->addRow(QString{}, block_size_sync_);
+    block_size_alpha_gaps_ = new QCheckBox(
+        tr("Use alpha holes at mixed-size transitions"));
+    block_size_alpha_gaps_->setToolTip(tr(
+        "Unchecked blends neighboring blocks at size transitions; checked leaves transparent seam pixels."));
+    canvas->addRow(QString{}, block_size_alpha_gaps_);
     canvas->addRow(tr("Manual frames"), frames_);
     canvas->addRow(tr("Effective duration"), effective_frames_);
     canvas->addRow(tr("Playback FPS"), fps_);
     canvas_layout->addWidget(canvas_group);
+
+    auto* block_lfo_group = new QGroupBox(tr("Block Size LFO"));
+    auto* block_lfo_form = new QFormLayout(block_lfo_group);
+    block_size_lfo_enabled_ = new QCheckBox(tr("Enabled"));
+    block_size_lfo_name_ = new QLineEdit;
+    block_size_lfo_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
+    block_size_lfo_waveform_ = new QComboBox;
+    add_enum_item(block_size_lfo_waveform_, tr("Sine"), pvt::Waveform::Sine);
+    add_enum_item(block_size_lfo_waveform_, tr("Triangle"), pvt::Waveform::Triangle);
+    add_enum_item(block_size_lfo_waveform_, tr("Smooth pulse"),
+                  pvt::Waveform::SmoothPulse);
+    add_enum_item(block_size_lfo_waveform_, tr("Square"), pvt::Waveform::Square);
+    add_enum_item(block_size_lfo_waveform_, tr("Sawtooth up"),
+                  pvt::Waveform::SawtoothUp);
+    add_enum_item(block_size_lfo_waveform_, tr("Sawtooth down"),
+                  pvt::Waveform::SawtoothDown);
+    block_size_lfo_minimum_ = real_editor(
+        0.0, static_cast<double>((std::numeric_limits<int>::max)()), 6, 0.25);
+    block_size_lfo_maximum_ = real_editor(
+        0.0, static_cast<double>((std::numeric_limits<int>::max)()), 6, 0.25);
+    block_size_lfo_cycles_ = integer_editor(1, (std::numeric_limits<int>::max)());
+    block_size_lfo_phase_ = real_editor(
+        -kMaximumRenderParameter, kMaximumRenderParameter, 6, 1.0);
+    block_size_lfo_shape_ = real_editor(0.0, 1.0, 6, 0.01);
+    assign_block_size_lfo_ = new QPushButton(tr("Assign sensible LFO"));
+    assign_block_size_lfo_->setToolTip(tr(
+        "Creates a uniquely named, loop-safe one-cycle sine LFO around the current block size."));
+    block_lfo_form->addRow(QString{}, block_size_lfo_enabled_);
+    block_lfo_form->addRow(tr("Name"), block_size_lfo_name_);
+    block_lfo_form->addRow(tr("Waveform"), block_size_lfo_waveform_);
+    block_lfo_form->addRow(tr("Minimum"), block_size_lfo_minimum_);
+    block_lfo_form->addRow(tr("Maximum"), block_size_lfo_maximum_);
+    block_lfo_form->addRow(tr("Cycles per loop"), block_size_lfo_cycles_);
+    block_lfo_form->addRow(tr("Phase (degrees)"), block_size_lfo_phase_);
+    block_lfo_form->addRow(tr("Shape"), block_size_lfo_shape_);
+    block_lfo_form->addRow(QString{}, assign_block_size_lfo_);
+    canvas_layout->addWidget(block_lfo_group);
 
     auto* export_canvas_group = new QGroupBox(tr("Canvas and timeline"));
     auto* export_canvas_layout = new QVBoxLayout(export_canvas_group);
@@ -6293,6 +6465,121 @@ QWidget* MainWindow::createOutputPage() {
                     live_workspace_->setPresentationHideCursor(checked);
                 }
             });
+    connect(project_storage_encoding_, &QComboBox::currentIndexChanged,
+            this, [this](int) {
+                if (populating_ || document_ == nullptr) return;
+                const auto requested = static_cast<pvt::ProjectStorageEncoding>(
+                    project_storage_encoding_->currentData().toInt());
+                if (requested == document_->file_io.encoding) return;
+                const QString description = requested
+                        == pvt::ProjectStorageEncoding::Binary
+                    ? tr("Convert the current snapshot to raw native numeric data? It will no longer be human editable. Immutable older revisions keep their original storage so their history is not rewritten.")
+                    : tr("Convert the current snapshot to named human-editable text? A directory project will expose current as a relative symbolic link.");
+                const auto answer = QMessageBox::question(
+                    this, tr("Change project storage and save?"),
+                    description + tr("\n\nThe change requires an immediate Save."),
+                    QMessageBox::Save | QMessageBox::Cancel,
+                    QMessageBox::Cancel);
+                if (answer != QMessageBox::Save) {
+                    refreshProjectFileIoControls();
+                    return;
+                }
+                document_->file_io.encoding = requested;
+                baseline_dirty_ = true;
+                noteDocumentChange();
+                refreshProjectFileIoControls();
+                saveSetup();
+            });
+    connect(project_revision_mode_, &QComboBox::currentIndexChanged,
+            this, [this](int) {
+                if (populating_ || document_ == nullptr) return;
+                const auto requested = static_cast<pvt::RevisionHistoryMode>(
+                    project_revision_mode_->currentData().toInt());
+                const auto current = document_->file_io.revision_history;
+                if (requested == current) return;
+                if (requested == pvt::RevisionHistoryMode::Full
+                    && current != pvt::RevisionHistoryMode::Full
+                    && !document_->source_path.empty()) {
+                    refreshProjectFileIoControls();
+                    bool accepted = false;
+                    const QString suggested =
+                        QString::fromStdString(project_.name)
+                        + tr(" Full History");
+                    const QString name = QInputDialog::getText(
+                        this, tr("Create full-history project"),
+                        tr("A partial or disabled tree cannot become complete in place. Enter a new project name; PVT will create and open an independent version-0 copy."),
+                        QLineEdit::Normal, suggested, &accepted).trimmed();
+                    if (!accepted) return;
+                    if (!valid_text(name, TextRule::ProjectName)) {
+                        QMessageBox::warning(
+                            this, tr("Invalid project name"),
+                            tr("Enter a non-empty portable project name."));
+                        return;
+                    }
+                    const QString path = chooseIndependentCopyPath(
+                        name.toStdString());
+                    if (path.isEmpty()) return;
+                    QString copy_error;
+                    if (!saveIndependentRenamedCopy(
+                            name.toStdString(), path, true, &copy_error)) {
+                        QMessageBox::critical(
+                            this, tr("Could not create full-history copy"),
+                            copy_error);
+                    }
+                    return;
+                }
+                const QString warning = requested
+                        == pvt::RevisionHistoryMode::Disabled
+                    ? tr("Disable revision history and retain only the current snapshot? Retired versions cannot be recovered from this project.")
+                    : tr("Switch to partial history? Only the configured recent count and pinned revisions will be retained on Save.");
+                if (QMessageBox::warning(
+                        this, tr("Change revision history?"), warning,
+                        QMessageBox::Yes | QMessageBox::Cancel,
+                        QMessageBox::Cancel) != QMessageBox::Yes) {
+                    refreshProjectFileIoControls();
+                    return;
+                }
+                document_->file_io.revision_history = requested;
+                if (requested == pvt::RevisionHistoryMode::Disabled) {
+                    document_->file_io.pinned_versions.clear();
+                }
+                baseline_dirty_ = true;
+                noteDocumentChange();
+                refreshProjectFileIoControls();
+            });
+    connect(project_revision_keep_, &QSpinBox::valueChanged,
+            this, [this](int value) {
+                if (populating_ || document_ == nullptr
+                    || value < 1
+                    || document_->file_io.partial_keep_count
+                           == static_cast<std::size_t>(value)) {
+                    return;
+                }
+                document_->file_io.partial_keep_count =
+                    static_cast<std::size_t>(value);
+                baseline_dirty_ = true;
+                noteDocumentChange();
+            });
+    connect(project_human_deltas_, &QCheckBox::toggled,
+            this, [this](bool enabled) {
+                if (populating_ || document_ == nullptr
+                    || document_->file_io.human_version_deltas == enabled) {
+                    return;
+                }
+                document_->file_io.human_version_deltas = enabled;
+                baseline_dirty_ = true;
+                noteDocumentChange();
+            });
+    connect(project_zip_compression_, &QSpinBox::valueChanged,
+            this, [this](int value) {
+                if (populating_ || document_ == nullptr
+                    || document_->file_io.zip_compression_level == value) {
+                    return;
+                }
+                document_->file_io.zip_compression_level = value;
+                baseline_dirty_ = true;
+                noteDocumentChange();
+            });
     return project_canvas_page_;
 }
 
@@ -6311,12 +6598,18 @@ QWidget* MainWindow::createVersionsPage() {
     auto* actions = new QHBoxLayout;
     version_make_current_ = new QPushButton(tr("Make Current"));
     version_revert_ = new QPushButton(tr("Revert as New Version"));
+    version_create_ = new QPushButton(tr("Create Revision"));
+    version_delete_ = new QPushButton(tr("Delete Revision"));
+    version_pinned_ = new QCheckBox(tr("Keep this revision"));
     version_make_current_->setToolTip(
         tr("Point the bundle at this immutable version without deleting later versions."));
     version_revert_->setToolTip(
         tr("Copy this snapshot into a new highest-numbered version, preserving rollback."));
     actions->addWidget(version_make_current_);
     actions->addWidget(version_revert_);
+    actions->addWidget(version_create_);
+    actions->addWidget(version_delete_);
+    actions->addWidget(version_pinned_);
     layout->addLayout(actions);
 
     auto* compare_group = new QGroupBox(tr("Semantic version diff"));
@@ -6356,6 +6649,12 @@ QWidget* MainWindow::createVersionsPage() {
             this, &MainWindow::makeSelectedVersionCurrent);
     connect(version_revert_, &QPushButton::clicked,
             this, &MainWindow::revertSelectedVersion);
+    connect(version_create_, &QPushButton::clicked,
+            this, &MainWindow::createManualRevision);
+    connect(version_delete_, &QPushButton::clicked,
+            this, &MainWindow::deleteSelectedVersion);
+    connect(version_pinned_, &QCheckBox::toggled,
+            this, &MainWindow::setSelectedVersionPinned);
     connect(version_list_, &QListWidget::itemDoubleClicked, this,
             [this](QListWidgetItem*) { makeSelectedVersionCurrent(); });
     connect(version_list_, &QListWidget::currentRowChanged, this, [this] {
@@ -6363,12 +6662,108 @@ QWidget* MainWindow::createVersionsPage() {
         const bool usable = item != nullptr && item->data(Qt::UserRole + 1).toBool();
         version_make_current_->setEnabled(usable);
         version_revert_->setEnabled(usable);
+        const bool partial = document_ != nullptr
+            && document_->file_io.revision_history
+                   == pvt::RevisionHistoryMode::Partial;
+        const std::uint64_t number = item != nullptr
+            ? item->data(Qt::UserRole).toULongLong() : 0U;
+        version_delete_->setEnabled(
+            partial && usable && document_ != nullptr
+            && number != document_->current_version && !hasUnsavedChanges());
+        const QSignalBlocker pin_blocker(version_pinned_);
+        version_pinned_->setChecked(
+            partial && document_ != nullptr
+            && std::binary_search(document_->file_io.pinned_versions.begin(),
+                                  document_->file_io.pinned_versions.end(),
+                                  number));
+        version_pinned_->setEnabled(partial && usable
+                                    && !hasUnsavedChanges());
     });
     refreshVersionsPage();
     return page;
 }
 
+void MainWindow::refreshProjectFileIoControls() {
+    if (document_ == nullptr || project_storage_encoding_ == nullptr
+        || project_revision_mode_ == nullptr
+        || project_revision_keep_ == nullptr
+        || project_human_deltas_ == nullptr
+        || project_zip_compression_ == nullptr) {
+        return;
+    }
+    const bool was_populating = populating_;
+    populating_ = true;
+    const QSignalBlocker encoding_blocker(project_storage_encoding_);
+    const QSignalBlocker revisions_blocker(project_revision_mode_);
+    const QSignalBlocker keep_blocker(project_revision_keep_);
+    const QSignalBlocker deltas_blocker(project_human_deltas_);
+    const QSignalBlocker compression_blocker(project_zip_compression_);
+    select_enum(project_storage_encoding_, document_->file_io.encoding);
+    select_enum(project_revision_mode_, document_->file_io.revision_history);
+    project_revision_keep_->setValue(static_cast<int>((std::min)(
+        document_->file_io.partial_keep_count,
+        static_cast<std::size_t>((std::numeric_limits<int>::max)()))));
+    project_human_deltas_->setChecked(
+        document_->file_io.human_version_deltas);
+    project_zip_compression_->setValue(
+        document_->file_io.zip_compression_level);
+
+    const bool partial = document_->file_io.revision_history
+                         == pvt::RevisionHistoryMode::Partial;
+    const bool disabled = document_->file_io.revision_history
+                          == pvt::RevisionHistoryMode::Disabled;
+    const bool binary = document_->file_io.encoding
+                        == pvt::ProjectStorageEncoding::Binary;
+    const bool saved = !document_->source_path.empty();
+    const bool zip = saved ? document_->source_is_zip : true;
+    const auto set_file_io_row_visible = [this](QWidget* field, bool visible) {
+        field->setVisible(visible);
+        if (project_file_io_form_ != nullptr) {
+            if (QWidget* label = project_file_io_form_->labelForField(field)) {
+                label->setVisible(visible);
+            }
+        }
+    };
+    set_file_io_row_visible(project_revision_keep_, partial);
+    project_revision_keep_->setEnabled(partial);
+    set_file_io_row_visible(project_human_deltas_, !binary && saved && !zip);
+    project_human_deltas_->setEnabled(!binary && saved && !zip);
+    set_file_io_row_visible(project_zip_compression_, zip);
+    project_zip_compression_->setEnabled(zip);
+    if (project_history_button_ != nullptr) {
+        project_history_button_->setEnabled(!disabled && saved);
+        project_history_button_->setToolTip(disabled
+            ? tr("Revision history is disabled for this project.")
+            : tr("Open saved revisions, rollback actions, and semantic comparison."));
+    }
+    if (create_revision_action_ != nullptr) {
+        create_revision_action_->setVisible(partial);
+        create_revision_action_->setEnabled(partial && saved
+                                            && !project_io_active_);
+    }
+    if (project_file_io_status_ != nullptr) {
+        QString status = binary
+            ? tr("Current saves use raw numeric PVDAT plus newline-ordered string bytes; no binary file-change scan is performed.")
+            : tr("Current saves use named text records.");
+        if (!saved) {
+            status += tr(" These choices take effect when the project is first saved.");
+        } else if (zip) {
+            status += tr(" This project is a ZIP archive.");
+        } else if (!binary) {
+            status += tr(" The current pointer is a relative symbolic link.");
+        }
+        if (disabled) {
+            status += tr(" Only the current snapshot is retained in memory and on disk.");
+        } else if (partial) {
+            status += tr(" Use Create Revision for an explicit checkpoint; pinned revisions survive recent-N cleanup.");
+        }
+        project_file_io_status_->setText(status);
+    }
+    populating_ = was_populating;
+}
+
 void MainWindow::refreshVersionsPage() {
+    refreshProjectFileIoControls();
     if (version_list_ == nullptr || document_ == nullptr) return;
     // Rebuilding hidden Versions controls must never navigate the user. Keep
     // the tab they selected even if a platform style or signal handler reacts
@@ -6416,8 +6811,34 @@ void MainWindow::refreshVersionsPage() {
     const auto* current_item = version_list_->currentItem();
     const bool usable_version = current_item != nullptr
                                 && current_item->data(Qt::UserRole + 1).toBool();
+    const bool partial = document_->file_io.revision_history
+                         == pvt::RevisionHistoryMode::Partial;
+    const bool disabled = document_->file_io.revision_history
+                          == pvt::RevisionHistoryMode::Disabled;
+    const std::uint64_t selected_number = current_item != nullptr
+        ? current_item->data(Qt::UserRole).toULongLong() : 0U;
     version_make_current_->setEnabled(usable_version);
     version_revert_->setEnabled(usable_version);
+    version_create_->setVisible(partial);
+    version_delete_->setVisible(partial);
+    version_pinned_->setVisible(partial);
+    version_create_->setEnabled(partial && !document_->source_path.empty()
+                                && !project_io_active_);
+    version_delete_->setEnabled(
+        partial && usable_version
+        && selected_number != document_->current_version
+        && !hasUnsavedChanges() && !project_io_active_);
+    {
+        const QSignalBlocker blocker(version_pinned_);
+        version_pinned_->setChecked(
+            partial
+            && std::binary_search(document_->file_io.pinned_versions.begin(),
+                                  document_->file_io.pinned_versions.end(),
+                                  selected_number));
+    }
+    version_pinned_->setEnabled(partial && usable_version
+                                && !hasUnsavedChanges()
+                                && !project_io_active_);
     const int old_before = version_before_->findData(before_value);
     const int old_after = version_after_->findData(after_value);
     version_before_->setCurrentIndex(old_before >= 0 ? old_before
@@ -6435,11 +6856,21 @@ void MainWindow::refreshVersionsPage() {
     const QString source = document_->source_path.empty()
                                ? tr("Not saved as a bundle yet")
                                : QString::fromStdString(document_->source_path);
-    version_summary_->setText(
-        tr("%1\nProject UUID: %2\n%3 saved version(s). Versions are immutable; "
-           "revert always creates another version.")
-            .arg(source, QString::fromStdString(project_.uuid),
-                 QString::number(document_->versions.size())));
+    if (disabled) {
+        version_summary_->setText(
+            tr("%1\nRevision history is disabled; only the current saved state is retained.")
+                .arg(source));
+    } else if (partial) {
+        version_summary_->setText(
+            tr("%1\nProject UUID: %2\n%3 saved revision(s). Ordinary Save updates the current working revision; explicit and pinned revisions are immutable.")
+                .arg(source, QString::fromStdString(project_.uuid),
+                     QString::number(document_->versions.size())));
+    } else {
+        version_summary_->setText(
+            tr("%1\nProject UUID: %2\n%3 saved version(s). Versions are immutable; revert always creates another version.")
+                .arg(source, QString::fromStdString(project_.uuid),
+                     QString::number(document_->versions.size())));
+    }
     if (!compatibility_warning_.isEmpty()) {
         version_summary_->setText(version_summary_->text()
                                   + QStringLiteral("\n\n⚠ ")
@@ -6649,6 +7080,166 @@ void MainWindow::revertSelectedVersion() {
     refreshVersionsPage();
     updateWindowTitle();
     schedulePreview();
+}
+
+void MainWindow::createManualRevision() {
+    if (document_ == nullptr || project_io_watcher_ == nullptr
+        || project_io_watcher_->isRunning() || music_analysis_active_
+        || document_->file_io.revision_history
+               != pvt::RevisionHistoryMode::Partial
+        || document_->source_path.empty()) {
+        return;
+    }
+    syncActiveRender();
+    syncProjectGlobals();
+    const QString path = QString::fromStdString(document_->source_path);
+    project_io_operation_ = ProjectIoOperation::CreateRevision;
+    project_io_path_ = path;
+    setProjectIoActive(
+        true, tr("Creating an explicit revision in %1…").arg(path));
+
+    std::shared_ptr<pvt::ProjectDocument> staged;
+    try {
+        static_assert(std::is_nothrow_move_assignable_v<pvt::ProjectConfig>);
+        pvt::ProjectConfig committed_project = std::move(document_->project);
+        const auto restore_committed_project =
+            [this, &committed_project]() noexcept {
+                document_->project = std::move(committed_project);
+            };
+        const pvt::detail::ScopeExit restore_project(
+            restore_committed_project);
+        staged = std::make_shared<pvt::ProjectDocument>(*document_);
+        staged->project = project_;
+        staged->dirty = true;
+    } catch (const std::bad_alloc&) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Revision failed"),
+            tr("There was not enough memory to prepare the revision."));
+        return;
+    } catch (const std::exception& exception) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Revision failed"),
+            tr("The revision could not be prepared: %1")
+                .arg(QString::fromUtf8(exception.what())));
+        return;
+    } catch (...) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Revision failed"),
+            tr("The revision could not be prepared for background saving."));
+        return;
+    }
+
+    try {
+        project_io_watcher_->setFuture(QtConcurrent::run(
+            [staged = std::move(staged), path] {
+                ProjectIoResult result;
+                result.operation = ProjectIoOperation::CreateRevision;
+                result.path = path;
+                result.document = staged;
+                try {
+                    std::string error;
+                    result.ok = pvt::create_project_revision(
+                        *staged, &result.save_report, &error);
+                    result.error = QString::fromStdString(error);
+                } catch (const std::exception& exception) {
+                    result.error = tr("Unexpected revision error: %1")
+                                       .arg(QString::fromUtf8(
+                                           exception.what()));
+                } catch (...) {
+                    result.error = tr(
+                        "Revision creation failed because of an unexpected error.");
+                }
+                return result;
+            }));
+    } catch (const std::exception& exception) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Revision failed"),
+            tr("The background revision task could not start: %1")
+                .arg(QString::fromUtf8(exception.what())));
+    } catch (...) {
+        setProjectIoActive(false);
+        QMessageBox::critical(
+            this, tr("Revision failed"),
+            tr("The background revision task could not be created."));
+    }
+}
+
+void MainWindow::deleteSelectedVersion() {
+    if (document_ == nullptr || version_list_ == nullptr
+        || version_list_->currentItem() == nullptr || project_io_active_
+        || hasUnsavedChanges()
+        || document_->file_io.revision_history
+               != pvt::RevisionHistoryMode::Partial) {
+        return;
+    }
+    const auto version =
+        version_list_->currentItem()->data(Qt::UserRole).toULongLong();
+    if (version == document_->current_version) return;
+    if (QMessageBox::warning(
+            this, tr("Delete revision?"),
+            tr("Delete revision %1 from this partial history? Its project payload cannot be recovered from this bundle.")
+                .arg(version),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+
+    setProjectIoActive(true, tr("Deleting revision %1…").arg(version));
+    pvt::BundleSaveReport report;
+    std::string error;
+    const bool ok = pvt::delete_project_version(
+        *document_, version, &report, &error);
+    setProjectIoActive(false);
+    if (!ok) {
+        QMessageBox::critical(this, tr("Could not delete revision"),
+                              QString::fromStdString(error));
+        refreshVersionsPage();
+        return;
+    }
+    project_ = document_->project;
+    current_project_path_ = QString::fromStdString(document_->source_path);
+    refreshVersionsPage();
+    updateWindowTitle();
+    status_->setText(tr("Deleted revision %1 from the partial history.")
+                         .arg(version));
+}
+
+void MainWindow::setSelectedVersionPinned(bool pinned) {
+    if (populating_ || document_ == nullptr || version_list_ == nullptr
+        || version_list_->currentItem() == nullptr || project_io_active_
+        || hasUnsavedChanges()
+        || document_->file_io.revision_history
+               != pvt::RevisionHistoryMode::Partial) {
+        return;
+    }
+    const auto version =
+        version_list_->currentItem()->data(Qt::UserRole).toULongLong();
+    setProjectIoActive(
+        true, pinned ? tr("Keeping revision %1…").arg(version)
+                     : tr("Removing keep marker from revision %1…")
+                           .arg(version));
+    std::string error;
+    const bool ok = pvt::set_project_version_pinned(
+        *document_, version, pinned, &error);
+    setProjectIoActive(false);
+    if (!ok) {
+        QMessageBox::critical(this, tr("Could not change revision keep marker"),
+                              QString::fromStdString(error));
+        refreshVersionsPage();
+        return;
+    }
+    project_ = document_->project;
+    current_project_path_ = QString::fromStdString(document_->source_path);
+    refreshVersionsPage();
+    status_->setText(pinned
+        ? tr("Revision %1 will be kept during partial-history cleanup.")
+              .arg(version)
+        : tr("Revision %1 now follows the recent-revision limit.")
+              .arg(version));
 }
 
 void MainWindow::createLayerDock() {
@@ -7444,6 +8035,7 @@ void MainWindow::createToolbar() {
         tr("Show Project in File Browser"), this);
     save_action_ = new QAction(tr("Save…"), this);
     save_as_action_ = new QAction(tr("Save As…"), this);
+    create_revision_action_ = new QAction(tr("Create Revision"), this);
     new_action_->setIcon(style()->standardIcon(QStyle::SP_FileIcon));
     open_action_->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
     save_action_->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
@@ -7456,6 +8048,11 @@ void MainWindow::createToolbar() {
         "Open a folder project directly, or reveal and select a project file "
         "in the environment's default file browser."));
     save_as_action_->setObjectName(QStringLiteral("saveAsAction"));
+    create_revision_action_->setObjectName(
+        QStringLiteral("createRevisionAction"));
+    create_revision_action_->setToolTip(tr(
+        "Write an explicit checkpoint of the current state. Available only for partial revision history."));
+    create_revision_action_->setVisible(false);
     new_action_->setShortcut(QKeySequence::New);
     open_action_->setShortcut(QKeySequence::Open);
     save_action_->setShortcut(QKeySequence::Save);
@@ -7467,6 +8064,7 @@ void MainWindow::createToolbar() {
     file_menu->addAction(show_project_in_browser_action_);
     file_menu->addSeparator();
     file_menu->addActions({save_action_, save_as_action_});
+    file_menu->addAction(create_revision_action_);
     file_menu->addSeparator();
     toolbar->addAction(new_action_);
     toolbar->addAction(open_action_);
@@ -7623,6 +8221,8 @@ void MainWindow::createToolbar() {
             this, &MainWindow::showProjectInFileBrowser);
     connect(save_action_, &QAction::triggered, this, &MainWindow::saveSetup);
     connect(save_as_action_, &QAction::triggered, this, &MainWindow::saveSetupAs);
+    connect(create_revision_action_, &QAction::triggered,
+            this, &MainWindow::createManualRevision);
     connect(randomize_values_action_, &QAction::triggered, this, [this] {
         const auto choice = QMessageBox::question(
             this, tr("Randomize layer values?"),
@@ -8524,14 +9124,14 @@ void MainWindow::showMotionPathEditor() {
     auto* binding_cycles = new QSpinBox;
     binding_cycles->setRange(kMinimumIntegerParameter,
                              kMaximumIntegerParameter);
-    auto* binding_phase = new QDoubleSpinBox;
+    auto* binding_phase = new FlexibleDoubleSpinBox;
     binding_phase->setDecimals(3);
     binding_phase->setRange(-kMaximumRenderParameter,
                             kMaximumRenderParameter);
     binding_phase->setSuffix(QChar(0x00b0));
     auto* binding_reverse = new QCheckBox(tr("Reverse direction"));
-    auto* binding_offset_x = new QDoubleSpinBox;
-    auto* binding_offset_y = new QDoubleSpinBox;
+    auto* binding_offset_x = new FlexibleDoubleSpinBox;
+    auto* binding_offset_y = new FlexibleDoubleSpinBox;
     for (auto* editor : {binding_offset_x, binding_offset_y}) {
         editor->setDecimals(4);
         editor->setRange(-kMaximumRenderParameter,
@@ -9174,7 +9774,34 @@ void MainWindow::connectEditors() {
                                 std::move(before));
     });
 
-    for (auto* editor : {width_, height_, block_size_, frames_, spiral_arms_, hue_cycles_,
+    connect(assign_block_size_lfo_, &QPushButton::clicked, this, [this] {
+        QString name = tr("Block Size Pulse");
+        const double authored = block_size_->value();
+        const double center = authored > 0.0 ? authored : 16.0;
+        const double maximum_canvas = static_cast<double>(
+            std::max(width_->value(), height_->value()));
+        const QSignalBlocker enabled_blocker(block_size_lfo_enabled_);
+        const QSignalBlocker name_blocker(block_size_lfo_name_);
+        const QSignalBlocker waveform_blocker(block_size_lfo_waveform_);
+        const QSignalBlocker minimum_blocker(block_size_lfo_minimum_);
+        const QSignalBlocker maximum_blocker(block_size_lfo_maximum_);
+        const QSignalBlocker cycles_blocker(block_size_lfo_cycles_);
+        const QSignalBlocker phase_blocker(block_size_lfo_phase_);
+        const QSignalBlocker shape_blocker(block_size_lfo_shape_);
+        block_size_lfo_enabled_->setChecked(true);
+        block_size_lfo_name_->setText(name);
+        select_enum(block_size_lfo_waveform_, pvt::Waveform::Sine);
+        block_size_lfo_minimum_->setValue(std::max(0.0, center * 0.5));
+        block_size_lfo_maximum_->setValue(
+            std::min(maximum_canvas, center * 1.5));
+        block_size_lfo_cycles_->setValue(1);
+        block_size_lfo_phase_->setValue(0.0);
+        block_size_lfo_shape_->setValue(0.5);
+        applyGlobalEditor(block_size_lfo_enabled_);
+    });
+
+    for (auto* editor : {width_, height_, frames_, spiral_arms_, hue_cycles_,
+                         block_size_lfo_cycles_,
                          kaleidoscope_segments_, domain_warp_octaves_,
                          domain_warp_cycles_,
                          surface_rotation_x_turns_,
@@ -9190,7 +9817,9 @@ void MainWindow::connectEditors() {
         connect(editor, &QSpinBox::valueChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
-    for (auto* editor : {fps_, displacement_, wave_depth_, spiral_frequency_,
+    for (auto* editor : {block_size_, fps_, displacement_, wave_depth_, spiral_frequency_,
+                         block_size_lfo_minimum_, block_size_lfo_maximum_,
+                         block_size_lfo_phase_, block_size_lfo_shape_,
                          wall_frequency_, wall_mix_, saturation_, surface_curvature_,
                          kaleidoscope_rotation_, kaleidoscope_mix_,
                          domain_warp_strength_, domain_warp_scale_,
@@ -9230,7 +9859,9 @@ void MainWindow::connectEditors() {
         connect(editor, &QDoubleSpinBox::valueChanged, this,
                 [this, editor] { applyGlobalEditor(editor); });
     }
-    for (auto* editor : {displacement_enabled_, lighting_enabled_, spiral_enabled_,
+    for (auto* editor : {block_size_sync_, block_size_alpha_gaps_,
+                         block_size_lfo_enabled_,
+                         displacement_enabled_, lighting_enabled_, spiral_enabled_,
                          wall_enabled_, surface_enabled_, post_invert_rgb_enabled_,
                          surface_plane_displacement_enabled_,
                          surface_environment_enabled_,
@@ -9273,7 +9904,8 @@ void MainWindow::connectEditors() {
             &MainWindow::showMotionPathEditor);
     connect(starting_image_enabled_, &QCheckBox::toggled, this,
             [this] { applyGlobalEditor(starting_image_enabled_); });
-    for (auto* editor : {surface_mapping_, surface_projection_,
+    for (auto* editor : {block_size_lfo_waveform_,
+                         surface_mapping_, surface_projection_,
                          surface_sizing_, surface_outside_,
                          surface_rotation_order_,
                          surface_environment_encoding_,
@@ -9297,6 +9929,11 @@ void MainWindow::connectEditors() {
         updateOutputEditorValidity();
         if (prefix_->hasAcceptableInput()) {
             applyGlobalEditor(prefix_);
+        }
+    });
+    connect(block_size_lfo_name_, &QLineEdit::editingFinished, this, [this] {
+        if (!block_size_lfo_name_->text().trimmed().isEmpty()) {
+            applyGlobalEditor(block_size_lfo_name_);
         }
     });
     connect(surface_obj_path_, &QLineEdit::editingFinished, this, [this] {
@@ -9559,6 +10196,7 @@ void MainWindow::syncProjectGlobals() {
     project_.canvas.audio_reactive_defaults =
         config_.audio_reactive_defaults;
     project_.canvas.live = config_.live;
+    project_.canvas.block_size_modulation = config_.block_size_modulation;
     project_.canvas.motion_paths = config_.motion_paths;
     project_.canvas.output_compatibility = config_.output_compatibility;
     project_.output = config_.output;
@@ -9801,8 +10439,7 @@ bool MainWindow::stageNewLayerFromDefaults(
             return false;
         }
         layer.file_id = pvt::allocate_layer_file_id(staged_project);
-        layer.name = tr("Layer %1").arg(staged_project.layers.size() + 1U)
-                         .toStdString();
+        layer.name = smart_unique_layer_name(staged_project);
         // A layer template may have belonged to a template-only group. Keep
         // its authored layer settings, but do not create a dangling group
         // reference in the destination project.
@@ -9989,6 +10626,255 @@ bool MainWindow::stageNewLayerFromDefaults(
     }
 }
 
+bool MainWindow::stageNewLayerFromSource(
+    const pvt::ProjectDocument& source_document,
+    std::size_t source_layer_index,
+    std::size_t insertion_index,
+    const std::string& requested_name,
+    pvt::ProjectConfig& staged_project,
+    std::unique_ptr<pvt::ProjectDocument>& staged_document,
+    QString* error) const {
+    if (error != nullptr) error->clear();
+    try {
+        if (source_layer_index >= source_document.project.layers.size()) {
+            if (error != nullptr) {
+                *error = tr("The selected source project no longer contains that layer.");
+            }
+            return false;
+        }
+        staged_project = project_;
+        if (insertion_index > staged_project.layers.size()) {
+            if (error != nullptr) *error = tr("The selected layer placement is invalid.");
+            return false;
+        }
+        staged_document = document_ != nullptr
+            ? std::make_unique<pvt::ProjectDocument>(*document_)
+            : std::make_unique<pvt::ProjectDocument>(
+                  pvt::default_project_document());
+
+        const pvt::LayerConfig& source_layer =
+            source_document.project.layers[source_layer_index];
+        pvt::LayerConfig layer = source_layer;
+        const std::string source_uuid = source_layer.uuid;
+        const auto uuid_in_use = [&staged_project](const std::string& uuid) {
+            return std::any_of(
+                staged_project.layers.begin(), staged_project.layers.end(),
+                [&uuid](const pvt::LayerConfig& existing) {
+                    return existing.uuid == uuid;
+                });
+        };
+        layer.uuid.clear();
+        for (int attempt = 0; attempt < 128; ++attempt) {
+            layer.uuid = pvt::generate_uuid();
+            if (!layer.uuid.empty() && !uuid_in_use(layer.uuid)) break;
+        }
+        if (layer.uuid.empty() || uuid_in_use(layer.uuid)) {
+            if (error != nullptr) {
+                *error = tr("Could not allocate a unique identity for the new layer.");
+            }
+            return false;
+        }
+        layer.file_id = pvt::allocate_layer_file_id(staged_project);
+        layer.name = requested_name.empty()
+            ? smart_unique_layer_name(staged_project, source_layer.name)
+            : requested_name;
+        if (!valid_text(QString::fromStdString(layer.name), TextRule::Name)) {
+            if (error != nullptr) *error = tr("The suggested layer name is invalid.");
+            return false;
+        }
+        // Groups belong to their source project. Copying a layer normally
+        // starts ungrouped. If the requested insertion point is inside one
+        // contiguous destination group, inherit that group so the insertion
+        // cannot split its folder and invalidate the project.
+        layer.group_uuid.clear();
+        if (insertion_index > 0U
+            && insertion_index < staged_project.layers.size()) {
+            const std::string& below =
+                staged_project.layers[insertion_index - 1U].group_uuid;
+            const std::string& above =
+                staged_project.layers[insertion_index].group_uuid;
+            if (!below.empty() && below == above) layer.group_uuid = below;
+        }
+
+        std::unordered_map<std::uint64_t, std::uint64_t> imported_path_ids;
+        const auto import_binding = [&](pvt::PathBinding& binding) -> bool {
+            if (binding.path_id == 0U) return true;
+            const auto remapped = imported_path_ids.find(binding.path_id);
+            if (remapped != imported_path_ids.end()) {
+                binding.path_id = remapped->second;
+                return true;
+            }
+            const auto source_path = std::find_if(
+                source_document.project.canvas.motion_paths.begin(),
+                source_document.project.canvas.motion_paths.end(),
+                [&binding](const pvt::CubicMotionPath& path) {
+                    return path.id == binding.path_id;
+                });
+            if (source_path
+                == source_document.project.canvas.motion_paths.end()) {
+                if (!binding.enabled) return true;
+                if (error != nullptr) {
+                    *error = tr("The selected layer refers to a missing reusable motion path.");
+                }
+                return false;
+            }
+
+            std::uint64_t destination_id = source_path->id;
+            const auto conflict = std::find_if(
+                staged_project.canvas.motion_paths.begin(),
+                staged_project.canvas.motion_paths.end(),
+                [destination_id](const pvt::CubicMotionPath& path) {
+                    return path.id == destination_id;
+                });
+            if (conflict != staged_project.canvas.motion_paths.end()
+                && !motion_paths_equal(*conflict, *source_path)) {
+                destination_id = allocate_motion_path_id(
+                    staged_project.canvas.motion_paths);
+                if (destination_id == 0U) {
+                    if (error != nullptr) {
+                        *error = tr("The reusable motion-path identity space is exhausted.");
+                    }
+                    return false;
+                }
+            }
+            if (conflict == staged_project.canvas.motion_paths.end()
+                || destination_id != source_path->id) {
+                if (staged_project.canvas.motion_paths.size()
+                    >= pvt::kMaximumMotionPaths) {
+                    if (error != nullptr) {
+                        *error = tr("The project has no room for the selected layer's reusable motion path.");
+                    }
+                    return false;
+                }
+                pvt::CubicMotionPath copied = *source_path;
+                copied.id = destination_id;
+                staged_project.canvas.motion_paths.push_back(std::move(copied));
+            }
+            imported_path_ids.emplace(binding.path_id, destination_id);
+            binding.path_id = destination_id;
+            return true;
+        };
+
+        if (!import_binding(layer.render.motion.custom_path)) return false;
+        for (auto& wave : layer.render.waves) {
+            if (!import_binding(wave.path)) return false;
+        }
+        for (auto& effect : layer.render.effects) {
+            if (!import_binding(effect.path)) return false;
+        }
+
+        const auto transfer_attachment = [
+            &source_document, &staged_document, error](
+            const std::string& source_reference,
+            const std::string& destination_reference,
+            pvt::ProjectAttachment& attached) {
+            const pvt::ProjectAttachment* source =
+                pvt::find_project_attachment(source_document,
+                                             source_reference);
+            if (source == nullptr || source->local_path.empty()) {
+                if (error != nullptr) {
+                    *error = QObject::tr(
+                        "A managed asset required by the selected layer is unavailable.");
+                }
+                return false;
+            }
+            std::string attachment_error;
+            if (!pvt::attach_project_file(
+                    *staged_document, destination_reference,
+                    source->local_path, &attached, &attachment_error)) {
+                if (error != nullptr) {
+                    *error = QString::fromStdString(attachment_error);
+                }
+                return false;
+            }
+            return true;
+        };
+
+        pvt::ProjectAttachment attached;
+        if (!layer.render.surface.obj_sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::surface_obj_attachment_id(source_uuid),
+                    pvt::surface_obj_attachment_id(layer.uuid), attached)) {
+                return false;
+            }
+            layer.render.surface.obj_path = attached.local_path;
+            layer.render.surface.obj_sha256 = attached.sha256;
+            layer.render.surface.obj_basename = attached.basename;
+        }
+        if (!layer.render.surface.plane_displacement.sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::plane_displacement_attachment_id(source_uuid),
+                    pvt::plane_displacement_attachment_id(layer.uuid),
+                    attached)) {
+                return false;
+            }
+            auto& displacement = layer.render.surface.plane_displacement;
+            displacement.path = attached.local_path;
+            displacement.sha256 = attached.sha256;
+            displacement.basename = attached.basename;
+        }
+        if (!layer.render.surface.environment_map.sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::environment_map_attachment_id(source_uuid),
+                    pvt::environment_map_attachment_id(layer.uuid), attached)) {
+                return false;
+            }
+            auto& environment = layer.render.surface.environment_map;
+            environment.path = attached.local_path;
+            environment.sha256 = attached.sha256;
+            environment.basename = attached.basename;
+        }
+        if (!layer.render.starting_image.sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::starting_image_attachment_id(source_uuid),
+                    pvt::starting_image_attachment_id(layer.uuid), attached)) {
+                return false;
+            }
+            layer.render.starting_image.path = attached.local_path;
+            layer.render.starting_image.sha256 = attached.sha256;
+            layer.render.starting_image.basename = attached.basename;
+        }
+        if (!layer.render.layer_clock.clock.music.source_sha256.empty()) {
+            if (!transfer_attachment(
+                    pvt::layer_music_attachment_id(source_uuid),
+                    pvt::layer_music_attachment_id(layer.uuid), attached)) {
+                return false;
+            }
+            auto& music = layer.render.layer_clock.clock.music;
+            music.source_sha256 = attached.sha256;
+            music.source_basename = attached.basename;
+        }
+
+        staged_project.layers.insert(
+            staged_project.layers.begin()
+                + static_cast<std::ptrdiff_t>(insertion_index),
+            std::move(layer));
+        const pvt::ValidationResult validation = pvt::validate(staged_project);
+        if (!validation.ok) {
+            if (error != nullptr) {
+                *error = tr("The selected layer is not valid in this project: %1")
+                             .arg(QString::fromStdString(validation.message));
+            }
+            return false;
+        }
+        staged_document->project = staged_project;
+        staged_document->dirty = true;
+        return true;
+    } catch (const std::bad_alloc&) {
+        if (error != nullptr) *error = tr("Not enough memory to stage the selected layer.");
+        return false;
+    } catch (const std::exception& exception) {
+        if (error != nullptr) {
+            *error = tr("Could not stage the selected layer: %1")
+                         .arg(QString::fromUtf8(exception.what()));
+        }
+        return false;
+    } catch (...) {
+        if (error != nullptr) *error = tr("Could not stage the selected layer.");
+        return false;
+    }
+}
+
 void MainWindow::addLayer() {
     if (project_.layers.size() >= pvt::kMaximumLayers) {
         QMessageBox::warning(
@@ -9996,18 +10882,345 @@ void MainWindow::addLayer() {
             tr("The signed-int UI/API layer index is exhausted."));
         return;
     }
+
+    // Make the active editor the authoritative current-project source before
+    // offering it as a layer template. This updates no persisted state.
+    syncActiveRender();
+    syncProjectGlobals();
+
+    enum LayerSource {
+        BlankSource = 0,
+        BuiltInSource,
+        CustomSource,
+        CurrentProjectSource,
+        ImportedProjectSource,
+        RandomSource,
+    };
+    enum LayerPlacement {
+        AboveCurrent = 0,
+        BelowCurrent,
+        TopOfStack,
+        BottomOfStack,
+    };
+
+    pvt::ProjectDocument built_in_source =
+        built_in_workbench_project_document();
+    pvt::ProjectDocument blank_source = pvt::default_project_document();
+    pvt::LayerConfig blank_layer;
+    blank_layer.uuid = pvt::generate_uuid();
+    blank_layer.name = tr("Blank Layer").toStdString();
+    blank_source.project.layers.assign(1U, std::move(blank_layer));
+
+    pvt::ProjectDocument random_source = pvt::default_project_document();
+    pvt::LayerConfig random_layer = pvt::default_layer(0U);
+    random_layer.name = tr("Random Layer").toStdString();
+    {
+        auto& random = *QRandomGenerator::global();
+        pvt::RenderConfig randomized;
+        static_cast<pvt::RenderData&>(randomized) = random_layer.render;
+        randomized.waves.clear();
+        randomized.swings.clear();
+        randomized.effects.clear();
+        const int wave_count = random_integer(random, 2, 6);
+        for (int index = 0; index < wave_count; ++index) {
+            auto wave = pvt::default_wave(static_cast<std::size_t>(index));
+            wave.id = pvt::allocate_id(randomized);
+            wave.enabled = random_chance(random, 0.85);
+            randomize_wave_settings(wave, random);
+            randomized.waves.push_back(std::move(wave));
+        }
+        if (std::none_of(randomized.waves.begin(), randomized.waves.end(),
+                         [](const pvt::WaveConfig& wave) {
+                             return wave.enabled != 0U;
+                         })) {
+            randomized.waves.front().enabled = true;
+        }
+        const int swing_count = random_integer(random, 0, 3);
+        for (int index = 0; index < swing_count; ++index) {
+            auto swing = pvt::default_swing(static_cast<std::size_t>(index));
+            swing.id = pvt::allocate_id(randomized);
+            swing.enabled = random_chance(random, 0.70);
+            randomize_swing_settings(swing, random);
+            randomized.swings.push_back(std::move(swing));
+        }
+        constexpr std::array<pvt::EffectType, 12U> random_effects = {
+            pvt::EffectType::EndlessZoom, pvt::EffectType::Ripple,
+            pvt::EffectType::Shake, pvt::EffectType::FlagWave,
+            pvt::EffectType::Glow, pvt::EffectType::BlockScale,
+            pvt::EffectType::ParticleField, pvt::EffectType::Glitch,
+            pvt::EffectType::Starburst, pvt::EffectType::Twirl,
+            pvt::EffectType::Water, pvt::EffectType::Kaleidoscope};
+        const int effect_count = random_integer(random, 1, 5);
+        std::array<pvt::EffectType, random_effects.size()> shuffled =
+            random_effects;
+        for (int index = 0; index < effect_count; ++index) {
+            const int selected = random_integer(
+                random, index, static_cast<int>(shuffled.size()) - 1);
+            std::swap(shuffled[static_cast<std::size_t>(index)],
+                      shuffled[static_cast<std::size_t>(selected)]);
+            auto effect = pvt::default_effect(
+                shuffled[static_cast<std::size_t>(index)]);
+            effect.id = pvt::allocate_id(randomized);
+            effect.enabled = random_chance(random, 0.72);
+            randomize_effect_settings(effect, random);
+            randomized.effects.push_back(std::move(effect));
+        }
+        if (std::none_of(randomized.effects.begin(), randomized.effects.end(),
+                         [](const pvt::EffectConfig& effect) {
+                             return effect.enabled != 0U;
+                         })) {
+            randomized.effects.front().enabled = true;
+        }
+        random_layer.render =
+            std::move(static_cast<pvt::RenderData&>(randomized));
+    }
+    random_source.project.layers.assign(1U, std::move(random_layer));
+
+    std::unique_ptr<pvt::ProjectDocument> custom_source;
+    QString source_notice;
+    if (hasCustomNewProjectDefaults()) {
+        auto loaded = std::make_unique<pvt::ProjectDocument>();
+        std::string load_error;
+        if (pvt::load_project_document(
+                custom_new_project_defaults_path().toStdString(), *loaded,
+                &load_error)) {
+            custom_source = std::move(loaded);
+        } else {
+            source_notice = tr("Custom defaults could not be loaded: %1")
+                                .arg(QString::fromStdString(load_error));
+        }
+    }
+    std::unique_ptr<pvt::ProjectDocument> imported_source;
+    pvt::ProjectDocument unsaved_current_source;
+    const pvt::ProjectDocument* current_source = document_.get();
+    if (current_source == nullptr) {
+        unsaved_current_source = pvt::default_project_document();
+        unsaved_current_source.project = project_;
+        current_source = &unsaved_current_source;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Create Layer"));
+    dialog.setMinimumWidth(540);
+    auto* dialog_layout = new QVBoxLayout(&dialog);
+    auto* explanation = new QLabel(tr(
+        "Choose the layer's starting content and exact stack position. Embedded images, OBJ files, music, height maps, environment maps, and reusable motion paths follow the selected layer."));
+    explanation->setWordWrap(true);
+    dialog_layout->addWidget(explanation);
+    auto* form = new QFormLayout;
+    auto* source_type = new QComboBox;
+    source_type->setObjectName(QStringLiteral("newLayerSource"));
+    source_type->addItem(tr("Blank layer"), BlankSource);
+    source_type->addItem(tr("Built-in default template"), BuiltInSource);
+    if (custom_source != nullptr) {
+        source_type->addItem(tr("Custom default template"), CustomSource);
+    }
+    source_type->addItem(tr("Copy a layer in this project"),
+                         CurrentProjectSource);
+    source_type->addItem(tr("Import from another project"),
+                         ImportedProjectSource);
+    source_type->addItem(tr("Generate random settings"), RandomSource);
+    form->addRow(tr("Starting point"), source_type);
+
+    auto* import_row = new QWidget;
+    auto* import_layout = new QHBoxLayout(import_row);
+    import_layout->setContentsMargins(0, 0, 0, 0);
+    auto* import_path = new QLineEdit;
+    import_path->setReadOnly(true);
+    import_path->setPlaceholderText(tr("Choose a project archive or folder"));
+    auto* import_file = new QPushButton(tr("File…"));
+    auto* import_folder = new QPushButton(tr("Folder…"));
+    import_layout->addWidget(import_path, 1);
+    import_layout->addWidget(import_file);
+    import_layout->addWidget(import_folder);
+    auto* import_label = new QLabel(tr("Project"));
+    form->addRow(import_label, import_row);
+
+    auto* source_layer = new QComboBox;
+    source_layer->setObjectName(QStringLiteral("newLayerTemplate"));
+    auto* source_layer_label = new QLabel(tr("Layer"));
+    form->addRow(source_layer_label, source_layer);
+    auto* placement = new QComboBox;
+    placement->setObjectName(QStringLiteral("newLayerPlacement"));
+    placement->addItem(tr("Above current layer"), AboveCurrent);
+    placement->addItem(tr("Below current layer"), BelowCurrent);
+    placement->addItem(tr("Top of stack"), TopOfStack);
+    placement->addItem(tr("Bottom of stack"), BottomOfStack);
+    form->addRow(tr("Placement"), placement);
+    auto* name = new QLineEdit;
+    name->setObjectName(QStringLiteral("newLayerName"));
+    name->setMaxLength(static_cast<int>(kMaximumNameBytes));
+    name->setValidator(new Utf8TextValidator(TextRule::Name, name));
+    form->addRow(tr("New name"), name);
+    dialog_layout->addLayout(form);
+    auto* problem = new QLabel(source_notice);
+    problem->setWordWrap(true);
+    problem->setStyleSheet(QStringLiteral("QLabel { color: #c0392b; }"));
+    dialog_layout->addWidget(problem);
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Create Layer"));
+    dialog_layout->addWidget(buttons);
+
+    const auto selected_source = [&]() -> const pvt::ProjectDocument* {
+        switch (source_type->currentData().toInt()) {
+            case BlankSource: return &blank_source;
+            case BuiltInSource: return &built_in_source;
+            case CustomSource: return custom_source.get();
+            case CurrentProjectSource: return current_source;
+            case ImportedProjectSource: return imported_source.get();
+            case RandomSource: return &random_source;
+        }
+        return nullptr;
+    };
+    QString last_suggestion;
+    const auto refresh_source_layers = [&] {
+        const bool importing = source_type->currentData().toInt()
+                               == ImportedProjectSource;
+        import_label->setVisible(importing);
+        import_row->setVisible(importing);
+        const pvt::ProjectDocument* source = selected_source();
+        const bool show_layer_choice = source != nullptr
+            && source->project.layers.size() > 1U;
+        source_layer_label->setVisible(show_layer_choice);
+        source_layer->setVisible(show_layer_choice);
+        const QSignalBlocker blocker(source_layer);
+        source_layer->clear();
+        if (source != nullptr) {
+            for (auto iterator = source->project.layers.rbegin();
+                 iterator != source->project.layers.rend(); ++iterator) {
+                const std::size_t index = static_cast<std::size_t>(
+                    std::distance(iterator, source->project.layers.rend()) - 1);
+                source_layer->addItem(
+                    QString::fromStdString(iterator->name),
+                    QVariant::fromValue<qulonglong>(index));
+            }
+        }
+        const bool usable = source != nullptr
+            && !source->project.layers.empty();
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(
+            usable && name->hasAcceptableInput());
+        if (usable) {
+            const std::size_t index = source_layer->count() > 0
+                ? static_cast<std::size_t>(
+                      source_layer->currentData().toULongLong())
+                : 0U;
+            const QString suggestion = QString::fromStdString(
+                smart_unique_layer_name(project_,
+                                        source->project.layers[index].name));
+            if (name->text().isEmpty() || name->text() == last_suggestion) {
+                name->setText(suggestion);
+            }
+            last_suggestion = suggestion;
+        } else if (importing) {
+            problem->setText(tr("Choose a project before creating the layer."));
+        }
+    };
+    const auto refresh_suggestion = [&] {
+        const pvt::ProjectDocument* source = selected_source();
+        if (source == nullptr || source_layer->currentIndex() < 0) return;
+        const std::size_t index = static_cast<std::size_t>(
+            source_layer->currentData().toULongLong());
+        if (index >= source->project.layers.size()) return;
+        const QString suggestion = QString::fromStdString(
+            smart_unique_layer_name(project_,
+                                    source->project.layers[index].name));
+        if (name->text().isEmpty() || name->text() == last_suggestion) {
+            name->setText(suggestion);
+        }
+        last_suggestion = suggestion;
+    };
+    const auto load_import = [&](const QString& path) {
+        if (path.isEmpty()) return;
+        auto loaded = std::make_unique<pvt::ProjectDocument>();
+        std::string load_error;
+        const bool legacy = QFileInfo(path).suffix().compare(
+                                QStringLiteral("pvt"),
+                                Qt::CaseInsensitive) == 0;
+        const bool ok = legacy
+            ? pvt::import_legacy_setup(path.toStdString(), *loaded,
+                                       &load_error)
+            : pvt::load_project_document(path.toStdString(), *loaded,
+                                         &load_error);
+        if (!ok) {
+            problem->setText(tr("Could not read that project: %1")
+                                 .arg(QString::fromStdString(load_error)));
+            return;
+        }
+        imported_source = std::move(loaded);
+        import_path->setText(QDir::toNativeSeparators(path));
+        rememberDialogLocation(path);
+        problem->clear();
+        refresh_source_layers();
+    };
+    connect(source_type, &QComboBox::currentIndexChanged, &dialog,
+            [&](int) {
+                problem->clear();
+                refresh_source_layers();
+            });
+    connect(source_layer, &QComboBox::currentIndexChanged, &dialog,
+            [&](int) { refresh_suggestion(); });
+    connect(name, &QLineEdit::textChanged, &dialog, [&] {
+        const pvt::ProjectDocument* source = selected_source();
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(
+            source != nullptr && !source->project.layers.empty()
+            && name->hasAcceptableInput());
+    });
+    connect(import_file, &QPushButton::clicked, &dialog, [&] {
+        load_import(QFileDialog::getOpenFileName(
+            &dialog, tr("Choose project"), usableDialogDirectory(),
+            tr("PVT projects (*.zip *.pvt);;All files (*)")));
+    });
+    connect(import_folder, &QPushButton::clicked, &dialog, [&] {
+        load_import(QFileDialog::getExistingDirectory(
+            &dialog, tr("Choose unpacked project folder"),
+            usableDialogDirectory()));
+    });
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, [&] {
+        if (!name->hasAcceptableInput()) {
+            problem->setText(tr("Enter a non-empty portable layer name."));
+            return;
+        }
+        dialog.accept();
+    });
+    refresh_source_layers();
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const pvt::ProjectDocument* source = selected_source();
+    if (source == nullptr || source_layer->currentIndex() < 0) return;
+    const std::size_t source_index = static_cast<std::size_t>(
+        source_layer->currentData().toULongLong());
+    const auto active = std::find_if(
+        project_.layers.begin(), project_.layers.end(),
+        [this](const pvt::LayerConfig& layer) {
+            return layer.uuid == active_layer_uuid_;
+        });
+    const std::size_t active_index = active == project_.layers.end()
+        ? project_.layers.size() - 1U
+        : static_cast<std::size_t>(
+              std::distance(project_.layers.begin(), active));
+    std::size_t insertion_index = project_.layers.size();
+    switch (placement->currentData().toInt()) {
+        case AboveCurrent: insertion_index = active_index + 1U; break;
+        case BelowCurrent: insertion_index = active_index; break;
+        case BottomOfStack: insertion_index = 0U; break;
+        case TopOfStack: default: break;
+    }
+
     auto before = captureProjectState();
     const std::string before_active = active_layer_uuid_;
     pvt::ProjectConfig staged_project;
     std::unique_ptr<pvt::ProjectDocument> staged_document;
-    QString notice;
     QString error;
-    if (!stageNewLayerFromDefaults(staged_project, staged_document,
-                                   &notice, &error)) {
+    if (!stageNewLayerFromSource(
+            *source, source_index, insertion_index,
+            name->text().trimmed().toStdString(), staged_project,
+            staged_document, &error)) {
         QMessageBox::critical(this, tr("Could not add layer"), error);
         return;
     }
-    active_layer_uuid_ = staged_project.layers.back().uuid;
+    active_layer_uuid_ = staged_project.layers[insertion_index].uuid;
     selected_group_uuid_.reset();
     project_ = std::move(staged_project);
     document_ = std::move(staged_document);
@@ -10016,7 +11229,8 @@ void MainWindow::addLayer() {
     refreshAll();
     recordProjectStateChange(tr("Add layer"), std::move(before), before_active);
     schedulePreview();
-    if (!notice.isEmpty()) status_->setText(notice);
+    status_->setText(tr("Created “%1” at the selected stack position.")
+                         .arg(name->text().trimmed()));
 }
 
 void MainWindow::duplicateLayer() {
@@ -10038,7 +11252,7 @@ void MainWindow::duplicateLayer() {
     auto layer = *source;
     layer.uuid = pvt::generate_uuid();
     layer.file_id = pvt::allocate_layer_file_id(project_);
-    append_copy_suffix(layer.name);
+    layer.name = smart_unique_layer_name(project_, source->name);
     const bool copy_obj = !layer.render.surface.obj_sha256.empty();
     const bool copy_height =
         !layer.render.surface.plane_displacement.sha256.empty();
@@ -11549,6 +12763,170 @@ void MainWindow::restoreUserSettings() {
     refreshRecentProjectsMenu();
 }
 
+void MainWindow::offerCpuOnlyRescueIfNeeded() {
+    if (QCoreApplication::arguments().contains(QStringLiteral("--smoke-test"))
+        || render_backend_ == pvt::RenderBackend::Cpu) {
+        return;
+    }
+    const pvt::RendererCapabilities capabilities =
+        pvt::renderer_capabilities();
+    if (capabilities.metal_available
+        || capabilities.opengl_surface_available) {
+        return;
+    }
+
+    QMessageBox prompt(this);
+    prompt.setIcon(QMessageBox::Warning);
+    prompt.setWindowTitle(tr("GPU acceleration unavailable"));
+    prompt.setText(tr(
+        "The selected CPU + GPU/GPU renderer did not find a usable GPU."));
+    prompt.setInformativeText(tr(
+        "You can switch this computer to CPU only now. CPU-only rendering works, but it is unsupported for performance reports and GPU-only shader behavior."));
+    auto* use_cpu = prompt.addButton(
+        tr("Use CPU Only"), QMessageBox::AcceptRole);
+    auto* keep = prompt.addButton(
+        tr("Keep Current Mode"), QMessageBox::RejectRole);
+    use_cpu->setObjectName(QStringLiteral("useCpuOnlyRescue"));
+    prompt.setDefaultButton(qobject_cast<QPushButton*>(use_cpu));
+    prompt.setEscapeButton(qobject_cast<QPushButton*>(keep));
+    prompt.exec();
+    if (prompt.clickedButton() != use_cpu) {
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "GPU mode retained; rendering will remain unavailable until a supported GPU is usable or CPU only is selected."));
+        }
+        return;
+    }
+
+    performance_settings_.backend = RenderBackendPreference::Cpu;
+    render_backend_ = pvt::RenderBackend::Cpu;
+    const bool new_project = document_ != nullptr
+        && document_->source_path.empty() && document_->versions.empty()
+        && current_project_path_.isEmpty() && imported_legacy_path_.isEmpty()
+        && !project_io_active_;
+    cpu_rescue_timing_pending_ = new_project;
+
+    QSettings settings;
+    settings.setValue(QStringLiteral("performance/backendPreference"),
+                      static_cast<int>(RenderBackendPreference::Cpu));
+    settings.setValue(QStringLiteral("preferences/renderBackend"),
+                      static_cast<int>(pvt::RenderBackend::Cpu));
+    settings.sync();
+    if (preview_cancel_ != nullptr) {
+        preview_cancel_->store(true, std::memory_order_relaxed);
+    }
+    schedulePreview();
+    if (status_ != nullptr) {
+        status_->setText(new_project
+            ? tr("CPU-only rescue enabled. Measuring this new project's preview before recommending any resolution change…")
+            : tr("CPU-only rescue enabled. The open project's authored resolution was not changed."));
+    }
+}
+
+void MainWindow::considerCpuOnlyNewProjectResolution(
+    const PreviewResult& result) {
+    if (!cpu_rescue_timing_pending_) return;
+
+    const bool new_project = document_ != nullptr
+        && document_->source_path.empty() && document_->versions.empty()
+        && current_project_path_.isEmpty() && imported_legacy_path_.isEmpty()
+        && !project_io_active_;
+    if (!new_project || render_backend_ != pvt::RenderBackend::Cpu
+        || !result.error.isEmpty() || result.image.isNull()
+        || result.render_elapsed_ns <= 0) {
+        if (!new_project || render_backend_ != pvt::RenderBackend::Cpu) {
+            cpu_rescue_timing_pending_ = false;
+        }
+        return;
+    }
+    cpu_rescue_timing_pending_ = false;
+
+    const double fps = std::max(1.0, project_.canvas.fps);
+    const double budget_ns = 1.0e9 / fps;
+    if (static_cast<double>(result.render_elapsed_ns) <= budget_ns) {
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "CPU-only preview met the %1 ms frame budget; this new project's resolution was left unchanged.")
+                .arg(budget_ns / 1.0e6, 0, 'f', 1));
+        }
+        return;
+    }
+
+    // Rendering cost is approximately proportional to pixel count for the
+    // blank-project workload. Use the measured miss to choose a conservative
+    // starting canvas while preserving the authored aspect ratio. The user is
+    // still free to keep the original size or enter any dimensions later.
+    const double timing_scale = std::clamp(
+        std::sqrt(budget_ns / static_cast<double>(result.render_elapsed_ns))
+            * 0.9,
+        0.05, 0.95);
+    const auto rounded_dimension = [timing_scale](int dimension) {
+        const int scaled = static_cast<int>(std::floor(
+            static_cast<double>(dimension) * timing_scale));
+        return std::max(16, (scaled / 16) * 16);
+    };
+    const int suggested_width = rounded_dimension(result.image.width());
+    const int suggested_height = rounded_dimension(result.image.height());
+
+    QMessageBox prompt(this);
+    prompt.setIcon(QMessageBox::Information);
+    prompt.setWindowTitle(tr("CPU-only starting resolution"));
+    prompt.setText(tr(
+        "This new project's CPU preview missed its frame deadline."));
+    prompt.setInformativeText(tr(
+        "The render took %1 ms for a %2 ms frame budget. Use %3 × %4 as the starting resolution for this and future new CPU-only projects? Existing projects are never resized.")
+        .arg(static_cast<double>(result.render_elapsed_ns) / 1.0e6, 0, 'f', 1)
+        .arg(budget_ns / 1.0e6, 0, 'f', 1)
+        .arg(suggested_width)
+        .arg(suggested_height));
+    auto* apply = prompt.addButton(
+        tr("Use Recommended Size"), QMessageBox::AcceptRole);
+    auto* keep = prompt.addButton(
+        tr("Keep Current Size"), QMessageBox::RejectRole);
+    apply->setObjectName(QStringLiteral("useCpuOnlyRecommendedResolution"));
+    prompt.setDefaultButton(qobject_cast<QPushButton*>(apply));
+    prompt.setEscapeButton(qobject_cast<QPushButton*>(keep));
+    prompt.exec();
+    if (prompt.clickedButton() != apply) {
+        if (status_ != nullptr) {
+            status_->setText(tr(
+                "CPU-only enabled; the new project's current resolution was kept."));
+        }
+        return;
+    }
+
+    // Recheck after the modal dialog: no load/save or document replacement may
+    // turn this into permission to resize an existing project.
+    const bool still_new_project = document_ != nullptr
+        && document_->source_path.empty() && document_->versions.empty()
+        && current_project_path_.isEmpty() && imported_legacy_path_.isEmpty()
+        && !project_io_active_;
+    if (!still_new_project) return;
+
+    project_.canvas.width = suggested_width;
+    project_.canvas.height = suggested_height;
+    config_.width = suggested_width;
+    config_.height = suggested_height;
+    document_->project = project_;
+    baseline_dirty_ = true;
+    ++document_revision_;
+    QSettings settings;
+    settings.setValue(QStringLiteral("performance/cpuOnlyNewProjectWidth"),
+                      suggested_width);
+    settings.setValue(QStringLiteral("performance/cpuOnlyNewProjectHeight"),
+                      suggested_height);
+    settings.sync();
+    refreshAll();
+    updateWindowTitle();
+    schedulePreview();
+    if (status_ != nullptr) {
+        status_->setText(tr(
+            "Set this new CPU-only project to %1 × %2 after measuring a missed frame deadline.")
+            .arg(suggested_width)
+            .arg(suggested_height));
+    }
+}
+
 void MainWindow::saveUserSettings() {
     QSettings settings;
     settings.setValue(QStringLiteral("paths/lastDialogDirectory"), last_dialog_directory_);
@@ -11942,6 +13320,18 @@ void MainWindow::replaceWithNewProject() {
             built_in_workbench_project_document());
     }
     project_ = document_->project;
+    if (render_backend_ == pvt::RenderBackend::Cpu) {
+        QSettings settings;
+        const int cpu_width = settings.value(
+            QStringLiteral("performance/cpuOnlyNewProjectWidth"), 0).toInt();
+        const int cpu_height = settings.value(
+            QStringLiteral("performance/cpuOnlyNewProjectHeight"), 0).toInt();
+        if (cpu_width >= 16 && cpu_height >= 16) {
+            project_.canvas.width = cpu_width;
+            project_.canvas.height = cpu_height;
+            document_->project = project_;
+        }
+    }
     document_->dirty = false;
     active_layer_uuid_ = project_.layers.front().uuid;
     solo_layer_uuid_.reset();
@@ -12340,6 +13730,13 @@ void MainWindow::updateMusicTransactionGuards() {
     for (QAction* action : {new_action_, open_action_, open_folder_action_,
                             save_action_, save_as_action_}) {
         if (action != nullptr) action->setEnabled(editable);
+    }
+    if (create_revision_action_ != nullptr) {
+        const bool partial = document_ != nullptr
+            && document_->file_io.revision_history
+                   == pvt::RevisionHistoryMode::Partial;
+        create_revision_action_->setEnabled(
+            editable && partial && !document_->source_path.empty());
     }
     const auto* active_layer = activeLayer();
     const auto* owning_group = active_layer != nullptr
@@ -13211,6 +14608,26 @@ void MainWindow::loadGlobalEditors() {
     width_->setValue(config_.width);
     height_->setValue(config_.height);
     block_size_->setValue(config_.block_size);
+    block_size_sync_->setChecked(
+        config_.block_size_modulation.synchronized);
+    block_size_alpha_gaps_->setChecked(
+        config_.block_size_modulation.alpha_gaps);
+    block_size_lfo_enabled_->setChecked(
+        config_.block_size_modulation.lfo_enabled);
+    block_size_lfo_name_->setText(QString::fromStdString(
+        config_.block_size_modulation.lfo_name));
+    select_enum(block_size_lfo_waveform_,
+                config_.block_size_modulation.waveform);
+    block_size_lfo_minimum_->setValue(
+        config_.block_size_modulation.minimum);
+    block_size_lfo_maximum_->setValue(
+        config_.block_size_modulation.maximum);
+    block_size_lfo_cycles_->setValue(
+        config_.block_size_modulation.cycles_per_loop);
+    block_size_lfo_phase_->setValue(
+        config_.block_size_modulation.phase_degrees);
+    block_size_lfo_shape_->setValue(
+        config_.block_size_modulation.shape);
     frames_->setValue(config_.total_frames);
     fps_->setValue(config_.fps);
     if (standardMicRoute(false) != nullptr) {
@@ -15965,6 +17382,28 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
         config_.height = height_->value();
     } else if (changed_editor == block_size_) {
         config_.block_size = block_size_->value();
+    } else if (changed_editor == block_size_sync_
+               || changed_editor == block_size_alpha_gaps_
+               || changed_editor == block_size_lfo_enabled_
+               || changed_editor == block_size_lfo_name_
+               || changed_editor == block_size_lfo_waveform_
+               || changed_editor == block_size_lfo_minimum_
+               || changed_editor == block_size_lfo_maximum_
+               || changed_editor == block_size_lfo_cycles_
+               || changed_editor == block_size_lfo_phase_
+               || changed_editor == block_size_lfo_shape_) {
+        pvt::BlockSizeModulation& block = config_.block_size_modulation;
+        block.synchronized = block_size_sync_->isChecked();
+        block.alpha_gaps = block_size_alpha_gaps_->isChecked();
+        block.lfo_enabled = block_size_lfo_enabled_->isChecked();
+        block.lfo_name = block_size_lfo_name_->text().trimmed().toStdString();
+        block.waveform = static_cast<pvt::Waveform>(
+            block_size_lfo_waveform_->currentData().toInt());
+        block.minimum = block_size_lfo_minimum_->value();
+        block.maximum = block_size_lfo_maximum_->value();
+        block.cycles_per_loop = block_size_lfo_cycles_->value();
+        block.phase_degrees = block_size_lfo_phase_->value();
+        block.shape = block_size_lfo_shape_->value();
     } else if (changed_editor == frames_) {
         config_.total_frames = frames_->value();
     } else if (changed_editor == fps_) {
@@ -17896,12 +19335,16 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
         scale_project_for_preview(project);
         pvt::Image image;
         std::string error;
+        QElapsedTimer render_timer;
+        render_timer.start();
         if (!pvt::render_project_frame(project, frame, render_options, image,
                                        cancel != nullptr ? cancel.get() : nullptr,
                                        &error)) {
+            result.render_elapsed_ns = render_timer.nsecsElapsed();
             result.error = QString::fromStdString(error);
             return result;
         }
+        result.render_elapsed_ns = render_timer.nsecsElapsed();
         if (cancelled()) {
             result.error = tr("Preview cancelled.");
             return result;
@@ -19653,6 +21096,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         if (reset_resources != nullptr) reset_resources->click();
         const bool reset_performance_valid =
             settings_dialog.performanceSettings() == PerformanceSettings{};
+        const QString resolved_auto_suffix =
+            QStringLiteral(" (") + tr("Auto") + QStringLiteral(")");
         settings_dialog.hide();
         if (tabs == nullptr || tabs->count() < 2 || undo_limit == nullptr
             || recent_limit == nullptr
@@ -19675,9 +21120,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
                    != static_cast<int>(RenderMemoryBudgetMode::Automatic)
             || memory_status == nullptr || memory_status->text().isEmpty()
             || maximum_decoded_image == nullptr
-            || maximum_decoded_image->specialValueText() != tr("Auto")
+            || !maximum_decoded_image->specialValueText().endsWith(
+                   resolved_auto_suffix)
             || obj_cache_entries == nullptr
-            || obj_cache_entries->specialValueText() != tr("Auto")
+            || !obj_cache_entries->specialValueText().endsWith(
+                   resolved_auto_suffix)
             || resource_status == nullptr || resource_status->text().isEmpty()
             || reset_resources == nullptr
             || pause_preview == nullptr || !pause_preview->isChecked()
@@ -19708,8 +21155,52 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     const auto* live_last_good_timeout = live_workspace_->findChild<QSpinBox*>(
         QStringLiteral("liveLastGoodTimeout"));
+    double flexible_number = 0.0;
+    const bool flexible_numbers_valid =
+        FlexibleDoubleSpinBox::parseFlexibleNumber(
+            QStringLiteral("2 1/2"), QLocale::c(), flexible_number)
+        && flexible_number == 2.5
+        && FlexibleDoubleSpinBox::parseFlexibleNumber(
+            QStringLiteral("-2+1/4"), QLocale::c(), flexible_number)
+        && flexible_number == -2.25
+        && FlexibleDoubleSpinBox::parseFlexibleNumber(
+            QStringLiteral("3⁄4"), QLocale::c(), flexible_number)
+        && flexible_number == 0.75
+        && FlexibleDoubleSpinBox::parseFlexibleNumber(
+            QStringLiteral("1½"), QLocale::c(), flexible_number)
+        && flexible_number == 1.5;
+
+    FlexibleDoubleSpinBox named_number;
+    named_number.setRange(-120.0, 24.0);
+    named_number.setSpecialValueText(QStringLiteral("Mute"));
+    named_number.setValue(-120.0);
+    QFocusEvent named_focus_in(QEvent::FocusIn);
+    QCoreApplication::sendEvent(&named_number, &named_focus_in);
+    const bool named_value_revealed = named_number.specialValueText().isEmpty();
+    QFocusEvent named_focus_out(QEvent::FocusOut);
+    QCoreApplication::sendEvent(&named_number, &named_focus_out);
+    const bool named_value_restored =
+        named_number.specialValueText() == QStringLiteral("Mute")
+        && named_number.value() == -120.0;
+
+    ResolvedAutoSpinBox resolved_auto;
+    resolved_auto.setRange(0, 64);
+    resolved_auto.setResolvedAutoValue(8, tr("Auto"));
+    resolved_auto.setValue(0);
+    QFocusEvent auto_focus_in(QEvent::FocusIn);
+    QCoreApplication::sendEvent(&resolved_auto, &auto_focus_in);
+    const bool auto_value_revealed = resolved_auto.value() == 8
+                                     && resolved_auto.specialValueText().isEmpty();
+    QFocusEvent auto_focus_out(QEvent::FocusOut);
+    QCoreApplication::sendEvent(&resolved_auto, &auto_focus_out);
+    const bool auto_value_restored = resolved_auto.value() == 0
+        && resolved_auto.specialValueText().endsWith(
+            QStringLiteral(" (") + tr("Auto") + QStringLiteral(")"));
     if (swing_radius_ == nullptr || effect_area_radius_ == nullptr
         || png_compression_ == nullptr || live_last_good_timeout == nullptr
+        || !flexible_numbers_valid
+        || !named_value_revealed || !named_value_restored
+        || !auto_value_revealed || !auto_value_restored
         || !swing_radius_->specialValueText().isEmpty()
         || !effect_area_radius_->specialValueText().isEmpty()
         || !png_compression_->specialValueText().isEmpty()
@@ -23425,8 +24916,69 @@ bool MainWindow::runSmokeChecks(QString* error) {
         configured_new_layer_template_index(*layer_template);
     const pvt::LayerConfig expected_new_layer =
         layer_template->project.layers[layer_template_index];
+    const auto accept_add_layer_dialog =
+        [this](int source_kind, int placement_kind,
+               bool& dialog_valid) {
+            QTimer::singleShot(0, this,
+                [source_kind, placement_kind, &dialog_valid] {
+                    auto* dialog = qobject_cast<QDialog*>(
+                        QApplication::activeModalWidget());
+                    auto* source = dialog != nullptr
+                        ? dialog->findChild<QComboBox*>(
+                              QStringLiteral("newLayerSource"))
+                        : nullptr;
+                    auto* placement = dialog != nullptr
+                        ? dialog->findChild<QComboBox*>(
+                              QStringLiteral("newLayerPlacement"))
+                        : nullptr;
+                    auto* name = dialog != nullptr
+                        ? dialog->findChild<QLineEdit*>(
+                              QStringLiteral("newLayerName"))
+                        : nullptr;
+                    auto* buttons = dialog != nullptr
+                        ? dialog->findChild<QDialogButtonBox*>()
+                        : nullptr;
+                    const int source_index = source != nullptr
+                        ? source->findData(source_kind) : -1;
+                    const int placement_index = placement != nullptr
+                        ? placement->findData(placement_kind) : -1;
+                    const bool complete_sources = source != nullptr
+                        && source->findData(0) >= 0
+                        && source->findData(1) >= 0
+                        && source->findData(3) >= 0
+                        && source->findData(4) >= 0
+                        && source->findData(5) >= 0;
+                    const bool complete_placements = placement != nullptr
+                        && placement->findData(0) >= 0
+                        && placement->findData(1) >= 0
+                        && placement->findData(2) >= 0
+                        && placement->findData(3) >= 0;
+                    if (source_index >= 0) {
+                        source->setCurrentIndex(source_index);
+                    }
+                    if (placement_index >= 0) {
+                        placement->setCurrentIndex(placement_index);
+                    }
+                    dialog_valid = dialog != nullptr && complete_sources
+                        && complete_placements && source_index >= 0
+                        && placement_index >= 0 && name != nullptr
+                        && name->hasAcceptableInput()
+                        && buttons != nullptr
+                        && buttons->button(QDialogButtonBox::Ok) != nullptr
+                        && buttons->button(QDialogButtonBox::Ok)->isEnabled();
+                    if (dialog_valid) {
+                        buttons->button(QDialogButtonBox::Ok)->click();
+                    } else if (dialog != nullptr) {
+                        dialog->reject();
+                    }
+                });
+        };
+    bool add_layer_dialog_valid = false;
+    accept_add_layer_dialog(hasCustomNewProjectDefaults() ? 2 : 1, 2,
+                            add_layer_dialog_valid);
     addLayer();
-    if (project_.layers.size() != 2U || active_layer_uuid_ != project_.layers.back().uuid
+    if (!add_layer_dialog_valid || project_.layers.size() != 2U
+        || active_layer_uuid_ != project_.layers.back().uuid
         || project_.output.write_alpha != write_alpha_->isChecked()
         || layer_list_->count() != 2
         || layer_list_->item(0)->data(Qt::UserRole).toString().toStdString()
@@ -23551,7 +25103,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
     group_locked_->setChecked(false);
+    bool second_add_layer_dialog_valid = false;
+    accept_add_layer_dialog(0, 2, second_add_layer_dialog_valid);
     addLayer();
+    if (!second_add_layer_dialog_valid) {
+        if (error != nullptr) {
+            *error = tr("The Add Layer dialog did not expose its blank-layer and placement choices.");
+        }
+        return false;
+    }
     const std::string temporary_uuid = active_layer_uuid_;
     selectGroup(group_uuid);
     moveSelectedGroup(1);
@@ -24934,6 +26494,9 @@ void MainWindow::finishProjectSave(pvt::ProjectDocument saved,
     } else if (report.promoted_external_change) {
         status_->setText(tr("Saved external changes/integrity mismatch as version %1 in %2")
                              .arg(report.version).arg(path));
+    } else if (!report.created_version) {
+        status_->setText(tr("Updated working revision %1 in %2")
+                             .arg(report.version).arg(path));
     } else {
         status_->setText(tr("Saved version %1 to %2").arg(report.version).arg(path));
     }
@@ -24972,6 +26535,9 @@ bool MainWindow::saveProjectPath(const QString& path) {
         }
     } else if (report.promoted_external_change) {
         status_->setText(tr("Saved external changes/integrity mismatch as version %1 in %2")
+                             .arg(report.version).arg(path));
+    } else if (!report.created_version) {
+        status_->setText(tr("Updated working revision %1 in %2")
                              .arg(report.version).arg(path));
     } else {
         status_->setText(tr("Saved version %1 to %2").arg(report.version).arg(path));

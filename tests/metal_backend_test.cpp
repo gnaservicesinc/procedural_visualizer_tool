@@ -132,14 +132,12 @@ void test_backend_contract() {
     pvt::Image cpu;
     CHECK(pvt::render_frame(config, 6, cpu_options, cpu, nullptr, &error));
     if (!capabilities.metal_available) {
-        pvt::Image hybrid;
-        CHECK(pvt::render_frame(config, 6, hybrid_options, hybrid, nullptr,
-                                &error));
-        CHECK(cpu.pixels == hybrid.pixels);
-        pvt::Image unchanged = cpu;
-        CHECK(!pvt::render_frame(config, 6, gpu_options, unchanged, nullptr,
-                                 &error));
-        CHECK(unchanged.pixels == cpu.pixels);
+        for (const auto& accelerated : {hybrid_options, gpu_options}) {
+            pvt::Image unchanged = cpu;
+            CHECK(!pvt::render_frame(config, 6, accelerated, unchanged,
+                                     nullptr, &error));
+            CHECK(unchanged.pixels == cpu.pixels);
+        }
         return;
     }
 

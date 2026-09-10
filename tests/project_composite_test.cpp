@@ -203,7 +203,7 @@ void test_project_validation_borrowed_settings() {
     const Edit edits[] = {
         {"width", [](auto& p) { p.canvas.width = 15; }, true},
         {"height", [](auto& p) { p.canvas.height = 15; }, true},
-        {"block size", [](auto& p) { p.canvas.block_size = 0; }, true},
+        {"negative block size", [](auto& p) { p.canvas.block_size = -1; }, true},
         {"frame count", [](auto& p) { p.canvas.total_frames = 1; }, true},
         {"fps", [](auto& p) { p.canvas.fps = 0.0; }, true},
         {"export", [](auto& p) { p.output.png_compression_level = 10; }, true},

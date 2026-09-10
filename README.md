@@ -1,6 +1,6 @@
 # Procedural Visualizer Tool
 
-Current product version: **17.11.0**. The version is read from `VERSION` by every
+Current product version: **18.0.0**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -9,6 +9,48 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 18.0.0 live-performance authoring and project I/O
+
+Version 18.0.0 makes block size a true floating-point control. Decimal, typed
+fraction, mixed-number, and common Unicode fraction input is accepted throughout
+the decimal editors. Fractional grids distribute floor/ceiling block sizes,
+support blended seams or alpha holes, and can follow the project clock or a
+dedicated named LFO. Values below one use subpixel supersampling; zero is an
+immediate BLACKOUT path that skips rendering. Numeric fields that display Auto
+or another named minimum reveal the actual numeric value while editing.
+
+Add Layer is now a placement-aware workflow for blank, built-in/default,
+custom-default, current-layer, imported-project, and constrained-random sources.
+It assigns a collision-free suggested name and carries required project
+attachments and reusable paths. Project history can remain Full, become manually
+managed Partial history with retention/pinning/deletion, or be Disabled. A
+history-less project cannot silently manufacture a full lineage; restoring Full
+history creates a renamed Save Copy with a fresh version zero.
+
+Binary is the new recommended project-storage default. Numeric configuration is
+dumped in one frozen native-order stream using each member's actual width;
+authoritative Boolean banks remain packed `uint32_t` values in RAM and on disk.
+Strings are stored separately as exact newline-ordered bytes. There are no field
+names, scalar tags, codec headers, or separate version sidecar in `.pvtdat` data;
+layouts are append-only and accepted only after exact stream consumption and
+sanity validation. Human-editable directory projects remain available, use a
+relative `current` symlink, scan only the editable current revision, and can
+store older revisions as one-hop `.pvtdiff` files against the current full copy.
+
+CPU + GPU is a cooperative throughput mode, never a whole-frame CPU fallback.
+GPU and CPU + GPU modes report missing acceleration as an error. CPU-only remains
+available but unsupported for performance and GPU-shader reports; startup offers
+a one-click switch when no GPU backend exists. Only a genuinely new CPU-rescue
+project may receive a measured, frame-budget-based resolution recommendation,
+and no resolution changes without an explicit click.
+
+On a 2,000-wave/effect Release fixture, binary storage used 835,154 bytes versus
+4,377,608 bytes for text. Median serialization/loading was 6.994/6.418 ms versus
+25.075/69.108 ms, and peak process RSS was about 10.8 MB versus 82.3 MB. The
+public by-value configuration layouts and persistence boundary advance the
+library to SONAME 18. Local Apple-Clang Release validation passes all 40 tests,
+including English, French, and German GUI smoke coverage.
 
 ## 17.11.0 faster project persistence and adaptive performance defaults
 

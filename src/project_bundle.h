@@ -10,7 +10,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kProjectBundleFormatVersion = 1;
+constexpr std::uint32_t kProjectBundleFormatVersion = 2;
 constexpr std::size_t kMaximumProjectAttachmentBytes =
     kMaximumEmbeddedAssetBytes;
 constexpr std::size_t kMaximumProjectBundleExpandedBytes =
@@ -79,8 +79,34 @@ struct ProjectRecoveryInfo {
     std::vector<std::string> notes;
 };
 
+enum class ProjectStorageEncoding : std::uint8_t {
+    Binary = 0,
+    HumanEditable = 1,
+};
+
+enum class RevisionHistoryMode : std::uint8_t {
+    Full = 0,
+    Partial = 1,
+    Disabled = 2,
+};
+
+// These settings belong to the project file, not to application preferences.
+// Binary is the default for new projects because it removes decimal parsing
+// from ordinary loads and stores Boolean values as packed bits. Existing v1
+// bundles load as HumanEditable so their established layout is not silently
+// changed by merely opening them.
+struct ProjectFileIoSettings {
+    ProjectStorageEncoding encoding = ProjectStorageEncoding::Binary;
+    RevisionHistoryMode revision_history = RevisionHistoryMode::Full;
+    std::size_t partial_keep_count = 10U;
+    std::vector<std::uint64_t> pinned_versions;
+    int zip_compression_level = 6;
+    bool human_version_deltas = false;
+};
+
 struct ProjectDocument {
     ProjectConfig project;
+    ProjectFileIoSettings file_io;
     std::string source_path;
     std::string imported_from_path;
     std::string bundle_root_name;
@@ -191,6 +217,25 @@ bool revert_project_as_new(ProjectDocument& document,
                            std::uint64_t version,
                            BundleSaveReport* report = nullptr,
                            std::string* error = nullptr);
+
+// Partial history exposes an explicit checkpoint command. It marks a
+// deliberate revision point even when the semantic project has not changed
+// since the previous save.
+bool create_project_revision(ProjectDocument& document,
+                             BundleSaveReport* report = nullptr,
+                             std::string* error = nullptr);
+
+// Partial histories may retire any non-current snapshot. Descendants retain
+// the deleted metadata identity as a tiny lineage alias rather than retaining
+// the payload. Pinning exempts selected versions from the recent-N policy.
+bool delete_project_version(ProjectDocument& document,
+                            std::uint64_t version,
+                            BundleSaveReport* report = nullptr,
+                            std::string* error = nullptr);
+bool set_project_version_pinned(ProjectDocument& document,
+                                std::uint64_t version,
+                                bool pinned,
+                                std::string* error = nullptr);
 
 // Save and Save-As share this operation. A clean document verifies recorded
 // state and the current snapshot without decoding every immutable ancestor;

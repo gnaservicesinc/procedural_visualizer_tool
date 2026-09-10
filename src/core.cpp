@@ -1994,6 +1994,19 @@ bool evaluate_parameter_lfo(const ParameterLfo& lfo, double loop_position,
     return true;
 }
 
+double materialized_block_size(const RenderConfig& config,
+                               double normalized_phase) {
+    const BlockSizeModulation& modulation = config.block_size_modulation;
+    if (!modulation.lfo_enabled) return config.block_size;
+    const double phase = static_cast<double>(modulation.cycles_per_loop)
+                             * (kTau * wrap_unit(normalized_phase))
+                         + radians(modulation.phase_degrees);
+    const double wave = evaluate_waveform(
+        modulation.waveform, phase, modulation.shape);
+    return mix_value(modulation.minimum, modulation.maximum,
+                     0.5 + 0.5 * wave);
+}
+
 void materialize_parameter_lfos_in_place(RenderData& render,
                                          double normalized_phase) {
     std::vector<ParameterLfo> resolved = std::move(render.parameter_lfos);
@@ -3144,6 +3157,7 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
     config.clock = canvas.clock;
     config.audio_reactive_defaults = canvas.audio_reactive_defaults;
     config.live = canvas.live;
+    config.block_size_modulation = canvas.block_size_modulation;
     config.motion_paths = canvas.motion_paths;
     config.output = output;
     config.output_compatibility = canvas.output_compatibility;
@@ -3562,7 +3576,7 @@ struct RenderValidationView {
     const RenderData& render;
     int width;
     int height;
-    int block_size;
+    double block_size;
     int total_frames;
     double fps;
     const ClockConfig& clock;
@@ -3570,6 +3584,7 @@ struct RenderValidationView {
     const ExportConfig& output;
     const AudioReactiveConfig& audio_reactive_defaults;
     const LiveConfig& live;
+    const BlockSizeModulation& block_size_modulation;
 
     template<class Canvas>
     RenderValidationView(const Canvas& canvas, const ExportConfig& export_config,
@@ -3579,7 +3594,8 @@ struct RenderValidationView {
           fps(canvas.fps), clock(canvas.clock), motion_paths(canvas.motion_paths),
           output(export_config),
           audio_reactive_defaults(canvas.audio_reactive_defaults),
-          live(canvas.live) {}
+          live(canvas.live),
+          block_size_modulation(canvas.block_size_modulation) {}
 
     RenderValidationView(const RenderConfig& config)
         : RenderValidationView(config, config.output, config) {}
@@ -3591,6 +3607,8 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
                                detail::SharedRenderMemory* shared_memory = nullptr,
                                bool validate_canvas = true) {
     const RenderData& config = view.render;
+    int validation_width = view.width;
+    int validation_height = view.height;
     // Only ProjectConfigValidator may reuse a successful canvas check. Keep
     // each guard in its original position so standalone diagnostic order is
     // unchanged. Saved layer clocks, bindings, graphs and estimates stay local.
@@ -3599,9 +3617,37 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
             || view.height < 16 || view.height > kMaximumDimension) {
             return invalid_result("Width and height must each fit the renderer's signed-int dimensions.");
         }
-        if (view.block_size < 1
+        if (!std::isfinite(view.block_size) || view.block_size < 0.0
             || view.block_size > std::max(view.width, view.height)) {
-            return invalid_result("Block size must be between 1 and the larger image dimension.");
+            return invalid_result("Block size must be finite and between 0 and the larger image dimension.");
+        }
+        const BlockSizeModulation& block =
+            view.block_size_modulation;
+        if (block.lfo_enabled
+            && (!valid_enum(block.waveform)
+                || !valid_name(block.lfo_name)
+                || !std::isfinite(block.minimum)
+                || !std::isfinite(block.maximum)
+                || block.minimum < 0.0
+                || block.maximum < block.minimum
+                || block.maximum > std::max(view.width, view.height)
+                || block.cycles_per_loop < 1
+                || !finite_render_parameter(block.phase_degrees)
+                || !finite_in_range(block.shape, 0.0, 1.0))) {
+            return invalid_result(
+                "Block-size synchronization or LFO settings are invalid.");
+        }
+        if (view.block_size > 0.0 && view.block_size < 1.0) {
+            const double scale = 1.0 / view.block_size;
+            if (scale > static_cast<double>(kMaximumDimension)
+                / static_cast<double>(std::max(view.width, view.height))) {
+                return invalid_result(
+                    "Subpixel block size would exceed the maximum supersampled canvas dimension.");
+            }
+            validation_width = static_cast<int>(std::ceil(
+                static_cast<double>(view.width) * scale));
+            validation_height = static_cast<int>(std::ceil(
+                static_cast<double>(view.height) * scale));
         }
         if (view.total_frames < 2 || view.total_frames > kMaximumFrames) {
             return invalid_result("Frame count must be between 2 and INT_MAX.");
@@ -3973,7 +4019,7 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
             } else {
                 const double trails = static_cast<double>(
                     detail::effective_particle_trail_steps(
-                        view.width, view.height, effect));
+                        validation_width, validation_height, effect));
                 const double maximum_addition = 2.0 * maximum_intensity
                                                 * effect.frequency * trails;
                 if (maximum_addition > 0.0) {
@@ -4015,7 +4061,7 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
     if (validate_particle_workload) {
         detail::ParticleStampWorkloadEstimate particle_workload;
         if (!detail::estimate_particle_stamp_workload(
-                view.width, view.height, config, particle_workload)) {
+                validation_width, validation_height, config, particle_workload)) {
             const std::size_t one_based =
                 particle_workload.offending_effect
                         == (std::numeric_limits<std::size_t>::max)()
@@ -4098,9 +4144,11 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
     const StartingColorConfig& starting = config.starting_colors;
     const bool no_reference = starting.reference_width == 0
                               && starting.reference_height == 0
-                              && starting.reference_block_size == 0;
+                              && starting.reference_block_size == 0.0;
     const bool valid_reference = starting.reference_width > 0
                                  && starting.reference_height > 0
+                                 && std::isfinite(
+                                     starting.reference_block_size)
                                  && starting.reference_block_size > 0
                                  && starting.reference_block_size
                                         <= std::max(starting.reference_width,
@@ -4375,8 +4423,8 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
     std::size_t pixel_count = 0;
     std::size_t float_count = 0;
     std::size_t frame_bytes = 0;
-    if (!checked_multiply(static_cast<std::size_t>(view.width),
-                          static_cast<std::size_t>(view.height), pixel_count)
+    if (!checked_multiply(static_cast<std::size_t>(validation_width),
+                          static_cast<std::size_t>(validation_height), pixel_count)
         || !checked_multiply(pixel_count, 4U, float_count)
         || !checked_multiply(float_count, sizeof(float), frame_bytes)) {
         return invalid_result("The requested image dimensions overflow addressable memory.");
@@ -4413,9 +4461,9 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
     // small rolling-row cache whenever either consumer is enabled.
     if ((config.displacement_enabled || config.lighting_enabled)
         && has_enabled_wave(config)) {
-        const std::size_t block_size =
-            static_cast<std::size_t>(view.block_size);
-        const std::size_t width = static_cast<std::size_t>(view.width);
+        const std::size_t block_size = static_cast<std::size_t>(
+            std::max(1.0, std::floor(view.block_size)));
+        const std::size_t width = static_cast<std::size_t>(validation_width);
         const std::size_t block_columns =
             width / block_size + (width % block_size != 0U ? 1U : 0U);
         std::size_t node_columns = 0U;
@@ -4439,7 +4487,8 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
         && detail::opengl_surface_backend_compiled();
     if (uses_raster_mesh) {
         std::size_t occlusion_bytes = 0U;
-        if (!detail::mesh_occlusion_memory_requirements(view.width,view.height,occlusion_bytes)
+        if (!detail::mesh_occlusion_memory_requirements(
+                validation_width, validation_height, occlusion_bytes)
             || !checked_add(peak_bytes,occlusion_bytes,peak_bytes)) {
             return invalid_result("The mesh occlusion memory estimate overflowed.");
         }
@@ -4551,7 +4600,7 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
         std::size_t mesh_bytes = 0U;
         std::string mesh_error;
         if (!detail::displacement_mesh_requirements(
-                view.width, view.height,
+                validation_width, validation_height,
                 config.surface.plane_displacement.pixels_per_node,
                 columns, rows, mesh_bytes, &mesh_error)) {
             return invalid_result(mesh_error);
@@ -4567,7 +4616,8 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
         std::shared_ptr<const detail::ObjMesh> shared_mesh;
         if (inspect_assets && shared_memory
             && detail::load_displacement_plane_mesh(
-                config.surface.plane_displacement, view.width, view.height,
+                config.surface.plane_displacement,
+                validation_width, validation_height,
                 shared_mesh, nullptr, &mesh_error)) {
             if (!shared_memory->retain(shared_mesh, shared_mesh->estimated_bytes())) {
                 return invalid_result("The shared displacement memory estimate overflowed.");
@@ -4727,13 +4777,16 @@ std::uint64_t generated_block_count(const RenderConfig& config) {
         starting.reference_width > 0 ? starting.reference_width : config.width);
     const std::uint64_t reference_height = static_cast<std::uint64_t>(
         starting.reference_height > 0 ? starting.reference_height : config.height);
-    const std::uint64_t reference_block = static_cast<std::uint64_t>(
+    const double reference_block =
         starting.reference_block_size > 0
-            ? starting.reference_block_size : config.block_size);
+            ? static_cast<double>(starting.reference_block_size)
+            : config.block_size;
     const std::uint64_t blocks_across =
-        (reference_width + reference_block - 1U) / reference_block;
+        static_cast<std::uint64_t>(std::ceil(
+            static_cast<double>(reference_width) / reference_block));
     const std::uint64_t blocks_down =
-        (reference_height + reference_block - 1U) / reference_block;
+        static_cast<std::uint64_t>(std::ceil(
+            static_cast<double>(reference_height) / reference_block));
     return blocks_across * blocks_down;
 }
 
@@ -4828,9 +4881,10 @@ std::uint64_t generated_starting_color_index(
         starting.reference_width > 0 ? starting.reference_width : config.width);
     const std::uint64_t reference_height = static_cast<std::uint64_t>(
         starting.reference_height > 0 ? starting.reference_height : config.height);
-    const std::uint64_t reference_block = static_cast<std::uint64_t>(
+    const double reference_block =
         starting.reference_block_size > 0
-            ? starting.reference_block_size : config.block_size);
+            ? static_cast<double>(starting.reference_block_size)
+            : config.block_size;
     const std::uint64_t reference_x = std::min(
         reference_width - 1U,
         static_cast<std::uint64_t>(block_x) * reference_width
@@ -4839,12 +4893,14 @@ std::uint64_t generated_starting_color_index(
         reference_height - 1U,
         static_cast<std::uint64_t>(block_y) * reference_height
             / static_cast<std::uint64_t>(config.height));
-    const std::uint64_t blocks_across =
-        (reference_width + reference_block - 1U) / reference_block;
-    const std::uint64_t blocks_down =
-        (reference_height + reference_block - 1U) / reference_block;
-    const std::uint64_t x = reference_x / reference_block;
-    const std::uint64_t y = reference_y / reference_block;
+    const std::uint64_t blocks_across = static_cast<std::uint64_t>(
+        std::ceil(static_cast<double>(reference_width) / reference_block));
+    const std::uint64_t blocks_down = static_cast<std::uint64_t>(
+        std::ceil(static_cast<double>(reference_height) / reference_block));
+    const std::uint64_t x = static_cast<std::uint64_t>(std::floor(
+        static_cast<double>(reference_x) / reference_block));
+    const std::uint64_t y = static_cast<std::uint64_t>(std::floor(
+        static_cast<double>(reference_y) / reference_block));
     switch (starting.mode) {
         case StartingColorMode::HorizontalRainbow:
             return x * blocks_down + y;
@@ -5125,6 +5181,51 @@ std::array<double, 2U> shape_generated_coordinate(
     return {x, y};
 }
 
+std::uint64_t block_grid_hash(std::uint64_t value) {
+    value ^= value >> 30U;
+    value *= UINT64_C(0xbf58476d1ce4e5b9);
+    value ^= value >> 27U;
+    value *= UINT64_C(0x94d049bb133111eb);
+    return value ^ (value >> 31U);
+}
+
+std::vector<int> fractional_block_boundaries(
+    int extent, double requested_size, std::uint64_t seed) {
+    std::vector<int> boundaries;
+    boundaries.reserve(static_cast<std::size_t>(
+        std::ceil(static_cast<double>(extent) / requested_size)) + 1U);
+    boundaries.push_back(0);
+    if (std::floor(requested_size) == requested_size) {
+        const int span = static_cast<int>(requested_size);
+        for (int position = span; position < extent; position += span) {
+            boundaries.push_back(position);
+        }
+        boundaries.push_back(extent);
+        return boundaries;
+    }
+
+    // A phase-shifted cumulative lattice is both cheap and exactly
+    // reproducible on CPU/GPU. Adjacent spans are floor(size) or ceil(size),
+    // the long-span density converges to the fractional part, and clipping the
+    // final boundary makes the covered extent exact without holes/overdraw.
+    const std::uint64_t random = block_grid_hash(seed);
+    const double offset = static_cast<double>(random >> 11U)
+                          * 0x1.0p-53;
+    for (std::uint64_t index = 1U;; ++index) {
+        const double position_wide = std::floor(
+            static_cast<double>(index) * requested_size + offset);
+        int position = static_cast<int>(std::min(
+            static_cast<double>(extent), position_wide));
+        position = std::max(position, boundaries.back() + 1);
+        if (position >= extent) {
+            boundaries.push_back(extent);
+            break;
+        }
+        boundaries.push_back(position);
+    }
+    return boundaries;
+}
+
 void generate_base_image(const RenderConfig& config, double loop_phase,
                          double independent_loop_phase,
                          const MotionClockState& motion_clock,
@@ -5166,16 +5267,28 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         && has_contributing_wave(config);
     std::vector<WaveNode> current_wave_nodes;
     std::vector<WaveNode> next_wave_nodes;
-    const std::size_t block_size = static_cast<std::size_t>(config.block_size);
-    const std::size_t width = static_cast<std::size_t>(config.width);
-    const std::size_t block_columns =
-        width / block_size + (width % block_size != 0U ? 1U : 0U);
+    const bool fractional_blocks =
+        std::floor(config.block_size) != config.block_size;
+    const std::uint64_t synchronized_seed =
+        config.block_size_modulation.synchronized
+            ? static_cast<std::uint64_t>(std::llround(
+                  wrap_unit(loop_phase / kTau)
+                  * static_cast<double>(config.total_frames)))
+            : 0U;
+    const std::vector<int> x_boundaries = fractional_block_boundaries(
+        config.width, config.block_size,
+        UINT64_C(0x243f6a8885a308d3) ^ synchronized_seed);
+    const std::vector<int> y_boundaries = fractional_block_boundaries(
+        config.height, config.block_size,
+        UINT64_C(0x13198a2e03707344) ^ synchronized_seed);
+    const std::size_t block_columns = x_boundaries.size() - 1U;
     const auto populate_wave_row = [&](std::vector<WaveNode>& row,
                                        std::int64_t y) {
         for (std::size_t column = 0U; column < row.size(); ++column) {
             if ((column & 63U) == 0U) throw_if_cancelled(cancel);
-            const std::int64_t x = static_cast<std::int64_t>(column)
-                                   * config.block_size;
+            const std::int64_t x = column < x_boundaries.size()
+                ? static_cast<std::int64_t>(x_boundaries[column])
+                : static_cast<std::int64_t>(config.width);
             const double motion_phase = motion_clock.spatial_swings.empty()
                 ? motion_clock.global_phase
                 : motion_phase_at(
@@ -5192,23 +5305,28 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
         current_wave_nodes.resize(block_columns + 1U);
         next_wave_nodes.resize(block_columns + 1U);
         populate_wave_row(current_wave_nodes, 0);
-        populate_wave_row(next_wave_nodes, config.block_size);
+        populate_wave_row(next_wave_nodes,
+                          y_boundaries.size() > 1U ? y_boundaries[1U]
+                                                  : config.height);
     }
 
     std::size_t block_counter = 0U;
     std::size_t block_row_index = 0U;
-    for (std::int64_t block_y_wide = 0; block_y_wide < config.height;
-         block_y_wide += config.block_size, ++block_row_index) {
+    for (block_row_index = 0U; block_row_index + 1U < y_boundaries.size();
+         ++block_row_index) {
+        const std::int64_t block_y_wide = y_boundaries[block_row_index];
         const int block_y = static_cast<int>(block_y_wide);
         throw_if_cancelled(cancel);
         if (use_wave_node_cache && block_row_index != 0U) {
             current_wave_nodes.swap(next_wave_nodes);
             populate_wave_row(
-                next_wave_nodes, block_y_wide + config.block_size);
+                next_wave_nodes, y_boundaries[block_row_index + 1U]);
         }
-        std::size_t block_column_index = 0U;
-        for (std::int64_t block_x_wide = 0; block_x_wide < config.width;
-             block_x_wide += config.block_size, ++block_column_index) {
+        for (std::size_t block_column_index = 0U;
+             block_column_index + 1U < x_boundaries.size();
+             ++block_column_index) {
+            const std::int64_t block_x_wide =
+                x_boundaries[block_column_index];
             const int block_x = static_cast<int>(block_x_wide);
             const std::uint64_t starting_color_index =
                 generated_starting_color_index(config, block_x, block_y);
@@ -5415,13 +5533,28 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
             // Effects, surface lighting, and later stages remain free to create
             // colors outside the starting palette. Selecting once per block
             // also avoids the old width*height*palette-size restriction pass.
-            const int end_x = static_cast<int>(std::min<std::int64_t>(
-                block_x_wide + config.block_size, config.width));
-            const int end_y = static_cast<int>(std::min<std::int64_t>(
-                block_y_wide + config.block_size, config.height));
+            const int end_x = x_boundaries[block_column_index + 1U];
+            const int end_y = y_boundaries[block_row_index + 1U];
+            const bool vertical_transition = fractional_blocks
+                && block_column_index > 0U
+                && x_boundaries[block_column_index]
+                       - x_boundaries[block_column_index - 1U]
+                   != end_x - x_boundaries[block_column_index];
+            const bool horizontal_transition = fractional_blocks
+                && block_row_index > 0U
+                && y_boundaries[block_row_index]
+                       - y_boundaries[block_row_index - 1U]
+                   != end_y - y_boundaries[block_row_index];
             for (int y = block_y; y < end_y; ++y) {
                 throw_if_cancelled(cancel);
                 for (int x = block_x; x < end_x; ++x) {
+                    const bool seam =
+                        (vertical_transition && x == block_x)
+                        || (horizontal_transition && y == block_y);
+                    if (seam && config.block_size_modulation.alpha_gaps) {
+                        store_color(image, x, y, {});
+                        continue;
+                    }
                     Color output = base;
                     // Generating an alpha dimension is an explicit source
                     // choice, so it must not depend on the independent switch
@@ -5431,6 +5564,17 @@ void generate_base_image(const RenderConfig& config, double loop_phase,
                     const double source_alpha = use_base_alpha ? base.a : 1.0;
                     output.a = source_alpha
                                * alpha_at(config, x, y, loop_phase);
+                    if (seam) {
+                        const int prior_x = vertical_transition
+                            ? std::max(0, x - 1) : x;
+                        const int prior_y = horizontal_transition
+                            ? std::max(0, y - 1) : y;
+                        const Color prior = load_color(image, prior_x, prior_y);
+                        output.r = 0.5 * (output.r + prior.r);
+                        output.g = 0.5 * (output.g + prior.g);
+                        output.b = 0.5 * (output.b + prior.b);
+                        output.a = 0.5 * (output.a + prior.a);
+                    }
                     store_color(image, x, y, output);
                 }
             }
@@ -7964,6 +8108,77 @@ void apply_layer_motion(const Image& source, Image& destination,
     }
 }
 
+void make_blackout_image(Image& image, int width, int height) {
+    image.width = width;
+    image.height = height;
+    image.pixels.assign(static_cast<std::size_t>(width)
+                            * static_cast<std::size_t>(height) * 4U,
+                        0.0F);
+    for (std::size_t offset = 3U; offset < image.pixels.size(); offset += 4U) {
+        image.pixels[offset] = 1.0F;
+    }
+}
+
+void downsample_area(const Image& source, int width, int height,
+                     Image& destination, const std::atomic_bool* cancel) {
+    ensure_image(destination, width, height);
+    const double scale_x = static_cast<double>(source.width)
+                           / static_cast<double>(width);
+    const double scale_y = static_cast<double>(source.height)
+                           / static_cast<double>(height);
+    for (int y = 0; y < height; ++y) {
+        throw_if_cancelled(cancel);
+        const double source_y0 = static_cast<double>(y) * scale_y;
+        const double source_y1 = static_cast<double>(y + 1) * scale_y;
+        const int first_y = static_cast<int>(std::floor(source_y0));
+        const int last_y = static_cast<int>(std::ceil(source_y1));
+        for (int x = 0; x < width; ++x) {
+            const double source_x0 = static_cast<double>(x) * scale_x;
+            const double source_x1 = static_cast<double>(x + 1) * scale_x;
+            const int first_x = static_cast<int>(std::floor(source_x0));
+            const int last_x = static_cast<int>(std::ceil(source_x1));
+            double weight_sum = 0.0;
+            double alpha_sum = 0.0;
+            double red_sum = 0.0;
+            double green_sum = 0.0;
+            double blue_sum = 0.0;
+            for (int source_y = first_y; source_y < last_y; ++source_y) {
+                const double y_weight = std::max(
+                    0.0, std::min(source_y1, static_cast<double>(source_y + 1))
+                             - std::max(source_y0, static_cast<double>(source_y)));
+                if (y_weight == 0.0 || source_y < 0
+                    || source_y >= source.height) continue;
+                for (int source_x = first_x; source_x < last_x; ++source_x) {
+                    const double x_weight = std::max(
+                        0.0,
+                        std::min(source_x1, static_cast<double>(source_x + 1))
+                            - std::max(source_x0,
+                                       static_cast<double>(source_x)));
+                    if (x_weight == 0.0 || source_x < 0
+                        || source_x >= source.width) continue;
+                    const double weight = x_weight * y_weight;
+                    const Color sample = load_color(source, source_x, source_y);
+                    weight_sum += weight;
+                    alpha_sum += sample.a * weight;
+                    red_sum += sample.r * sample.a * weight;
+                    green_sum += sample.g * sample.a * weight;
+                    blue_sum += sample.b * sample.a * weight;
+                }
+            }
+            Color output;
+            if (weight_sum > 0.0) {
+                output.a = alpha_sum / weight_sum;
+                if (alpha_sum > 1.0e-20) {
+                    output.r = red_sum / alpha_sum;
+                    output.g = green_sum / alpha_sum;
+                    output.b = blue_sum / alpha_sum;
+                }
+            }
+            store_color(destination, x, y, output);
+        }
+    }
+}
+
 } // namespace
 
 namespace {
@@ -7996,11 +8211,13 @@ bool render_frame_at_timeline_sample_cancellable(
         const double independent_loop_phase =
             kTau * wrap_unit(timeline.independent_phase);
         const bool resolve_paths = has_enabled_path_binding(config);
+        const bool resolve_block_lfo =
+            config.block_size_modulation.lfo_enabled;
         std::optional<RenderConfig> resolved_storage;
         const RenderConfig* render_config = &config;
         const bool resolve_lfos = !parameter_lfos_already_resolved
             && detail::has_enabled_parameter_lfo(config);
-        if (resolve_lfos || resolve_paths) {
+        if (resolve_lfos || resolve_paths || resolve_block_lfo) {
             resolved_storage.emplace(config);
             if (resolve_lfos) {
                 materialize_parameter_lfos_in_place(
@@ -8020,6 +8237,17 @@ bool render_frame_at_timeline_sample_cancellable(
                     }
                 }
             }
+            if (resolve_block_lfo) {
+                resolved_storage->block_size = materialized_block_size(
+                    *resolved_storage, timeline.normalized_phase);
+                resolved_storage->block_size_modulation.lfo_enabled = false;
+                const ValidationResult resolved_validation =
+                    validate_impl(*resolved_storage, false);
+                if (!resolved_validation.ok) {
+                    set_error(error, resolved_validation.message);
+                    return false;
+                }
+            }
             render_config = &*resolved_storage;
         }
         const MotionClockState motion_clock =
@@ -8029,6 +8257,35 @@ bool render_frame_at_timeline_sample_cancellable(
                                   motion_clock);
         }
         const RenderConfig& render = *render_config;
+        if (render.block_size == 0.0) {
+            Image blackout;
+            make_blackout_image(blackout, render.width, render.height);
+            destination = std::move(blackout);
+            set_error(error, std::string{});
+            return true;
+        }
+        if (render.block_size < 1.0) {
+            RenderConfig supersampled = render;
+            const double scale = 1.0 / render.block_size;
+            supersampled.width = static_cast<int>(std::ceil(
+                static_cast<double>(render.width) * scale));
+            supersampled.height = static_cast<int>(std::ceil(
+                static_cast<double>(render.height) * scale));
+            supersampled.block_size = 1.0;
+            supersampled.block_size_modulation = {};
+            Image high_resolution;
+            if (!render_frame_at_timeline_sample_cancellable(
+                    supersampled, timeline, high_resolution, cancel,
+                    false, true, error)) {
+                return false;
+            }
+            Image reduced;
+            downsample_area(high_resolution, render.width, render.height,
+                            reduced, cancel);
+            destination = std::move(reduced);
+            set_error(error, std::string{});
+            return true;
+        }
         const AudioReactiveConfig& audio =
             effective_audio_reactive(render);
         Image current;
@@ -8091,8 +8348,11 @@ bool render_frame_at_timeline_sample_cancellable(
                 } else if (effect.type == EffectType::Blur) {
                     apply_blur(current, scratch, auxiliary, effect, cancel);
                 } else if (effect.type == EffectType::BlockScale) {
-                    apply_block_scale(current, scratch, effect, phase,
-                                      render.block_size, cancel);
+                    apply_block_scale(
+                        current, scratch, effect, phase,
+                        std::max(1, static_cast<int>(std::lround(
+                                        render.block_size))),
+                        cancel);
                     current.pixels.swap(scratch.pixels);
                 } else if (effect.type == EffectType::ParticleField) {
                     apply_particle_field(current, scratch, effect, phase, cancel);
@@ -8196,6 +8456,22 @@ RenderConfig materialize_parameter_lfos_at_frame(const RenderConfig& config,
     const TimelineSample timeline = resolve_timeline_sample(config,
                                                             frame_index);
     return materialize_parameter_lfos(config, timeline.normalized_phase);
+}
+
+RenderConfig materialize_block_size_modulation(
+    const RenderConfig& config, double normalized_phase) {
+    RenderConfig resolved = config;
+    resolved.block_size = materialized_block_size(config, normalized_phase);
+    resolved.block_size_modulation.lfo_enabled = false;
+    return resolved;
+}
+
+RenderConfig materialize_block_size_modulation_at_frame(
+    const RenderConfig& config, int frame_index) {
+    const TimelineSample timeline = resolve_timeline_sample(config,
+                                                            frame_index);
+    return materialize_block_size_modulation(config,
+                                             timeline.normalized_phase);
 }
 
 ValidationResult validate_frame_render_config(const RenderConfig& config) {
