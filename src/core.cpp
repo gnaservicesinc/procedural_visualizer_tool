@@ -8598,7 +8598,7 @@ bool prepare_frame_for_backend_timeline(const RenderConfig& config,
              amplitude, wave.spatial_frequency,
              radians(wave.phase_degrees), wave.direction,
              radians(wave.path.resolved_tangent_degrees),
-             wave.cycles_per_loop, wave.synchronized,
+             wave.cycles_per_loop, wave.synchronized != 0U,
              wave.path.enabled && wave.path.follow_tangent});
     }
 
