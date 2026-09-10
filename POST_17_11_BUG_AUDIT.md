@@ -72,8 +72,16 @@ configuration is defect-free. Power-loss fault injection for multi-file partial
 revision updates and every possible numeric GPU lattice boundary were not
 exhaustively tested.
 
-No version bump, commit, push, tag, or publication was performed. Windows and
-Linux native CI, including the Linux shared-library packaging jobs, must run on
-these fixes before cross-platform success or release readiness is claimed. Local
-Qt is 6.11.2; the reported CI workflow uses Qt 6.8.3. The public raw layout and
-existing format/version identifiers are unchanged.
+The fixes are committed and pushed to `main` as
+`75e71c84fc3c8493a07b1c241edc9ac65d718c41`. On 2026-09-10,
+[desktop CI run 34528905536](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34528905536)
+passed all five platforms: macOS arm64, Windows x64/arm64, and Linux x64/arm64.
+This includes native tests, both Linux shared-library packaging configurations,
+macOS package verification, and package uploads on every platform. The two
+previously failing macOS and Windows x64 jobs now pass.
+[CodeQL run 34528904870](https://github.com/gnaservicesinc/procedural_visualizer_tool/actions/runs/34528904870)
+also passed for that exact commit.
+
+Local Qt is 6.11.2; desktop CI uses Qt 6.8.3. The public raw layout and existing
+format/version identifiers are unchanged. No version bump, tag, or publication
+was performed; the tagged-release job was correctly skipped on this branch run.

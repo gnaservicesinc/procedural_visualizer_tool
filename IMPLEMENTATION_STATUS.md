@@ -20,8 +20,11 @@ loss during downsampling.
 Local verification is 43/43 native tests, 5/5 sanitizer suites, 12/12 repeated
 playback executions, and the self-contained 50-Mach-O macOS distribution with
 packaged en/de/fr smoke checks and CLI self-test. Regression tests were also
-verified to fail against the unchanged code. Windows/Linux CI and release work
-remain pending. See `POST_17_11_BUG_AUDIT.md` for findings, evidence and scope.
+verified to fail against the unchanged code. Fix commit `75e71c8` is pushed to
+`main`; desktop CI run `34528905536` passed all five native platforms, including
+both Linux shared-library packaging configurations and all package uploads.
+CodeQL run `34528904870` also passed. No release tag or publication was made.
+See `POST_17_11_BUG_AUDIT.md` for findings, evidence and scope.
 
 ## 18.0.0 fractional blocks, raw project I/O, and explicit history modes
 
