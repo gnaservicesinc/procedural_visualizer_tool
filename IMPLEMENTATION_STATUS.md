@@ -35,9 +35,27 @@ controller and passes with the fix; full-resolution float hashes are unchanged.
 These completed results are reused for release at the user's request, with no
 repeat local tests. The previously unrun detector-dialog test now also passes;
 new build checks cover C11, the Windows random branch, ABI sizes, and version
-metadata. Release preparation is underway; five-platform GitHub main CI must
-pass before tagging, followed by tagged CI, publication, and artifact checks.
-No local test suite is repeated.
+metadata. Release `v19.0.0` is published as the latest stable release, tagged at
+`8401cd68a107c3d40decb1092004065b6f5263bc`. Main desktop run `34540567937`
+and tagged run `34541378901` passed all five native platforms; CodeQL main run
+`34540568450` also passed. Each desktop matrix passed 43 Windows tests per
+architecture, 41 macOS tests, and 44 static plus 43 shared-library Linux tests
+per architecture, followed by installed-package checks.
+
+The initial standalone Windows run exposed inherited variable-length arrays and
+extra struct semicolons. Tracker commit `f0bed31dec980daca6fd5b82b900a03da4903aca`
+uses reusable, transactionally replaced scratch buffers and fixes the syntax;
+standalone run `34540551438` passed Linux, macOS, Windows, and sanitizers. PVT
+vendors that exact source. No local test suite was repeated for these repairs
+or release; the additional validation ran on GitHub.
+
+All five published packages and `SHA256SUMS.txt` were downloaded. Every checksum
+matched; all archives extracted with expected layouts, native ELF/PE/Mach-O
+architectures, GUI/CLI binaries, and Qt runtime/platform plugins. The macOS
+archive has version 19.0.0 metadata and passes deep strict code-signature
+verification. Packaged runtime self-tests and GUI smoke checks are evidenced by
+GitHub CI and were not rerun locally. Release:
+https://github.com/gnaservicesinc/procedural_visualizer_tool/releases/tag/v19.0.0
 See `PERFORMANCE_AUDIT.md` for the measured workload and output evidence.
 
 ## Post-17.11.0 build and regression audit
