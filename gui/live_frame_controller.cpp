@@ -1,4 +1,5 @@
 #include "live_frame_controller.h"
+#include "../src/frame_renderer_internal.h"
 #include "display_color.h"
 
 #include <QtConcurrent>
@@ -43,6 +44,7 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
         layer.render.starting_colors.reference_height =
             source_block_size > 0.0 ? source_height : 0;
         layer.render.starting_colors.reference_block_size = source_block_size;
+        pvt::detail::scale_parameter_lfo_target_ranges(layer.render, "block_size", scale);
         layer.render.displacement *= pixel_scale;
         for (auto& effect : layer.render.effects) {
             if (effect.type == pvt::EffectType::Glow

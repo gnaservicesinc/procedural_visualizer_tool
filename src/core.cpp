@@ -2007,7 +2007,7 @@ double materialized_block_size(const RenderConfig& config,
                      0.5 + 0.5 * wave);
 }
 
-void materialize_parameter_lfos_in_place(RenderData& render,
+void materialize_parameter_lfos_in_place(RenderConfig& render,
                                          double normalized_phase) {
     std::vector<ParameterLfo> resolved = std::move(render.parameter_lfos);
     render.parameter_lfos.clear();
@@ -2065,7 +2065,12 @@ void materialize_parameter_lfos_in_place(RenderData& render,
         }
         double value = 0.0;
         if (evaluate_parameter_lfo(lfo, loop_position, value)) {
-            (void)apply_lfo_target(render, lfo.target_path, value);
+            if (lfo.target_path == "block_size") {
+                render.block_size = clamp_value(
+                    value, 0.0, static_cast<double>(std::max(render.width, render.height)));
+            } else {
+                (void)apply_lfo_target(render, lfo.target_path, value);
+            }
         }
     }
 }
@@ -3167,6 +3172,7 @@ RenderConfig apply_global_config(const CanvasLoopConfig& canvas,
 bool parameter_lfo_target_supported(const RenderData& render,
                                     const std::string& target_path) {
     try {
+        if (target_path == "block_size") return true;
         std::uint64_t target_id = 0U;
         std::string_view property;
         if (split_parameter_lfo_target(target_path, target_id, property)) {
@@ -8496,6 +8502,34 @@ bool render_frame_at_timeline_sample_cancellable(
 } // namespace
 
 namespace detail {
+
+void scale_parameter_lfo_target_ranges(RenderData& render,
+                                        const std::string& target,
+                                        double scale) {
+    if (scale == 1.0 || std::none_of(render.parameter_lfos.begin(),
+            render.parameter_lfos.end(), [&](const ParameterLfo& lfo) {
+                return lfo.target_path == target;
+            })) return;
+    std::unordered_map<std::string, ParameterLfo*> destinations;
+    for (auto& lfo : render.parameter_lfos) {
+        destinations.emplace(lfo.target_path, &lfo);
+    }
+    std::vector<std::string> pending{target};
+    while (!pending.empty()) {
+        const auto found = destinations.find(pending.back());
+        pending.pop_back();
+        if (found == destinations.end()) continue;
+        auto& lfo = *found->second;
+        destinations.erase(found);
+        lfo.minimum *= scale;
+        lfo.maximum *= scale;
+        if (lfo.id != 0U) {
+            const std::string prefix = "lfo/" + std::to_string(lfo.id) + '/';
+            pending.push_back(prefix + "minimum");
+            pending.push_back(prefix + "maximum");
+        }
+    }
+}
 
 RenderConfig materialize_parameter_lfos(const RenderConfig& config,
                                         double normalized_phase) {

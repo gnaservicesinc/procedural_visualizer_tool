@@ -5885,26 +5885,6 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+3"/>
-        <source>Block Size LFO</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+23"/>
-        <source>Assign sensible LFO</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Creates a uniquely named, loop-safe one-cycle sine LFO around the current block size.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+9"/>
-        <source>Shape</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <location line="+4"/>
         <source>Canvas and timeline</source>
         <translation type="unfinished"></translation>
@@ -7584,11 +7564,6 @@ Project UUID: %2
     <message>
         <location line="+1"/>
         <source>Copy project audio response</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+5"/>
-        <source>Block Size Pulse</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -12554,6 +12529,34 @@ Run it directly for the default relative output, or pass an output file or direc
         <location line="-18154"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Add LFO…</source>
+        <translation type="unfinished" />
+    </message>
+    <message>
+        <source>Add or edit Block size LFO</source>
+        <translation type="unfinished" />
+    </message>
+    <message>
+        <source>Animate Block size on the selected layer using the LFO editor. The project value remains the fallback.</source>
+        <translation type="unfinished" />
+    </message>
+    <message>
+        <source>Canvas</source>
+        <translation type="unfinished" />
+    </message>
+    <message>
+        <source>Canvas — Block size</source>
+        <translation type="unfinished" />
+    </message>
+    <message>
+        <source>Add numeric LFO</source>
+        <translation type="unfinished" />
+    </message>
+    <message>
+        <source>Edit LFO…</source>
+        <translation type="unfinished" />
     </message>
 </context>
 <context>

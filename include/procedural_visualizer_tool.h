@@ -1738,7 +1738,10 @@ struct ExportConfig {
     int filename_digits = 4;
 };
 
-// Optional project-wide modulation for the source block size. The authored
+// Legacy project-wide block-size oscillator state, retained for file/API
+// compatibility. New authoring uses ParameterLfo's "block_size" destination;
+// the GUI converts existing oscillators to normal LFOs when loading a project.
+// The synchronized and alpha_gaps grid options remain current. The authored
 // block_size remains the fallback when this is disabled. Keeping this on the
 // canvas (rather than one layer) guarantees that every layer uses the same
 // stochastic grid and avoids paint-order-dependent global state.
@@ -1792,6 +1795,7 @@ struct CanvasLoopConfig {
 // A layer-local low-frequency oscillator drives one stable target. Render
 // paths use the same reorder-safe keys as Live controls, relative to the owning
 // layer (for example "surface.rotation_y" or "effect/42/intensity"). An
+// "block_size" uses the canvas value as this layer's authored fallback. An
 // "lfo/42/maximum" path can instead drive a setting on another LFO. Integer
 // and categorical targets round the evaluated value at the point of use.
 // Integer cycles preserve a seamless project loop.

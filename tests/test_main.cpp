@@ -102,6 +102,104 @@ void make_small(pvt::RenderConfig& config) {
     config.fps = 24.0;
 }
 
+void test_block_size_parameter_lfo() {
+    auto animated = pvt::default_config();
+    make_small(animated);
+    animated.output.write_alpha = true;
+    pvt::ParameterLfo lfo;
+    lfo.id = 101U;
+    lfo.target_path = "block_size";
+    lfo.minimum = 0.0;
+    lfo.maximum = 5.0;
+    lfo.phase_degrees = -90.0;
+    animated.parameter_lfos = {lfo};
+    CHECK(pvt::parameter_lfo_target_supported(animated, "block_size"));
+    CHECK(pvt::validate(animated).ok);
+    std::string error;
+    pvt::FrameRenderOptions cpu;
+    cpu.backend = pvt::RenderBackend::Cpu;
+    for (auto waveform : {pvt::Waveform::Sine, pvt::Waveform::Triangle,
+                          pvt::Waveform::SmoothPulse, pvt::Waveform::Bounce,
+                          pvt::Waveform::Square, pvt::Waveform::SawtoothUp,
+                          pvt::Waveform::SawtoothDown}) {
+        animated.parameter_lfos.front().waveform = waveform;
+        for (double phase : {0.0, 0.25, 0.5, 0.75, 1.0}) {
+            const auto resolved = pvt::detail::materialize_parameter_lfos(animated, phase);
+            CHECK(resolved.parameter_lfos.empty());
+            CHECK(resolved.block_size >= 0.0 && resolved.block_size <= 5.0);
+            auto legacy = animated;
+            legacy.parameter_lfos.clear();
+            legacy.block_size_modulation.lfo_enabled = true;
+            legacy.block_size_modulation.waveform = waveform;
+            legacy.block_size_modulation.minimum = 0.0;
+            legacy.block_size_modulation.maximum = 5.0;
+            legacy.block_size_modulation.phase_degrees = -90.0;
+            CHECK(pvt::detail::materialize_block_size_modulation(legacy, phase).block_size
+                  == resolved.block_size);
+            pvt::Image expected, actual, selected;
+            CHECK(pvt::render_frame_at_phase(resolved, phase, expected, &error));
+            CHECK(pvt::render_frame_at_phase(animated, phase, actual, &error));
+            CHECK(pvt::render_frame_at_phase(animated, phase, cpu, selected, nullptr, &error));
+            CHECK(actual.pixels == expected.pixels);
+            CHECK(selected.pixels == expected.pixels);
+        }
+    }
+    // All normal timing and controller behavior applies to Block size too.
+    auto& block = animated.parameter_lfos.front();
+    block.waveform = pvt::Waveform::Square;
+    block.minimum = 1.0;
+    block.maximum = 6.0;
+    block.phase_degrees = 0.0;
+    block.delay_fraction = 0.5;
+    block.skip_cycles = 1;
+    CHECK(pvt::detail::materialize_parameter_lfos(animated, 0.0).block_size == 6.0);
+    CHECK(pvt::detail::materialize_parameter_lfos(animated, 0.4).block_size == 4.0);
+    CHECK(pvt::detail::materialize_parameter_lfos(animated, 0.75).block_size == 4.0);
+    block.enabled = false;
+    CHECK(pvt::detail::materialize_parameter_lfos(animated, 0.0).block_size == 4.0);
+    pvt::ParameterLfo enable;
+    enable.id = 102U;
+    enable.target_path = "lfo/101/enabled";
+    enable.minimum = enable.maximum = 1.0;
+    animated.parameter_lfos.push_back(enable);
+    pvt::ParameterLfo maximum = enable;
+    maximum.id = 103U;
+    maximum.target_path = "lfo/101/maximum";
+    maximum.minimum = maximum.maximum = 8.0;
+    animated.parameter_lfos.push_back(maximum);
+    CHECK(pvt::detail::materialize_parameter_lfos(animated, 0.0).block_size == 8.0);
+    CHECK(animated.block_size == 4.0 && !animated.parameter_lfos.front().enabled);
+    std::string serialized;
+    CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
+    pvt::RenderConfig reloaded;
+    CHECK(pvt::detail::deserialize_setup_config(serialized, reloaded, &error));
+    CHECK(reloaded.parameter_lfos.size() == 3U);
+    CHECK(pvt::detail::materialize_parameter_lfos(reloaded, 0.0).block_size == 8.0);
+    auto scaled = animated;
+    pvt::detail::scale_parameter_lfo_target_ranges(scaled, "block_size", 0.25);
+    CHECK(scaled.parameter_lfos[0].minimum == 0.25);
+    CHECK(scaled.parameter_lfos[0].maximum == 1.5);
+    CHECK(scaled.parameter_lfos[1].maximum == 1.0); // Enabled is unitless.
+    CHECK(scaled.parameter_lfos[2].maximum == 2.0);
+    CHECK(pvt::detail::materialize_parameter_lfos(scaled, 0.0).block_size == 2.0);
+
+    // Enabling Block size through another LFO must also bypass project blackout.
+    auto project = pvt::default_project();
+    project.canvas.width = animated.width;
+    project.canvas.height = animated.height;
+    project.canvas.block_size = 0.0;
+    project.output.write_alpha = true;
+    project.layers.front().render = animated;
+    pvt::Image actual, expected;
+    const auto config = pvt::apply_global_config(project.canvas, project.output,
+                                                project.layers.front().render);
+    CHECK(pvt::render_frame_at_phase(config, 0.0, expected, &error));
+    CHECK(pvt::render_project_frame_at_phase(project, 0.0, actual, nullptr, &error));
+    CHECK(actual.pixels == expected.pixels);
+    CHECK(pvt::render_project_frame_at_phase(project, 0.0, cpu, actual, nullptr, &error));
+    CHECK(actual.pixels == expected.pixels);
+}
+
 void test_parameter_lfos() {
     pvt::RenderConfig animated = pvt::default_config();
     make_small(animated);
@@ -8052,6 +8150,7 @@ int main(int argc, char** argv) {
     CHECK(!ignored);
 
     test_defaults_and_dynamic_collections();
+    test_block_size_parameter_lfo();
     test_parameter_lfos();
     test_lfo_destination_probe_isolation();
     test_validation_clock_isolation();

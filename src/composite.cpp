@@ -43,7 +43,14 @@ bool render_project_blackout_if_requested(
     const std::atomic_bool* cancel, std::string* error, bool& handled,
     const FrameRenderOptions* options = nullptr) {
     handled = project.canvas.block_size == 0.0
-              && !project.canvas.block_size_modulation.lfo_enabled;
+              && !project.canvas.block_size_modulation.lfo_enabled
+              && std::none_of(project.layers.begin(), project.layers.end(),
+                  [](const LayerConfig& layer) {
+                      // A controller can enable an otherwise disabled LFO.
+                      return std::any_of(layer.render.parameter_lfos.begin(),
+                          layer.render.parameter_lfos.end(),
+                          [](const ParameterLfo& lfo) { return lfo.target_path == "block_size"; });
+                  });
     if (!handled) return true;
     if (options != nullptr && !validate_project_frame_options(*options, error)) {
         return false;

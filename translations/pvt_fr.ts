@@ -5893,26 +5893,6 @@ Surveillance de la dernière image valide</translation>
         <translation>Cadence de lecture (images/s)</translation>
     </message>
     <message>
-        <location line="+3"/>
-        <source>Block Size LFO</source>
-        <translation>LFO de taille de bloc</translation>
-    </message>
-    <message>
-        <location line="+23"/>
-        <source>Assign sensible LFO</source>
-        <translation>Attribuer un LFO pertinent</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Creates a uniquely named, loop-safe one-cycle sine LFO around the current block size.</source>
-        <translation>Crée autour de la taille de bloc actuelle un LFO sinusoïdal d’un cycle, bouclable et portant un nom unique.</translation>
-    </message>
-    <message>
-        <location line="+9"/>
-        <source>Shape</source>
-        <translation>Forme</translation>
-    </message>
-    <message>
         <location line="+4"/>
         <source>Canvas and timeline</source>
         <translation>Canevas et chronologie</translation>
@@ -7598,11 +7578,6 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <location line="+1"/>
         <source>Copy project audio response</source>
         <translation>Copier la réponse audio du projet</translation>
-    </message>
-    <message>
-        <location line="+5"/>
-        <source>Block Size Pulse</source>
-        <translation>Pulsation de la taille de bloc</translation>
     </message>
     <message>
         <location line="+166"/>
@@ -12590,6 +12565,34 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <location line="-18154"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation>Filtre les destinations disponibles. La destination actuelle reste sélectionnée jusqu’à ce que vous en choisissiez une autre.</translation>
+    </message>
+    <message>
+        <source>Add LFO…</source>
+        <translation>Ajouter un LFO…</translation>
+    </message>
+    <message>
+        <source>Add or edit Block size LFO</source>
+        <translation>Ajouter ou modifier le LFO de taille des blocs</translation>
+    </message>
+    <message>
+        <source>Animate Block size on the selected layer using the LFO editor. The project value remains the fallback.</source>
+        <translation>Anime la taille des blocs du calque sélectionné dans l’éditeur de LFO. La valeur du projet reste la valeur de repli.</translation>
+    </message>
+    <message>
+        <source>Canvas</source>
+        <translation>Canevas</translation>
+    </message>
+    <message>
+        <source>Canvas — Block size</source>
+        <translation>Canevas — Taille des blocs</translation>
+    </message>
+    <message>
+        <source>Add numeric LFO</source>
+        <translation>Ajouter un LFO numérique</translation>
+    </message>
+    <message>
+        <source>Edit LFO…</source>
+        <translation>Modifier le LFO…</translation>
     </message>
 </context>
 <context>

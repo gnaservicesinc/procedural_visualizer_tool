@@ -38,7 +38,12 @@ Version 18.0.0 makes block size a true floating-point control. Decimal, typed
 fraction, mixed-number, and common Unicode fraction input is accepted throughout
 the decimal editors. Fractional grids distribute floor/ceiling block sizes,
 support blended seams or alpha holes, and can follow the project clock or a
-dedicated named LFO. Values below one use subpixel supersampling; zero is an
+standard numeric LFO. Use **Add LFO…** beside **Block size** to create and edit
+an LFO for the selected layer; the same LFO appears under toolbar **LFOs…**
+and supports all normal waveforms, timing, and LFO-to-LFO controls. The project
+Block size value remains the authored fallback. Existing project-wide block-size
+oscillators are converted to ordinary LFOs on each layer when opened in the editor.
+Values below one use subpixel supersampling; zero without modulation is an
 immediate BLACKOUT path that skips rendering. Numeric fields that display Auto
 or another named minimum reveal the actual numeric value while editing.
 

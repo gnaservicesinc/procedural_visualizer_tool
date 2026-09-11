@@ -344,6 +344,11 @@ struct PreparedFrame {
     LayerMotionConfig motion;
 };
 
+// Scale a pixel-valued destination and the ranges of any LFOs controlling its
+// minimum/maximum. Timing and waveform controllers retain their own units.
+PVT_API void scale_parameter_lfo_target_ranges(RenderData& render,
+                                               const std::string& target,
+                                               double scale);
 // Materializes layer-local parameter LFOs into a render-only copy. Authored
 // values and the saved oscillator definitions remain unchanged.
 PVT_API RenderConfig materialize_parameter_lfos(const RenderConfig& config,

@@ -197,6 +197,23 @@ int main(int argc, char** argv) {
     pvt::FrameRenderOptions gpu;
     gpu.backend = pvt::RenderBackend::Gpu;
 
+    for (double size : {0.0, 0.5, 2.5, 12.0}) {
+        auto animated_block = analytic_config(pvt::SurfaceMapping::Plane);
+        pvt::ParameterLfo block_lfo;
+        block_lfo.id = 100U;
+        block_lfo.target_path = "block_size";
+        block_lfo.minimum = block_lfo.maximum = size;
+        animated_block.parameter_lfos = {block_lfo};
+        auto static_block = animated_block;
+        static_block.parameter_lfos.clear();
+        static_block.block_size = size;
+        pvt::Image animated_image, static_image;
+        std::string error;
+        CHECK(pvt::render_frame(animated_block, 5, gpu, animated_image, nullptr, &error));
+        CHECK(pvt::render_frame(static_block, 5, gpu, static_image, nullptr, &error));
+        CHECK(animated_image.pixels == static_image.pixels);
+    }
+
     const std::vector<pvt::SurfaceMapping> accelerated_mappings = {
         pvt::SurfaceMapping::Plane, pvt::SurfaceMapping::Cylinder,
         pvt::SurfaceMapping::Sphere, pvt::SurfaceMapping::Cube};

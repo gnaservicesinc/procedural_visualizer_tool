@@ -19,6 +19,7 @@
 #include "../src/config_codec.h"
 #include "../src/displacement_surface.h"
 #include "../src/effect_parameter_domain.h"
+#include "../src/frame_renderer_internal.h"
 #include "../src/palette_io.h"
 #include "../src/post_process_alpha.h"
 #include "../src/project_bundle.h"
@@ -1756,6 +1757,7 @@ void scale_project_for_preview(pvt::ProjectConfig& project) {
         layer.render.starting_colors.reference_height =
             source_block_size > 0.0 ? source_height : 0;
         layer.render.starting_colors.reference_block_size = source_block_size;
+        pvt::detail::scale_parameter_lfo_target_ranges(layer.render, "block_size", scale);
         layer.render.displacement *= pixel_scale;
         for (auto& effect : layer.render.effects) {
             if (effect.type == pvt::EffectType::Glow
@@ -6248,7 +6250,17 @@ QWidget* MainWindow::createOutputPage() {
     effective_frames_->setWordWrap(true);
     canvas->addRow(tr("Width"), width_);
     canvas->addRow(tr("Height"), height_);
-    canvas->addRow(tr("Block size"), block_size_);
+    auto* block_size_row = new QWidget;
+    auto* block_size_layout = new QHBoxLayout(block_size_row);
+    block_size_layout->setContentsMargins(0, 0, 0, 0);
+    block_size_layout->addWidget(block_size_, 1);
+    assign_block_size_lfo_ = new QPushButton(tr("Add LFO…"));
+    assign_block_size_lfo_->setObjectName(QStringLiteral("blockSizeLfoButton"));
+    assign_block_size_lfo_->setAccessibleName(tr("Add or edit Block size LFO"));
+    assign_block_size_lfo_->setToolTip(tr(
+        "Animate Block size on the selected layer using the LFO editor. The project value remains the fallback."));
+    block_size_layout->addWidget(assign_block_size_lfo_);
+    canvas->addRow(tr("Block size"), block_size_row);
     block_size_sync_ = new QCheckBox(
         tr("Sync fractional grid changes to the project clock"));
     block_size_sync_->setToolTip(tr(
@@ -6263,43 +6275,6 @@ QWidget* MainWindow::createOutputPage() {
     canvas->addRow(tr("Effective duration"), effective_frames_);
     canvas->addRow(tr("Playback FPS"), fps_);
     canvas_layout->addWidget(canvas_group);
-
-    auto* block_lfo_group = new QGroupBox(tr("Block Size LFO"));
-    auto* block_lfo_form = new QFormLayout(block_lfo_group);
-    block_size_lfo_enabled_ = new QCheckBox(tr("Enabled"));
-    block_size_lfo_name_ = new QLineEdit;
-    block_size_lfo_name_->setMaxLength(static_cast<int>(kMaximumNameBytes));
-    block_size_lfo_waveform_ = new QComboBox;
-    add_enum_item(block_size_lfo_waveform_, tr("Sine"), pvt::Waveform::Sine);
-    add_enum_item(block_size_lfo_waveform_, tr("Triangle"), pvt::Waveform::Triangle);
-    add_enum_item(block_size_lfo_waveform_, tr("Smooth pulse"),
-                  pvt::Waveform::SmoothPulse);
-    add_enum_item(block_size_lfo_waveform_, tr("Square"), pvt::Waveform::Square);
-    add_enum_item(block_size_lfo_waveform_, tr("Sawtooth up"),
-                  pvt::Waveform::SawtoothUp);
-    add_enum_item(block_size_lfo_waveform_, tr("Sawtooth down"),
-                  pvt::Waveform::SawtoothDown);
-    block_size_lfo_minimum_ = real_editor(
-        0.0, static_cast<double>((std::numeric_limits<int>::max)()), 6, 0.25);
-    block_size_lfo_maximum_ = real_editor(
-        0.0, static_cast<double>((std::numeric_limits<int>::max)()), 6, 0.25);
-    block_size_lfo_cycles_ = integer_editor(1, (std::numeric_limits<int>::max)());
-    block_size_lfo_phase_ = real_editor(
-        -kMaximumRenderParameter, kMaximumRenderParameter, 6, 1.0);
-    block_size_lfo_shape_ = real_editor(0.0, 1.0, 6, 0.01);
-    assign_block_size_lfo_ = new QPushButton(tr("Assign sensible LFO"));
-    assign_block_size_lfo_->setToolTip(tr(
-        "Creates a uniquely named, loop-safe one-cycle sine LFO around the current block size."));
-    block_lfo_form->addRow(QString{}, block_size_lfo_enabled_);
-    block_lfo_form->addRow(tr("Name"), block_size_lfo_name_);
-    block_lfo_form->addRow(tr("Waveform"), block_size_lfo_waveform_);
-    block_lfo_form->addRow(tr("Minimum"), block_size_lfo_minimum_);
-    block_lfo_form->addRow(tr("Maximum"), block_size_lfo_maximum_);
-    block_lfo_form->addRow(tr("Cycles per loop"), block_size_lfo_cycles_);
-    block_lfo_form->addRow(tr("Phase (degrees)"), block_size_lfo_phase_);
-    block_lfo_form->addRow(tr("Shape"), block_size_lfo_shape_);
-    block_lfo_form->addRow(QString{}, assign_block_size_lfo_);
-    canvas_layout->addWidget(block_lfo_group);
 
     auto* export_canvas_group = new QGroupBox(tr("Canvas and timeline"));
     auto* export_canvas_layout = new QVBoxLayout(export_canvas_group);
@@ -8101,7 +8076,7 @@ void MainWindow::createToolbar() {
     toolbar->addAction(lfo_action);
     toolbar->addSeparator();
     connect(lfo_action, &QAction::triggered, this,
-            &MainWindow::showParameterLfoEditor);
+            [this] { showParameterLfoEditor(); });
     export_settings_action_ = toolbar->addAction(tr("Export Settings…"));
     export_settings_action_->setObjectName(QStringLiteral("exportSettingsAction"));
     export_settings_action_->setToolTip(
@@ -8373,7 +8348,7 @@ void MainWindow::showAboutDialog() {
     dialog.exec();
 }
 
-void MainWindow::showParameterLfoEditor() {
+void MainWindow::showParameterLfoEditor(const QString& requested_target) {
     const pvt::LayerConfig* layer = activeLayer();
     if (layer == nullptr) {
         QMessageBox::information(
@@ -8412,11 +8387,52 @@ void MainWindow::showParameterLfoEditor() {
              target.kind, target.minimum, target.maximum,
              target.current_value});
     }
+    base_choices.push_back({
+        tr("Canvas"), QStringLiteral("block_size"),
+        tr("Canvas — Block size"), LiveTargetKind::Real, 0.0,
+        static_cast<double>(std::max(config_.width, config_.height)), config_.block_size});
     if (base_choices.empty()) {
         QMessageBox::information(
             this, tr("No numeric targets"),
             tr("This layer does not currently expose a numeric LFO target."));
         return;
+    }
+
+    const auto make_lfo = [](const TargetChoice& choice, std::uint64_t id) {
+        pvt::ParameterLfo lfo;
+        lfo.id = id;
+        lfo.target_path = choice.path.toStdString();
+        if (choice.minimum == 0.0 && choice.maximum == 1.0) {
+            lfo.minimum = 0.0;
+            lfo.maximum = 1.0;
+        } else {
+            const double radius = std::max(1.0, std::fabs(choice.current) * 0.5);
+            lfo.minimum = std::clamp(choice.current - radius, choice.minimum, choice.maximum);
+            lfo.maximum = std::clamp(choice.current + radius, choice.minimum, choice.maximum);
+        }
+        return lfo;
+    };
+
+    if (!requested_target.isEmpty()) {
+        const auto existing = std::find_if(
+            config_.parameter_lfos.begin(), config_.parameter_lfos.end(),
+            [&requested_target](const pvt::ParameterLfo& lfo) {
+                return lfo.target_path == requested_target.toStdString();
+            });
+        const auto choice = std::find_if(base_choices.begin(), base_choices.end(),
+            [&requested_target](const TargetChoice& value) {
+                return value.path == requested_target;
+            });
+        if (existing == config_.parameter_lfos.end() && choice != base_choices.end()) {
+            auto before = captureActiveState();
+            config_.parameter_lfos.push_back(make_lfo(
+                *choice, pvt::allocate_parameter_lfo_id(config_)));
+            syncActiveRender();
+            loadGlobalEditors();
+            preview_->setConfiguration(config_);
+            schedulePreview();
+            recordActiveStateChange(tr("Add numeric LFO"), std::move(before));
+        }
     }
 
     QDialog dialog(this);
@@ -8444,6 +8460,7 @@ void MainWindow::showParameterLfoEditor() {
     auto* list_buttons = new QHBoxLayout;
     auto* add = new QPushButton(tr("Add LFO"), &dialog);
     auto* remove = new QPushButton(tr("Remove"), &dialog);
+    remove->setObjectName(QStringLiteral("parameterLfoRemove"));
     list_buttons->addWidget(add);
     list_buttons->addWidget(remove);
     left->addLayout(list_buttons);
@@ -8459,6 +8476,7 @@ void MainWindow::showParameterLfoEditor() {
     auto* form = new QFormLayout(editor);
     form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
     auto* enabled = new QCheckBox(tr("Enabled"), editor);
+    enabled->setObjectName(QStringLiteral("parameterLfoEnabled"));
     auto* target_group = new QComboBox(editor);
     target_group->setObjectName(QStringLiteral("parameterLfoTargetGroup"));
     target_group->setToolTip(tr(
@@ -8768,24 +8786,12 @@ void MainWindow::showParameterLfoEditor() {
                 tr("Remove or retarget an existing LFO before adding another."));
             return;
         }
-        pvt::ParameterLfo lfo;
-        lfo.id = allocate_lfo_id();
+        pvt::ParameterLfo lfo = make_lfo(*available, allocate_lfo_id());
         if (lfo.id == 0U) {
             QMessageBox::warning(
                 &dialog, tr("Cannot add LFO"),
                 tr("The layer has exhausted the available LFO identities."));
             return;
-        }
-        lfo.target_path = available->path.toStdString();
-        if (available->minimum == 0.0 && available->maximum == 1.0) {
-            lfo.minimum = 0.0;
-            lfo.maximum = 1.0;
-        } else {
-            const double radius = std::max(1.0, std::fabs(available->current) * 0.5);
-            lfo.minimum = std::clamp(available->current - radius,
-                                     available->minimum, available->maximum);
-            lfo.maximum = std::clamp(available->current + radius,
-                                     available->minimum, available->maximum);
         }
         edited.push_back(std::move(lfo));
         list->addItem(QString{});
@@ -9028,7 +9034,12 @@ void MainWindow::showParameterLfoEditor() {
         dialog.accept();
     });
     if (!edited.empty()) {
-        list->setCurrentRow(0);
+        const auto requested = std::find_if(edited.begin(), edited.end(),
+            [&requested_target](const pvt::ParameterLfo& lfo) {
+                return lfo.target_path == requested_target.toStdString();
+            });
+        list->setCurrentRow(requested == edited.end()
+            ? 0 : static_cast<int>(requested - edited.begin()));
     } else {
         rebuild_choices(-1, {});
         load_row(-1);
@@ -9037,6 +9048,7 @@ void MainWindow::showParameterLfoEditor() {
 
     auto before = captureActiveState();
     config_.parameter_lfos = std::move(edited);
+    loadGlobalEditors();
     ensureAlphaForTransparency();
     syncActiveRender();
     syncProjectGlobals();
@@ -9785,33 +9797,10 @@ void MainWindow::connectEditors() {
     });
 
     connect(assign_block_size_lfo_, &QPushButton::clicked, this, [this] {
-        QString name = tr("Block Size Pulse");
-        const double authored = block_size_->value();
-        const double center = authored > 0.0 ? authored : 16.0;
-        const double maximum_canvas = static_cast<double>(
-            std::max(width_->value(), height_->value()));
-        const QSignalBlocker enabled_blocker(block_size_lfo_enabled_);
-        const QSignalBlocker name_blocker(block_size_lfo_name_);
-        const QSignalBlocker waveform_blocker(block_size_lfo_waveform_);
-        const QSignalBlocker minimum_blocker(block_size_lfo_minimum_);
-        const QSignalBlocker maximum_blocker(block_size_lfo_maximum_);
-        const QSignalBlocker cycles_blocker(block_size_lfo_cycles_);
-        const QSignalBlocker phase_blocker(block_size_lfo_phase_);
-        const QSignalBlocker shape_blocker(block_size_lfo_shape_);
-        block_size_lfo_enabled_->setChecked(true);
-        block_size_lfo_name_->setText(name);
-        select_enum(block_size_lfo_waveform_, pvt::Waveform::Sine);
-        block_size_lfo_minimum_->setValue(std::max(0.0, center * 0.5));
-        block_size_lfo_maximum_->setValue(
-            std::min(maximum_canvas, center * 1.5));
-        block_size_lfo_cycles_->setValue(1);
-        block_size_lfo_phase_->setValue(0.0);
-        block_size_lfo_shape_->setValue(0.5);
-        applyGlobalEditor(block_size_lfo_enabled_);
+        showParameterLfoEditor(QStringLiteral("block_size"));
     });
 
     for (auto* editor : {width_, height_, frames_, spiral_arms_, hue_cycles_,
-                         block_size_lfo_cycles_,
                          kaleidoscope_segments_, domain_warp_octaves_,
                          domain_warp_cycles_,
                          surface_rotation_x_turns_,
@@ -9828,8 +9817,6 @@ void MainWindow::connectEditors() {
                 [this, editor] { applyGlobalEditor(editor); });
     }
     for (auto* editor : {block_size_, fps_, displacement_, wave_depth_, spiral_frequency_,
-                         block_size_lfo_minimum_, block_size_lfo_maximum_,
-                         block_size_lfo_phase_, block_size_lfo_shape_,
                          wall_frequency_, wall_mix_, saturation_, surface_curvature_,
                          kaleidoscope_rotation_, kaleidoscope_mix_,
                          domain_warp_strength_, domain_warp_scale_,
@@ -9870,7 +9857,6 @@ void MainWindow::connectEditors() {
                 [this, editor] { applyGlobalEditor(editor); });
     }
     for (auto* editor : {block_size_sync_, block_size_alpha_gaps_,
-                         block_size_lfo_enabled_,
                          displacement_enabled_, lighting_enabled_, spiral_enabled_,
                          wall_enabled_, surface_enabled_, post_invert_rgb_enabled_,
                          surface_plane_displacement_enabled_,
@@ -9914,8 +9900,7 @@ void MainWindow::connectEditors() {
             &MainWindow::showMotionPathEditor);
     connect(starting_image_enabled_, &QCheckBox::toggled, this,
             [this] { applyGlobalEditor(starting_image_enabled_); });
-    for (auto* editor : {block_size_lfo_waveform_,
-                         surface_mapping_, surface_projection_,
+    for (auto* editor : {surface_mapping_, surface_projection_,
                          surface_sizing_, surface_outside_,
                          surface_rotation_order_,
                          surface_environment_encoding_,
@@ -9939,11 +9924,6 @@ void MainWindow::connectEditors() {
         updateOutputEditorValidity();
         if (prefix_->hasAcceptableInput()) {
             applyGlobalEditor(prefix_);
-        }
-    });
-    connect(block_size_lfo_name_, &QLineEdit::editingFinished, this, [this] {
-        if (!block_size_lfo_name_->text().trimmed().isEmpty()) {
-            applyGlobalEditor(block_size_lfo_name_);
         }
     });
     connect(surface_obj_path_, &QLineEdit::editingFinished, this, [this] {
@@ -10176,6 +10156,40 @@ const pvt::LayerConfig* MainWindow::activeLayer() const {
 void MainWindow::loadActiveConfiguration() {
     if (project_.layers.empty()) {
         project_.layers.push_back(pvt::default_layer(0));
+    }
+    const auto& legacy_block = project_.canvas.block_size_modulation;
+    const pvt::BlockSizeModulation default_block;
+    if (legacy_block.lfo_enabled || legacy_block.lfo_name != default_block.lfo_name
+        || legacy_block.waveform != default_block.waveform
+        || legacy_block.minimum != default_block.minimum
+        || legacy_block.maximum != default_block.maximum
+        || legacy_block.cycles_per_loop != default_block.cycles_per_loop
+        || legacy_block.phase_degrees != default_block.phase_degrees
+        || legacy_block.shape != default_block.shape) {
+        for (auto& project_layer : project_.layers) {
+            auto& lfos = project_layer.render.parameter_lfos;
+            auto found = std::find_if(lfos.begin(), lfos.end(),
+                [](const pvt::ParameterLfo& lfo) { return lfo.target_path == "block_size"; });
+            if (found != lfos.end() && !legacy_block.lfo_enabled) continue;
+            pvt::ParameterLfo lfo;
+            lfo.id = found == lfos.end()
+                ? pvt::allocate_parameter_lfo_id(project_layer.render) : found->id;
+            lfo.target_path = "block_size";
+            lfo.enabled = legacy_block.lfo_enabled;
+            lfo.waveform = legacy_block.waveform;
+            lfo.minimum = legacy_block.minimum;
+            lfo.maximum = legacy_block.maximum;
+            lfo.cycles_per_loop = legacy_block.cycles_per_loop;
+            lfo.phase_degrees = legacy_block.phase_degrees;
+            lfo.shape = legacy_block.shape;
+            if (found == lfos.end()) lfos.push_back(std::move(lfo));
+            else *found = std::move(lfo);
+        }
+        const bool synchronized = legacy_block.synchronized;
+        const bool alpha_gaps = legacy_block.alpha_gaps;
+        project_.canvas.block_size_modulation = {};
+        project_.canvas.block_size_modulation.synchronized = synchronized;
+        project_.canvas.block_size_modulation.alpha_gaps = alpha_gaps;
     }
     if (activeLayer() == nullptr) {
         active_layer_uuid_ = project_.layers.back().uuid;
@@ -14622,22 +14636,10 @@ void MainWindow::loadGlobalEditors() {
         config_.block_size_modulation.synchronized);
     block_size_alpha_gaps_->setChecked(
         config_.block_size_modulation.alpha_gaps);
-    block_size_lfo_enabled_->setChecked(
-        config_.block_size_modulation.lfo_enabled);
-    block_size_lfo_name_->setText(QString::fromStdString(
-        config_.block_size_modulation.lfo_name));
-    select_enum(block_size_lfo_waveform_,
-                config_.block_size_modulation.waveform);
-    block_size_lfo_minimum_->setValue(
-        config_.block_size_modulation.minimum);
-    block_size_lfo_maximum_->setValue(
-        config_.block_size_modulation.maximum);
-    block_size_lfo_cycles_->setValue(
-        config_.block_size_modulation.cycles_per_loop);
-    block_size_lfo_phase_->setValue(
-        config_.block_size_modulation.phase_degrees);
-    block_size_lfo_shape_->setValue(
-        config_.block_size_modulation.shape);
+    const bool has_block_lfo = std::any_of(
+        config_.parameter_lfos.begin(), config_.parameter_lfos.end(),
+        [](const pvt::ParameterLfo& lfo) { return lfo.target_path == "block_size"; });
+    assign_block_size_lfo_->setText(has_block_lfo ? tr("Edit LFO…") : tr("Add LFO…"));
     frames_->setValue(config_.total_frames);
     fps_->setValue(config_.fps);
     if (standardMicRoute(false) != nullptr) {
@@ -17393,27 +17395,9 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == block_size_) {
         config_.block_size = block_size_->value();
     } else if (changed_editor == block_size_sync_
-               || changed_editor == block_size_alpha_gaps_
-               || changed_editor == block_size_lfo_enabled_
-               || changed_editor == block_size_lfo_name_
-               || changed_editor == block_size_lfo_waveform_
-               || changed_editor == block_size_lfo_minimum_
-               || changed_editor == block_size_lfo_maximum_
-               || changed_editor == block_size_lfo_cycles_
-               || changed_editor == block_size_lfo_phase_
-               || changed_editor == block_size_lfo_shape_) {
-        pvt::BlockSizeModulation& block = config_.block_size_modulation;
-        block.synchronized = block_size_sync_->isChecked();
-        block.alpha_gaps = block_size_alpha_gaps_->isChecked();
-        block.lfo_enabled = block_size_lfo_enabled_->isChecked();
-        block.lfo_name = block_size_lfo_name_->text().trimmed().toStdString();
-        block.waveform = static_cast<pvt::Waveform>(
-            block_size_lfo_waveform_->currentData().toInt());
-        block.minimum = block_size_lfo_minimum_->value();
-        block.maximum = block_size_lfo_maximum_->value();
-        block.cycles_per_loop = block_size_lfo_cycles_->value();
-        block.phase_degrees = block_size_lfo_phase_->value();
-        block.shape = block_size_lfo_shape_->value();
+               || changed_editor == block_size_alpha_gaps_) {
+        config_.block_size_modulation.synchronized = block_size_sync_->isChecked();
+        config_.block_size_modulation.alpha_gaps = block_size_alpha_gaps_->isChecked();
     } else if (changed_editor == frames_) {
         config_.total_frames = frames_->value();
     } else if (changed_editor == fps_) {
@@ -21843,6 +21827,131 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    const ProjectDocumentState before_block_lfo = captureProjectState();
+    const std::string before_block_layer = active_layer_uuid_;
+    project_ = pvt::default_project();
+    project_.canvas.width = 64;
+    project_.canvas.height = 64;
+    project_.canvas.block_size = 8.0;
+    project_.layers.push_back(pvt::default_layer(1U));
+    active_layer_uuid_ = project_.layers.front().uuid;
+    loadActiveConfiguration();
+    refreshAll();
+    clearUndoHistory(false);
+    bool block_lfo_valid = block_size_->parentWidget() == assign_block_size_lfo_->parentWidget();
+    for (const auto* group : project_canvas_page_->findChildren<QGroupBox*>()) {
+        block_lfo_valid = block_lfo_valid && group->title() != QStringLiteral("Block Size LFO");
+    }
+    const auto exercise_block_lfo = [&](bool shortcut, int operation) {
+        bool inspected = false;
+        QTimer::singleShot(0, this, [&, operation] {
+            auto* dialog = findChild<QDialog*>(QStringLiteral("parameterLfoDialog"));
+            if (dialog == nullptr) return;
+            auto* list = dialog->findChild<QListWidget*>(QStringLiteral("parameterLfoList"));
+            auto* target = dialog->findChild<QComboBox*>(QStringLiteral("parameterLfoTarget"));
+            auto* wave = dialog->findChild<QComboBox*>(QStringLiteral("parameterLfoWaveform"));
+            auto* minimum = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("parameterLfoMinimum"));
+            auto* maximum = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("parameterLfoMaximum"));
+            auto* delay = dialog->findChild<QDoubleSpinBox*>(QStringLiteral("parameterLfoDelay"));
+            auto* skip = dialog->findChild<QSpinBox*>(QStringLiteral("parameterLfoSkipCycles"));
+            auto* enabled = dialog->findChild<QCheckBox*>(QStringLiteral("parameterLfoEnabled"));
+            auto* remove = dialog->findChild<QPushButton*>(QStringLiteral("parameterLfoRemove"));
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            inspected = list && list->count() == 1 && list->currentRow() == 0
+                && target && target->currentData().toString() == QStringLiteral("block_size")
+                && wave && wave->count() == 7 && minimum && maximum && delay && skip
+                && delay->isEnabled() && skip->isEnabled() && enabled && remove && buttons;
+            if (!inspected) { dialog->reject(); return; }
+            if (operation == 0) { // Cancel edits after the shortcut's assignment.
+                minimum->setValue(0.5);
+                dialog->reject();
+                return;
+            }
+            if (operation == 1) {
+                wave->setCurrentIndex(wave->findData(static_cast<int>(pvt::Waveform::Square)));
+                minimum->setValue(1.0);
+                maximum->setValue(6.0);
+                delay->setValue(25.0);
+                skip->setValue(1);
+            } else if (operation == 2) {
+                enabled->setChecked(false);
+            } else if (operation == 3) {
+                remove->click();
+                inspected = list->count() == 0;
+            }
+            buttons->button(QDialogButtonBox::Ok)->click();
+        });
+        if (shortcut) assign_block_size_lfo_->click();
+        else findChild<QAction*>(QStringLiteral("parameterLfoAction"))->trigger();
+        return inspected;
+    };
+    block_lfo_valid = exercise_block_lfo(true, 0) && block_lfo_valid
+        && config_.parameter_lfos.size() == 1U
+        && config_.parameter_lfos.front().target_path == "block_size"
+        && config_.parameter_lfos.front().minimum == 4.0
+        && config_.parameter_lfos.front().maximum == 12.0
+        && config_.parameter_lfos.front().id != 0U
+        && config_.block_size == 8.0 && !config_.block_size_modulation.lfo_enabled;
+    if (block_lfo_valid) {
+        const auto id = config_.parameter_lfos.front().id;
+        const int undo_index = undo_stack_->index();
+        block_lfo_valid = exercise_block_lfo(true, 0)
+            && undo_stack_->index() == undo_index
+            && config_.parameter_lfos.size() == 1U
+            && config_.parameter_lfos.front().id == id
+            && exercise_block_lfo(false, 1)
+            && config_.parameter_lfos.front().waveform == pvt::Waveform::Square
+            && config_.parameter_lfos.front().delay_fraction == 0.25
+            && config_.parameter_lfos.front().skip_cycles == 1;
+        std::string saved_block_lfo;
+        pvt::RenderData reloaded_block_lfo;
+        block_lfo_valid = block_lfo_valid
+            && pvt::detail::serialize_layer_config(config_, saved_block_lfo)
+            && pvt::detail::deserialize_layer_config(saved_block_lfo, reloaded_block_lfo)
+            && render_data_equal(config_, reloaded_block_lfo,
+                                 &config_.motion_paths, &config_.motion_paths);
+        undo_stack_->undo();
+        block_lfo_valid = block_lfo_valid && config_.parameter_lfos.front().minimum == 4.0;
+        undo_stack_->redo();
+        block_lfo_valid = block_lfo_valid && config_.parameter_lfos.front().minimum == 1.0;
+        selectLayer(project_.layers.back().uuid);
+        block_lfo_valid = block_lfo_valid && config_.parameter_lfos.empty()
+            && assign_block_size_lfo_->text() == tr("Add LFO…");
+        selectLayer(project_.layers.front().uuid);
+        block_lfo_valid = block_lfo_valid && config_.parameter_lfos.front().id == id
+            && assign_block_size_lfo_->text() == tr("Edit LFO…")
+            && exercise_block_lfo(false, 2) && !config_.parameter_lfos.front().enabled
+            && exercise_block_lfo(true, 0) && !config_.parameter_lfos.front().enabled
+            && exercise_block_lfo(false, 3) && config_.parameter_lfos.empty();
+        undo_stack_->undo();
+        block_lfo_valid = block_lfo_valid && config_.parameter_lfos.size() == 1U
+            && config_.parameter_lfos.front().id == id;
+    }
+    // Older project-wide animation becomes ordinary LFOs on every layer.
+    for (auto& project_layer : project_.layers) project_layer.render.parameter_lfos.clear();
+    project_.canvas.block_size_modulation.lfo_enabled = true;
+    project_.canvas.block_size_modulation.minimum = 2.0;
+    project_.canvas.block_size_modulation.maximum = 10.0;
+    project_.canvas.block_size_modulation.waveform = pvt::Waveform::Triangle;
+    loadActiveConfiguration();
+    block_lfo_valid = block_lfo_valid && !project_.canvas.block_size_modulation.lfo_enabled;
+    for (const auto& project_layer : project_.layers) {
+        block_lfo_valid = block_lfo_valid && project_layer.render.parameter_lfos.size() == 1U
+            && project_layer.render.parameter_lfos.front().target_path == "block_size"
+            && project_layer.render.parameter_lfos.front().minimum == 2.0
+            && project_layer.render.parameter_lfos.front().maximum == 10.0
+            && project_layer.render.parameter_lfos.front().waveform == pvt::Waveform::Triangle;
+    }
+    loadActiveConfiguration();
+    block_lfo_valid = block_lfo_valid && config_.parameter_lfos.size() == 1U;
+    restoreProjectState(before_block_lfo, before_block_layer);
+    clearUndoHistory(false);
+    undo_stack_->setClean();
+    if (!block_lfo_valid) {
+        if (error != nullptr) *error = QStringLiteral(
+            "Block size shortcut lost normal LFO creation, toolbar visibility, editing, removal, migration, or undo.");
+        return false;
+    }
     const ActiveDocumentState before_phase_arrangement = captureActiveState();
     const std::string phase_arrangement_layer = active_layer_uuid_;
     pvt::ParameterLfo phase_first;
@@ -22941,6 +23050,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
     preview_scale_probe.canvas.block_size_modulation.lfo_enabled = true;
     preview_scale_probe.canvas.block_size_modulation.minimum = 16.0;
     preview_scale_probe.canvas.block_size_modulation.maximum = 3840.0;
+    pvt::ParameterLfo preview_block_lfo;
+    preview_block_lfo.target_path = "block_size";
+    preview_block_lfo.minimum = 16.0;
+    preview_block_lfo.maximum = 3840.0;
+    preview_scale_probe.layers.front().render.parameter_lfos = {preview_block_lfo};
     preview_scale_probe.layers.front().render.displacement = 40.0;
     preview_scale_probe.layers.front().render.effects.clear();
     auto preview_particle = pvt::default_effect(pvt::EffectType::ParticleField);
@@ -22957,6 +23071,8 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || preview_scale_probe.canvas.block_size != 3
         || preview_scale_probe.canvas.block_size_modulation.minimum != 3.0
         || preview_scale_probe.canvas.block_size_modulation.maximum != 720.0
+        || preview_scale_probe.layers.front().render.parameter_lfos.front().minimum != 3.0
+        || preview_scale_probe.layers.front().render.parameter_lfos.front().maximum != 720.0
         || std::abs(preview_scale_probe.layers.front().render.displacement
                     - 7.5) > 1.0e-12
         || std::abs(preview_scale_probe.layers.front().render.effects[0U]

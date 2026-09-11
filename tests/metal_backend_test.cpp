@@ -158,6 +158,24 @@ void test_backend_contract() {
         return;
     }
 
+    for (double size : {0.0, 0.5, 2.5, 12.0}) {
+        auto animated_block = parity_config();
+        pvt::ParameterLfo block_lfo;
+        block_lfo.id = 100U;
+        block_lfo.target_path = "block_size";
+        block_lfo.minimum = block_lfo.maximum = size;
+        animated_block.parameter_lfos = {block_lfo};
+        auto static_block = animated_block;
+        static_block.parameter_lfos.clear();
+        static_block.block_size = size;
+        pvt::Image animated_image, static_image;
+        CHECK(pvt::render_frame(animated_block, 6, gpu_options,
+                                animated_image, nullptr, &error));
+        CHECK(pvt::render_frame(static_block, 6, gpu_options,
+                                static_image, nullptr, &error));
+        CHECK(animated_image.pixels == static_image.pixels);
+    }
+
     pvt::Image gpu;
     CHECK(pvt::render_frame(config, 6, gpu_options, gpu, nullptr, &error));
     check_close(cpu, gpu, 0.12, 0.012, 0.002, 0.0002,

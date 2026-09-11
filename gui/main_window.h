@@ -289,7 +289,7 @@ private:
     void showApplicationSettings();
     void showAboutDialog();
     void showMotionPathEditor();
-    void showParameterLfoEditor();
+    void showParameterLfoEditor(const QString& requested_target = {});
     bool hasCustomNewProjectDefaults() const;
     std::unique_ptr<pvt::ProjectDocument> makeNewProjectDocument(
         QString* warning = nullptr) const;
@@ -779,14 +779,6 @@ private:
     QDoubleSpinBox* block_size_ = nullptr;
     QCheckBox* block_size_sync_ = nullptr;
     QCheckBox* block_size_alpha_gaps_ = nullptr;
-    QCheckBox* block_size_lfo_enabled_ = nullptr;
-    QLineEdit* block_size_lfo_name_ = nullptr;
-    QComboBox* block_size_lfo_waveform_ = nullptr;
-    QDoubleSpinBox* block_size_lfo_minimum_ = nullptr;
-    QDoubleSpinBox* block_size_lfo_maximum_ = nullptr;
-    QSpinBox* block_size_lfo_cycles_ = nullptr;
-    QDoubleSpinBox* block_size_lfo_phase_ = nullptr;
-    QDoubleSpinBox* block_size_lfo_shape_ = nullptr;
     QPushButton* assign_block_size_lfo_ = nullptr;
     QSpinBox* frames_ = nullptr;
     QLabel* effective_frames_ = nullptr;

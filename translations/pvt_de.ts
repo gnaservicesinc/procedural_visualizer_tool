@@ -5893,26 +5893,6 @@ Last-good watchdog</source>
         <translation>Wiedergabe (Bilder/s)</translation>
     </message>
     <message>
-        <location line="+3"/>
-        <source>Block Size LFO</source>
-        <translation>Blockgrößen-LFO</translation>
-    </message>
-    <message>
-        <location line="+23"/>
-        <source>Assign sensible LFO</source>
-        <translation>Sinnvollen LFO zuweisen</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Creates a uniquely named, loop-safe one-cycle sine LFO around the current block size.</source>
-        <translation>Erstellt einen eindeutig benannten, schleifensicheren Sinus-LFO mit einem Zyklus um die aktuelle Blockgröße.</translation>
-    </message>
-    <message>
-        <location line="+9"/>
-        <source>Shape</source>
-        <translation>Form</translation>
-    </message>
-    <message>
         <location line="+4"/>
         <source>Canvas and timeline</source>
         <translation>Leinwand und Zeitleiste</translation>
@@ -7598,11 +7578,6 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
         <location line="+1"/>
         <source>Copy project audio response</source>
         <translation>Projekt-Audioreaktion kopieren</translation>
-    </message>
-    <message>
-        <location line="+5"/>
-        <source>Block Size Pulse</source>
-        <translation>Blockgrößenpuls</translation>
     </message>
     <message>
         <location line="+166"/>
@@ -12590,6 +12565,34 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
         <location line="-18154"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation>Filtert die verfügbaren Ziele. Das aktuelle Ziel bleibt ausgewählt, bis Sie ein anderes wählen.</translation>
+    </message>
+    <message>
+        <source>Add LFO…</source>
+        <translation>LFO hinzufügen…</translation>
+    </message>
+    <message>
+        <source>Add or edit Block size LFO</source>
+        <translation>LFO für die Blockgröße hinzufügen oder bearbeiten</translation>
+    </message>
+    <message>
+        <source>Animate Block size on the selected layer using the LFO editor. The project value remains the fallback.</source>
+        <translation>Animiert die Blockgröße auf der ausgewählten Ebene mit dem LFO-Editor. Der Projektwert bleibt der Rückfallwert.</translation>
+    </message>
+    <message>
+        <source>Canvas</source>
+        <translation>Leinwand</translation>
+    </message>
+    <message>
+        <source>Canvas — Block size</source>
+        <translation>Leinwand — Blockgröße</translation>
+    </message>
+    <message>
+        <source>Add numeric LFO</source>
+        <translation>Numerischen LFO hinzufügen</translation>
+    </message>
+    <message>
+        <source>Edit LFO…</source>
+        <translation>LFO bearbeiten…</translation>
     </message>
 </context>
 <context>
