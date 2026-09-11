@@ -10158,7 +10158,7 @@ void MainWindow::loadActiveConfiguration() {
         project_.layers.push_back(pvt::default_layer(0));
     }
     const auto& legacy_block = project_.canvas.block_size_modulation;
-    const pvt::BlockSizeModulation default_block;
+    const pvt::BlockSizeModulation default_block{};
     if (legacy_block.lfo_enabled || legacy_block.lfo_name != default_block.lfo_name
         || legacy_block.waveform != default_block.waveform
         || legacy_block.minimum != default_block.minimum
