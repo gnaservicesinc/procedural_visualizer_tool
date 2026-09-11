@@ -2364,6 +2364,14 @@ Last-good watchdog</source>
         <source> · default</source>
         <translation> · Standard</translation>
     </message>
+    <message>
+        <source>WAITING FOR AUDIO</source>
+        <translation>WARTE AUF AUDIO</translation>
+    </message>
+    <message>
+        <source>Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission.</source>
+        <translation>Warte auf Live-Audio; die Animation verwendet den Projekttakt. Prüfen Sie den ausgewählten Audioeingang und die Mikrofonberechtigung.</translation>
+    </message>
 </context>
 <context>
     <name>MainWindow</name>

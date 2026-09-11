@@ -1,3 +1,9 @@
+procedural-visualizer-tool (19.0.1) stonking; urgency=medium
+
+  * New upstream release.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Thu, 10 Sep 2026 19:58:22 -0400
+
 procedural-visualizer-tool (19.0.0) stonking; urgency=medium
 
   * Add maintained onset detectors and Music detection controls.

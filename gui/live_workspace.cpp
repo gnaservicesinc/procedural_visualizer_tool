@@ -514,6 +514,7 @@ struct LiveWorkspace::Impl {
     pvt::display::DeliveredFrameRate delivered_frame_rate;
     QImage last_image;
     pvt::audio::LiveAudioSnapshot audio_snapshot;
+    bool audio_frame_presented = false;
     std::vector<pvt::audio::LiveAudioDevice> audio_devices;
     QString runtime_input_signature;
     QSet<QString> route_warnings;
@@ -2016,7 +2017,8 @@ bool LiveWorkspace::Impl::effectiveAudioClockReceiving() const {
 }
 
 bool LiveWorkspace::Impl::shouldHoldAudioFrame() const {
-    if (!active || config.safety.dropout_behavior
+    if (!active || !audio_frame_presented
+        || config.safety.dropout_behavior
                        != pvt::LiveDropoutBehavior::LastGoodFrame) {
         return false;
     }
@@ -2699,6 +2701,7 @@ void LiveWorkspace::Impl::resetRealtimeFrame() {
     ++render_generation;
     renderer.cancelCurrent();
     last_image = {};
+    audio_frame_presented = false;
     stage.clearFrame();
     last_good_clock.invalidate();
     presented_frame_clock.invalidate();
@@ -2745,6 +2748,11 @@ void LiveWorkspace::Impl::stopIo() {
 void LiveWorkspace::Impl::restartAudio() {
     if (!active) return;
     audio.stop();
+    audio_snapshot = {};
+    // A new input must establish its own last-good frame. Holding before the
+    // first callback can leave startup permanently waiting for a nonexistent
+    // image (missing device, denied permission, or a delayed frequency stream).
+    audio_frame_presented = false;
     if (audio_role->currentData().toString().isEmpty()) {
         audio_lamp->setState(StatusLamp::State::Off);
         audio_lamp->setToolTip(LiveWorkspace::tr("Add or select an Audio input role."));
@@ -3148,6 +3156,9 @@ void LiveWorkspace::Impl::frameFinished(
         return;
     }
     last_image = result.image;
+    if (active && audio_snapshot.receiving && effectiveAudioClockReceiving()) {
+        audio_frame_presented = true;
+    }
     emit q->livePreviewFrame(result.image);
     render_failed = false;
     last_good_clock.restart();
@@ -3184,6 +3195,15 @@ void LiveWorkspace::Impl::frameFinished(
             adaptive_scale = std::min(1.0, adaptive_scale * 1.1);
             good_streak = 0;
         }
+    }
+    render_lamp->setToolTip({});
+    if (active && !audio_frame_presented
+        && std::any_of(config.clock_inputs.begin(), config.clock_inputs.end(),
+                       [this](const auto& input) { return effectiveAudioRoute(input); })) {
+        render_lamp->setState(StatusLamp::State::Warning);
+        render_lamp->setText(LiveWorkspace::tr("WAITING FOR AUDIO"));
+        render_lamp->setToolTip(LiveWorkspace::tr(
+            "Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission."));
     }
     if (active) updateSafety();
 }
@@ -3284,7 +3304,9 @@ void LiveWorkspace::Impl::updateSafety() {
         [this](const pvt::LiveClockInputConfig& item) {
             return effectiveAudioRoute(item);
         });
-    if (audio_clock_enabled) {
+    if (audio_clock_enabled
+        && (audio_frame_presented
+            || config.safety.dropout_behavior == pvt::LiveDropoutBehavior::Blackout)) {
         const std::string selected_role = narrow(
             audio_role->currentData().toString());
         bool bindings_match = true;

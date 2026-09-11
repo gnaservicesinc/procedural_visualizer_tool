@@ -1057,6 +1057,28 @@ if(BUILD_TESTING)
             ProceduralVisualizerTool::ProceduralVisualizerTool Qt6::Gui Qt6::Concurrent)
         pvt_enable_warnings(pvt_live_frame_controller_tests)
         add_test(NAME pvt_live_frame_controller COMMAND pvt_live_frame_controller_tests)
+        add_executable(pvt_live_workspace_tests
+            tests/live_workspace_test.cpp
+            gui/live_workspace.cpp gui/live_frame_controller.cpp
+            gui/live_midi.h ${PVT_GUI_MIDI_SOURCES}
+            gui/live_osc.cpp gui/live_scene_morph.cpp gui/live_target_registry.cpp
+            gui/stage_output_window.cpp gui/studio_widgets.cpp
+            gui/audio_processing_dialog.cpp gui/flexible_spin_box.cpp
+            gui/device_sleep_guard.cpp)
+        set_target_properties(pvt_live_workspace_tests PROPERTIES AUTOMOC ON)
+        target_compile_features(pvt_live_workspace_tests PRIVATE cxx_std_17)
+        target_include_directories(pvt_live_workspace_tests PRIVATE gui src)
+        target_link_libraries(pvt_live_workspace_tests PRIVATE
+            ProceduralVisualizerTool::Bundle ProceduralVisualizerTool::Audio
+            Qt6::Widgets Qt6::Network Qt6::Concurrent)
+        if(APPLE)
+            target_link_libraries(pvt_live_workspace_tests PRIVATE
+                "-framework CoreMIDI" "-framework IOKit")
+        endif()
+        pvt_enable_warnings(pvt_live_workspace_tests)
+        add_test(NAME pvt_live_workspace COMMAND pvt_live_workspace_tests)
+        set_tests_properties(pvt_live_workspace PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 30)
         add_executable(pvt_palette_remix_tests tests/palette_remix_test.cpp)
         target_compile_features(pvt_palette_remix_tests PRIVATE cxx_std_17)
         set_target_properties(pvt_palette_remix_tests PROPERTIES

@@ -2360,6 +2360,14 @@ Last-good watchdog</source>
         <source> · default</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>WAITING FOR AUDIO</source>
+        <translation>WAITING FOR AUDIO</translation>
+    </message>
+    <message>
+        <source>Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission.</source>
+        <translation>Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission.</translation>
+    </message>
 </context>
 <context>
     <name>MainWindow</name>

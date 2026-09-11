@@ -125,3 +125,13 @@ whose provenance was incomplete.
    the intended source changes, push atomically, and confirm the tag-triggered
    native package workflow starts. Do not claim remote packages have passed
    until that workflow and its release assets have actually completed.
+
+## 19.0.1 startup without an audio input
+
+With LastGoodFrame selected, Live keeps the project-clock animation running
+until the selected audio input has supplied a displayed frame. A missing device,
+denied microphone permission, or delayed input shows WAITING FOR AUDIO with
+input guidance. After input is established, callback loss still holds the last
+good frame according to the authored holdover and timeout. Explicit Blackout
+policy still applies while waiting for input. Rebinding/restarting an input
+begins a fresh startup period and clears stale input samples.

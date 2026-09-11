@@ -2364,6 +2364,14 @@ Surveillance de la dernière image valide</translation>
         <source> · default</source>
         <translation> · par défaut</translation>
     </message>
+    <message>
+        <source>WAITING FOR AUDIO</source>
+        <translation>EN ATTENTE DU SIGNAL AUDIO</translation>
+    </message>
+    <message>
+        <source>Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission.</source>
+        <translation>En attente du signal audio en direct ; l’animation utilise l’horloge du projet. Vérifiez l’entrée audio sélectionnée et l’autorisation d’accès au microphone.</translation>
+    </message>
 </context>
 <context>
     <name>MainWindow</name>

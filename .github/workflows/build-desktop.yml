@@ -544,6 +544,8 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 19.0.1 fixes Live Controls getting stuck at STARTING when an audio input is unavailable before the first frame. Animation now follows the project clock while waiting for input, with a visible WAITING FOR AUDIO status. After input is established, the authored dropout protection still applies; explicit Blackout remains available. Startup, stop, restart, and advancing output are covered by a workspace regression, including the supplied Wood project.
+
           Version 19.0.0 adds a maintained PVT onset-detection module with Hybrid, Spectral flux, Neighbor flux, and High-frequency flux choices in project and active-layer Music processing. The choice applies to named frequency ranges and is saved with the analysis. Changes commit only after successful reanalysis; old projects keep Hybrid and their existing cached beat tables. Tracker callbacks now follow actual FFT hops independently of input buffer size, startup timestamp underflow is prevented, and stream reset clears partial analysis history. The retained tempo/beat observer remains attributed to its original MIT-licensed source. Live capture continues using its separate causal analyzer.
 
           The new public audio setting changes C++ structure layouts, so the library ABI and runtime package advance to SONAME 19. Library consumers must rebuild. Existing raw project layout 1 remains readable; layout 2 appends the five detector values, and missing text settings default to Hybrid.

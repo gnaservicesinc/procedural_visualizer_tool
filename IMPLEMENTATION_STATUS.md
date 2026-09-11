@@ -6,6 +6,31 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 19.0.1 Live startup recovery
+
+Performance Live could remain at STARTING with zero frames when an audio input
+was unavailable and its holdover elapsed before the first render completed.
+Both request and completion paths applied LastGoodFrame before a last-good
+input frame existed, discarding the first image and suppressing later requests.
+Live now uses the deterministic project clock until the selected input has
+supplied a displayed frame. Restarting or explicitly changing the input clears
+that startup state and stale audio snapshots. Established-input dropout hold,
+explicit Blackout policy, render watchdogs, and timed last-good protection remain
+in effect. The input-wait status and guidance are translated into English,
+German, and French.
+
+A hardware-independent workspace regression uses an unavailable device and
+holds the first worker beyond audio holdover. It checks advancing images,
+visible program output, stop, and restart. The original 19.0.0 workspace fails
+with zero frames; the corrected workspace passes with both a generated project
+and the supplied Wood project. Wood remains an external test input and is not
+modified or committed. A fresh macOS Release build passes all 45 CTest checks,
+including Cocoa GUI smoke in English, German, and French, Metal parity, and the
+Live startup/Blackout regression. The final Wood run also passes. The macOS
+distribution verifier passes all 50 Mach-O files; deep strict signing, the
+packaged 19.0.1 CLI self-test, and packaged Cocoa GUI smoke also pass. Remote CI and release assets
+remain pending until the tag-triggered workflow finishes.
+
 ## 19.0.0 maintained Music detection and preview performance
 
 The maintained tracker now supplies a PVT-owned C onset front end with spectral,
