@@ -25,6 +25,8 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
+    env:
+      QT_VERSION: ${{ matrix.qt-version || '6.8.3' }}
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +66,7 @@ jobs:
             archive: procedural-visualizer-tool-windows-arm64.zip
           - name: macOS arm64
             os: xcode-27
+            qt-version: 6.11.2
             qt-source: archive
             qt-host: mac
             qt-arch: clang_64

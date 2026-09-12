@@ -267,7 +267,6 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
     if (remote_bridge_->activeControlSlot() != 0) return fail(QStringLiteral("MIDI selected an unknown profile."));
     // Exercise the actual pairing manager actions and file dialogs using the
     // same public profiles as the extension. No network settings are entered.
-    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
     const auto remote_file = temporary.path() + "/display.pvtremote";
     const auto host_file = temporary.path() + "/desktop.pvthost";
     QFile pairing(remote_file);
@@ -275,6 +274,7 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
     pairing.write(QJsonDocument(profiles[1].toObject()).toJson());
     pairing.close();
     bool paired = false;
+    QString pairing_stage = QStringLiteral("open manager");
     QTimer::singleShot(0, &guard, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
@@ -288,24 +288,50 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
             else if (button->objectName() == "remoteRemove") remove = button;
         }
         if (!list || !enable || !buttons || !remove || !import || !export_host) { dialog->reject(); return; }
+        pairing_stage = QStringLiteral("remove display");
         list->setCurrentRow(1);
         remove->click();
         if (!spin([&] { return import->isEnabled() && list->count() == 1; })) { dialog->reject(); return; }
         if (remote_bridge_->authorized(display, "background")) { dialog->reject(); return; }
+        pairing_stage = QStringLiteral("disable networking");
         enable->setChecked(false);
         buttons->button(QDialogButtonBox::Apply)->click();
         if (!spin([&] { return import->isEnabled() && !remote_bridge_->enabled(); })) { dialog->reject(); return; }
         const auto choose = [&](const QString& path) {
-            QTimer::singleShot(0, &guard, [&, path] {
+            // Cocoa may process events while constructing the file dialog,
+            // before it becomes the active modal widget. Wait for that widget.
+            auto* chooser = new QTimer(&guard);
+            chooser->setInterval(10);
+            connect(chooser, &QTimer::timeout, &guard, [chooser, path] {
                 auto* files = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
-                if (!files) return;
+                if (!files || !files->isVisible()) return;
                 files->selectFile(path);
+                // Drive the filename field just as a user typing the pairing
+                // path would; the filesystem model may still be loading.
+                if (auto* filename = files->findChild<QLineEdit*>(QStringLiteral("fileNameEdit")))
+                    filename->setText(path);
+                if (files->selectedFiles().isEmpty()) return;
+                chooser->stop();
                 QMetaObject::invokeMethod(files, "accept", Qt::QueuedConnection);
+                chooser->deleteLater();
+            });
+            chooser->start();
+            QTimer::singleShot(10000, chooser, [chooser] {
+                chooser->stop();
+                if (auto* files = qobject_cast<QFileDialog*>(QApplication::activeModalWidget()))
+                    files->reject();
+                chooser->deleteLater();
             });
         };
+        pairing_stage = QStringLiteral("import display pairing");
         choose(remote_file); import->click();
         if (!spin([&] { return export_host->isEnabled() && list->count() == 2
-            && remote_bridge_->authorized(display, "background"); })) { dialog->reject(); return; }
+            && remote_bridge_->authorized(display, "background"); })) {
+            for (auto* label : dialog->findChildren<QLabel*>())
+                pairing_stage += QStringLiteral(" | ") + label->text();
+            dialog->reject(); return;
+        }
+        pairing_stage = QStringLiteral("export host pairing");
         choose(host_file); export_host->click();
         QFile exported(host_file);
         if (exported.open(QIODevice::ReadOnly)) {
@@ -316,12 +342,14 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         if (!paired) { dialog->reject(); return; }
         // Removing the only controller and importing it again must select it
         // automatically through the existing controller management path.
+        pairing_stage = QStringLiteral("remove controller");
         list->setCurrentRow(0); remove->click();
         if (!spin([&] { return import->isEnabled() && list->count() == 1; })) { paired = false; dialog->reject(); return; }
         QFile control_pairing(remote_file);
         if (!control_pairing.open(QIODevice::WriteOnly | QIODevice::Truncate)) { paired = false; dialog->reject(); return; }
         control_pairing.write(QJsonDocument(profiles[0].toObject()).toJson());
         control_pairing.close();
+        pairing_stage = QStringLiteral("import controller pairing");
         choose(remote_file); import->click();
         paired = spin([&] { return import->isEnabled() && remote_bridge_->activeControlSlot() == 1
             && remote_bridge_->authorized(controller, "set"); });
@@ -330,7 +358,7 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         dialog->accept();
     });
     remote_bridge_->showManager(this);
-    if (!paired) return fail(QStringLiteral("Pairing-file import, automatic enable, export or removal failed."));
+    if (!paired) return fail(QStringLiteral("Pairing workflow failed at: ") + pairing_stage);
     remote_bridge_->stop();
     return true;
 }

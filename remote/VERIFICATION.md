@@ -18,7 +18,10 @@ are rejected at configuration; the direct VideoToolbox backend passed H264
 encoding, color, resolution-change and keyframe recovery checks. Real Chromium
 received H264 frames and passed stable-name connection, reload, interruption
 recovery and explicit pause/resume. Final package publication is recorded after
-release verification.
+release verification. The native Cocoa pairing smoke also passes against the
+bundled worker, including file import/export, removal/re-import, roles, undo/redo,
+save/load and background rendering. macOS uses Qt 6.11.2: Qt 6.8's legacy AGL
+link dependency is absent from the current macOS SDK.
 
 Earlier local checks:
 

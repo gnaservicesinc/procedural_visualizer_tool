@@ -151,6 +151,12 @@ void apply_studio_theme(QApplication& application) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // The pairing smoke drives QFileDialog widgets. Cocoa chooses its native
+    // dialog integration during application initialization, so opt out first.
+    for (int index = 1; index < argc; ++index) {
+        if (QString::fromLocal8Bit(argv[index]) == QStringLiteral("--remote-smoke-test"))
+            QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    }
     QApplication application(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Procedural Visualizer Tool"));
     QApplication::setApplicationDisplayName(

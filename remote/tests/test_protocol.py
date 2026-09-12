@@ -138,11 +138,13 @@ class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as temp:
             host = Host(temp)
             self.assertTrue(host.config['lan'])
-            async with serve(lambda ws: None, '0.0.0.0', host.config['port']):
+            async with serve(lambda ws: None, '0.0.0.0', 0) as occupied:
+                host.config['port'] = occupied.sockets[0].getsockname()[1]
                 with patch.object(host, 'lan_addresses', return_value=[]):
                     await host.enable()
                     try:
-                        self.assertEqual(host.config['port'], host.automatic_ports()[1])
+                        self.assertNotEqual(host.config['port'], occupied.sockets[0].getsockname()[1])
+                        self.assertIn(host.config['port'], host.automatic_ports())
                         # An unavailable LAN doesn't remove loopback or change identity.
                         await asyncio.sleep(0)
                         self.assertIsNone(host.mdns)
@@ -152,6 +154,24 @@ class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(saved.automatic_ports(), host.automatic_ports())
                     finally:
                         await host.disable()
+
+    async def test_reserved_port_is_skipped_without_configuration(self):
+        import errno
+        from websockets.asyncio.server import serve
+        with tempfile.TemporaryDirectory() as temp:
+            host = Host(temp)
+            host.config['port'] = 12345
+            def reserve(handler, address, port, **options):
+                if port == 12345:
+                    raise OSError(errno.EACCES, 'Reserved by the operating system')
+                return serve(handler, address, port, **options)
+            with patch('pvt_remote.host.serve', side_effect=reserve), patch.object(host, 'lan_addresses', return_value=[]):
+                try:
+                    await host.enable()
+                    self.assertTrue(host.enabled)
+                    self.assertIn(host.config['port'], host.automatic_ports())
+                finally:
+                    await host.disable()
 
     async def test_invalid_import_does_not_enable_or_replace_saved_pairing(self):
         with tempfile.TemporaryDirectory() as temp:
