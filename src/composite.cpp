@@ -1857,7 +1857,8 @@ ValidationResult detail::validate_project_render_memory(
                                       + std::to_string(index + 1U)
                                       + " has an invalid name.");
             }
-            group_members.emplace(group.uuid, GroupMembers{0U, group.enabled});
+            group_members.emplace(
+                group.uuid, GroupMembers{0U, group.enabled != 0U});
         }
         file_ids.reserve(project.layers.size());
         std::size_t worst_layer_peak = 0U;
