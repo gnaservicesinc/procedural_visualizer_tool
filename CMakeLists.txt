@@ -663,6 +663,28 @@ if(PVT_BUILD_QT_GUI)
     endif()
     pvt_enable_warnings(ProceduralVisualizerToolGui)
 
+    option(PVT_REMOTE_SYSTEM_RUNTIME "Use distribution-managed remote dependencies (Debian packaging)" OFF)
+    if(PVT_REMOTE_SYSTEM_RUNTIME AND (APPLE OR WIN32))
+        message(FATAL_ERROR "System remote runtime is only supported by Linux distribution packaging")
+    endif()
+    set(PVT_REMOTE_WORKER_DIR "" CACHE PATH "Prebuilt self-contained remote worker directory")
+    if(PVT_REMOTE_WORKER_DIR)
+        if(NOT EXISTS "${PVT_REMOTE_WORKER_DIR}/pvt-remote${CMAKE_EXECUTABLE_SUFFIX}")
+            message(FATAL_ERROR "PVT_REMOTE_WORKER_DIR does not contain the bundled remote executable")
+        endif()
+        add_custom_target(pvt_stage_remote_worker ALL
+            COMMAND "${CMAKE_COMMAND}"
+                "-DSOURCE=${PVT_REMOTE_WORKER_DIR}"
+                "-DDESTINATION=$<TARGET_FILE_DIR:ProceduralVisualizerToolGui>/pvt-remote"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyBundleDirectory.cmake"
+            DEPENDS ProceduralVisualizerToolGui
+            VERBATIM)
+        add_test(NAME pvt_bundled_remote
+            COMMAND "${PVT_REMOTE_WORKER_DIR}/pvt-remote${CMAKE_EXECUTABLE_SUFFIX}" --self-test)
+    elseif((PVT_ENABLE_DISTRIBUTION OR PVT_DEPLOY_QT_RUNTIME) AND NOT PVT_REMOTE_SYSTEM_RUNTIME)
+        message(FATAL_ERROR "Desktop packages require PVT_REMOTE_WORKER_DIR; build it with scripts/build-remote-worker.py")
+    endif()
+
     if(PVT_ENABLE_DISTRIBUTION)
         if(NOT APPLE)
             message(FATAL_ERROR
@@ -685,9 +707,10 @@ if(PVT_BUILD_QT_GUI)
             # the current top-level result.
             COMMAND "${CMAKE_COMMAND}" -E remove_directory
                     "${CMAKE_CURRENT_BINARY_DIR}/dist"
-            COMMAND "${CMAKE_COMMAND}" -E copy_directory
-                    "$<TARGET_BUNDLE_DIR:ProceduralVisualizerToolGui>"
-                    "${PVT_DISTRIBUTION_APP}"
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DSOURCE=$<TARGET_BUNDLE_DIR:ProceduralVisualizerToolGui>"
+                    "-DDESTINATION=${PVT_DISTRIBUTION_APP}"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyBundleDirectory.cmake"
             COMMAND "${CMAKE_COMMAND}" -E make_directory
                     "${PVT_DISTRIBUTION_APP}/Contents/Resources/Licenses"
             COMMAND "${CMAKE_COMMAND}" -E copy_if_different
@@ -719,7 +742,7 @@ if(PVT_BUILD_QT_GUI)
                     "-DPVT_PRODUCT_VERSION=${PVT_PRODUCT_VERSION}"
                     "-DPVT_VTOOL=${PVT_VTOOL}"
                     -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/macos/VerifyDistribution.cmake"
-            DEPENDS ProceduralVisualizerToolGui pvt_render_cli
+            DEPENDS ProceduralVisualizerToolGui pvt_render_cli pvt_stage_remote_worker
             COMMENT "Staging and verifying a self-contained macOS application"
             VERBATIM)
     endif()
@@ -1152,6 +1175,23 @@ if(PVT_BUILD_QT_GUI)
     install(TARGETS ProceduralVisualizerToolGui
         BUNDLE DESTINATION .
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    if(NOT PVT_REMOTE_WORKER_DIR AND NOT PVT_REMOTE_SYSTEM_RUNTIME)
+        install(CODE "message(FATAL_ERROR \"Desktop installation requires the bundled remote transport. Set PVT_REMOTE_WORKER_DIR at configure time.\")")
+    endif()
+    if(PVT_REMOTE_SYSTEM_RUNTIME)
+        install(PROGRAMS remote/pvt-remote-system DESTINATION "${CMAKE_INSTALL_BINDIR}/pvt-remote" RENAME pvt-remote)
+        install(DIRECTORY remote/pvt_remote DESTINATION lib/python3/dist-packages
+            FILES_MATCHING PATTERN "*.py")
+    endif()
+    if(PVT_REMOTE_WORKER_DIR)
+        if(APPLE)
+            set(pvt_remote_install_dir "Procedural Visualizer Tool.app/Contents/MacOS/pvt-remote")
+        else()
+            set(pvt_remote_install_dir "${CMAKE_INSTALL_BINDIR}/pvt-remote")
+        endif()
+        install(DIRECTORY "${PVT_REMOTE_WORKER_DIR}/" DESTINATION "${pvt_remote_install_dir}"
+            USE_SOURCE_PERMISSIONS)
+    endif()
     if(UNIX AND NOT APPLE)
         install(FILES script/procedural-visualizer-tool.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)

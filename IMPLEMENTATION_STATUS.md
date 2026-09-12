@@ -6,6 +6,19 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 19.1.6 automatic same-network remotes
+
+Remote setup now uses the existing mutual pairing files without runtime or
+network configuration fields. Importing a device enables remotes and selects the
+first controller automatically. The worker is included with desktop packages;
+Debian installs its dependencies automatically. Stable discovery, saved pairings,
+connection retry and worker restart recover from interruptions without setup.
+The supported scope is a shared network, plus same-computer use without an
+external network. No hosted connection service is required.
+
+Existing identity, authorization, Live editing, undo and persistence remain
+shared. See remote/VERIFICATION.md for test and publication evidence.
+
 ## 19.1.4 PVT browser remotes and Live frame pacing
 
 PVT now integrates the separate PVT-RC control and PVT-RD display extensions

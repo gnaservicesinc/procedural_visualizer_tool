@@ -1,0 +1,14 @@
+# Preserve framework/runtime symlinks. `cmake -E copy_directory` follows them,
+# which can invalidate signatures and conflict with a later install(DIRECTORY).
+if(NOT IS_DIRECTORY "${SOURCE}" OR NOT DEFINED DESTINATION OR DESTINATION STREQUAL "")
+    message(FATAL_ERROR "SOURCE and DESTINATION must identify a bundle directory copy")
+endif()
+file(REAL_PATH "${SOURCE}" source_path)
+file(REAL_PATH "${DESTINATION}" destination_path)
+string(FIND "${destination_path}/" "${source_path}/" nested_destination)
+string(FIND "${source_path}/" "${destination_path}/" nested_source)
+if(nested_destination EQUAL 0 OR nested_source EQUAL 0)
+    message(FATAL_ERROR "Bundle source and destination must be separate directories")
+endif()
+file(REMOVE_RECURSE "${destination_path}")
+file(COPY "${source_path}/" DESTINATION "${destination_path}")

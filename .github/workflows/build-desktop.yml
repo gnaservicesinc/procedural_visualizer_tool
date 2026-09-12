@@ -223,6 +223,24 @@ jobs:
           tar -xzf "$archive" --strip-components=1 -C "$metal_cpp"
           echo "METAL_CPP_DIR=$metal_cpp" >> "$GITHUB_ENV"
 
+      - name: Set up transport build runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build self-contained remote transport
+        shell: bash
+        run: |
+          # Discovery has a supported pure-Python build; Windows ARM64 has
+          # no prebuilt zeroconf acceleration wheel. No end-user compiler needed.
+          if [ "$RUNNER_OS" = "Windows" ] && [ "$RUNNER_ARCH" = "ARM64" ]; then
+            export SKIP_CYTHON=1
+            export CRC32C_PURE_PYTHON=1
+          fi
+          python -m pip install ./remote 'pyinstaller==6.22.0'
+          python scripts/build-remote-worker.py --output "$GITHUB_WORKSPACE/remote-bundle/pvt-remote"
+          python -m unittest discover -s remote/tests -v
+
       - name: Configure Linux
         if: runner.os == 'Linux'
         shell: bash
@@ -233,6 +251,7 @@ jobs:
             -DPVT_BUILD_CLI=ON \
             -DPVT_BUILD_QT_GUI=ON \
             -DPVT_DEPLOY_QT_RUNTIME=ON \
+            -DPVT_REMOTE_WORKER_DIR="$GITHUB_WORKSPACE/remote-bundle/pvt-remote" \
             -DPVT_ENABLE_METAL=OFF \
             -DBUILD_TESTING=ON
 
@@ -250,6 +269,7 @@ jobs:
             '-DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg-triplet }}',
             '-DPVT_BUILD_CLI=ON', '-DPVT_BUILD_QT_GUI=ON',
             '-DPVT_DEPLOY_QT_RUNTIME=ON', '-DPVT_ENABLE_METAL=OFF',
+            "-DPVT_REMOTE_WORKER_DIR=$env:GITHUB_WORKSPACE/remote-bundle/pvt-remote",
             '-DBUILD_TESTING=ON'
           )
           # Clang 19.1's Windows-ARM64 backend can fail with an empty
@@ -272,6 +292,7 @@ jobs:
             -DPVT_BUILD_CLI=ON \
             -DPVT_BUILD_QT_GUI=ON \
             -DPVT_ENABLE_DISTRIBUTION=ON \
+            -DPVT_REMOTE_WORKER_DIR="$GITHUB_WORKSPACE/remote-bundle/pvt-remote" \
             -DPVT_ENABLE_METAL=ON \
             -DPVT_METAL_CPP_DIR="$METAL_CPP_DIR" \
             -DBUILD_TESTING=ON
@@ -344,6 +365,7 @@ jobs:
             -DPROGRAM="$GITHUB_WORKSPACE/package/bin/procedural-visualizer-tool" \
             -P cmake/TestReleasedTranslations.cmake
           ./package/bin/pvt-render --self-test
+          ./package/bin/pvt-remote/pvt-remote --self-test
           cmake -S tests/consumer -B installed-consumer -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/package;$QT_ROOT"
@@ -437,6 +459,8 @@ jobs:
           }
           Invoke-PackageCheck `
             "$env:GITHUB_WORKSPACE/package/bin/pvt-render.exe" "--self-test"
+          & "$env:GITHUB_WORKSPACE/package/bin/pvt-remote/pvt-remote.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Bundled remote self-test failed" }
           $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
           $consumerPrefix = "$env:GITHUB_WORKSPACE/package;$env:QT_ROOT"
           cmake -S tests/consumer -B installed-consumer `
@@ -552,6 +576,8 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 19.1.6 makes Remotes a pair-once feature for devices on the same network. PVT includes the transport runtime. Exchange the pairing files once; saved devices connect and reconnect automatically, including after a PVT restart. Same-computer connections work without an external network. Setup no longer asks for interpreters, dependencies, hostnames, addresses, ports or server settings. Existing controls, validation, undo, persistence, video and audio remain shared.
+
           Version 19.1.4 adds the PVT desktop side of the PVT-RC control and PVT-RD display extensions. Remote edits use the existing Live target registry, validation, undo/redo, persistence, renderer, and output-mix audio paths. Networking is disabled by default and supports explicit public-identity pairing, authenticated encrypted signaling, one active controller, multiple displays, LAN endpoints, a self-hostable relay, and configurable ICE servers. Background hosting uses the normal system-tray and unsaved-project lifecycle. The separate extension repositories provide Chrome, Firefox, and Safari build targets.
 
           Live and presentation output now remain bounded by the project's configured playback FPS when routine refresh requests arrive faster than the frame timer. Authored edits can still request an immediate frame, including at sub-Hz rates. Regression coverage reproduces the former 118-FPS-class over-delivery and verifies 60 and 23.976 FPS limits, pause behavior, startup, and intentional refreshes. This release also uses an explicit Qt translation context for the remote-target labels so the Qt 6.8 package build can extract translations on all five platforms.

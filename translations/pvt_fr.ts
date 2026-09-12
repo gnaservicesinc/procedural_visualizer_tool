@@ -883,7 +883,7 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2309"/>
+        <location filename="../gui/live_workspace.cpp" line="+2311"/>
         <location line="+2168"/>
         <location line="+945"/>
         <source>Listening…</source>
@@ -899,17 +899,17 @@
         <translation>Apprentissage MIDI</translation>
     </message>
     <message>
-        <location line="-4905"/>
+        <location line="-4907"/>
         <source>Active Control Remote: %1</source>
         <translation>Télécommande active : %1</translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>Networking &amp; Remotes</source>
         <translation>Réseau et télécommandes</translation>
     </message>
     <message>
-        <location line="+331"/>
+        <location line="+332"/>
         <location line="+2499"/>
         <source>STANDBY</source>
         <translation>EN ATTENTE</translation>
@@ -8363,7 +8363,7 @@ UUID du projet : %2
     </message>
     <message>
         <location line="+22"/>
-        <location filename="../gui/main_window_remote.cpp" line="+118"/>
+        <location filename="../gui/main_window_remote.cpp" line="+122"/>
         <source>Networking &amp; Remotes…</source>
         <translation>Réseau et télécommandes…</translation>
     </message>
@@ -14330,7 +14330,7 @@ Arrêtez la sortie vidéo pour afficher l’aperçu ici.</translation>
         <translation>Flou maximal</translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3457"/>
+        <location filename="../gui/live_workspace.cpp" line="-3459"/>
         <source> · display %1 of %2</source>
         <translation> · écran %1 sur %2</translation>
     </message>
@@ -15025,17 +15025,12 @@ Notes :</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+36"/>
-        <source>Remote worker could not run: %1</source>
-        <translation>Impossible de lancer le processus distant : %1</translation>
-    </message>
-    <message>
-        <location line="+55"/>
+        <location filename="../gui/remote_bridge.cpp" line="+114"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Le processus distant a dépassé la limite des messages.</translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+24"/>
         <source>Networking &amp; Remotes enabled</source>
         <translation>Réseau et télécommandes activés</translation>
     </message>
@@ -15045,78 +15040,28 @@ Notes :</translation>
         <translation>Réseau et télécommandes désactivés</translation>
     </message>
     <message>
-        <location line="+48"/>
-        <location line="+86"/>
+        <location line="+64"/>
+        <location line="+78"/>
         <source>None</source>
         <translation>Aucune</translation>
     </message>
     <message>
-        <location line="-56"/>
+        <location line="-48"/>
         <source>Networking &amp; Remotes</source>
         <translation>Réseau et télécommandes</translation>
     </message>
     <message>
-        <location line="+5"/>
-        <source>Start / restart worker</source>
-        <translation>Démarrer / redémarrer le processus</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Python with pvt-remote installed</source>
-        <translation>Python avec pvt-remote installé</translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+4"/>
         <source>Enable Networking &amp; Remotes</source>
         <translation>Activer le réseau et les télécommandes</translation>
     </message>
     <message>
         <location line="+2"/>
-        <source>Allow paired remotes on the local network (mDNS)</source>
-        <translation>Autoriser les télécommandes associées sur le réseau local (mDNS)</translation>
-    </message>
-    <message>
-        <location line="+1"/>
         <source>Close window to system tray / menu bar</source>
         <translation>Fermer la fenêtre dans la zone de notification / barre de menus</translation>
     </message>
     <message>
-        <location line="+6"/>
-        <source>Optional wss:// signaling server</source>
-        <translation>Serveur de signalisation wss:// facultatif</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>ICE servers as JSON; [] keeps LAN connections offline</source>
-        <translation>Serveurs ICE au format JSON ; [] garde les connexions locales hors ligne</translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Host name</source>
-        <translation>Nom de l’hôte</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Local signaling port</source>
-        <translation>Port de signalisation local</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Remote signaling URL</source>
-        <translation>URL de signalisation distante</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>STUN / TURN servers</source>
-        <translation>Serveurs STUN / TURN</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Paired remotes — public identities only</source>
-        <translation>Télécommandes associées — identités publiques uniquement</translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+12"/>
         <source>Active Control Remote</source>
         <translation>Télécommande active</translation>
     </message>
@@ -15131,7 +15076,7 @@ Notes :</translation>
         <translation>Supprimer la télécommande</translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>Export .pvthost…</source>
         <translation>Exporter un fichier .pvthost…</translation>
     </message>
@@ -15141,12 +15086,37 @@ Notes :</translation>
         <translation>Basculer le mode arrière-plan</translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>Install the optional transport: python3 -m pip install /path/to/PVT/remote</source>
-        <translation>Installer le transport facultatif : python3 -m pip install /path/to/PVT/remote</translation>
+        <location line="-220"/>
+        <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
+        <translation>Les télécommandes sont temporairement indisponibles. PVT réessaiera automatiquement.</translation>
     </message>
     <message>
-        <location line="+31"/>
+        <location line="+98"/>
+        <source>Pairing changes could not be saved. Check the pairing file and try again.</source>
+        <translation>Impossible d’enregistrer les modifications d’association. Vérifiez le fichier d’association et réessayez.</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>Waiting for a connection. PVT will reconnect automatically.</source>
+        <translation>En attente d’une connexion. PVT se reconnectera automatiquement.</translation>
+    </message>
+    <message>
+        <location line="+96"/>
+        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote. Paired devices reconnect automatically while PVT is running.</source>
+        <translation>Association unique : enregistrez le fichier d’association de Remote Display ou Remote Control et ouvrez-le ici. Enregistrez ensuite le fichier d’association de PVT et ouvrez-le dans l’application distante. Les appareils associés se reconnectent automatiquement lorsque PVT est en cours d’exécution.</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Paired devices</source>
+        <translation>Appareils associés</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>Preparing pairing…</source>
+        <translation>Préparation de l’association…</translation>
+    </message>
+    <message>
+        <location line="+34"/>
         <source>Import remote</source>
         <translation>Importer une télécommande</translation>
     </message>
@@ -15171,7 +15141,7 @@ Notes :</translation>
         <translation>Supprimez l’identité existante avant de remplacer ses clés.</translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+25"/>
         <source>Export host</source>
         <translation>Exporter l’hôte</translation>
     </message>
@@ -15182,13 +15152,8 @@ Notes :</translation>
     </message>
     <message>
         <location line="+6"/>
-        <source>Host profile exported. Apply networking changes before exporting a new profile.</source>
-        <translation>Profil de l’hôte exporté. Appliquez les modifications réseau avant d’exporter un nouveau profil.</translation>
-    </message>
-    <message>
-        <location line="+8"/>
-        <source>ICE servers must be a JSON array.</source>
-        <translation>Les serveurs ICE doivent être un tableau JSON.</translation>
+        <source>Pairing file saved. Open it in Remote Display or Remote Control to finish setup.</source>
+        <translation>Fichier d’association enregistré. Ouvrez-le dans Remote Display ou Remote Control pour terminer la configuration.</translation>
     </message>
 </context>
 <context>

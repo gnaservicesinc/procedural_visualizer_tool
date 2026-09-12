@@ -1,0 +1,3 @@
+#!/bin/sh
+# Distribution packages provide the runtime dependencies automatically.
+exec /usr/bin/python3 -I -m pvt_remote.host "$@"

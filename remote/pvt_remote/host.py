@@ -1,4 +1,4 @@
-"""Optional desktop worker. Qt owns rendering, editing, and all device I/O.
+"""Bundled desktop worker. Qt owns rendering, editing, and all device I/O.
 
 The private stdin/stdout pipe carries bounded media and command messages. No
 listener or mDNS service exists until Qt sends an explicit enable command.
@@ -6,6 +6,7 @@ listener or mDNS service exists until Qt sends an explicit enable command.
 import argparse
 import asyncio
 import fractions
+import errno
 import io
 import ipaddress
 import json
@@ -13,6 +14,7 @@ import logging
 import socket
 import sys
 import time
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -22,6 +24,7 @@ from PIL import Image
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 from zeroconf import IPVersion, ServiceInfo
+from ifaddr import get_adapters
 from zeroconf.asyncio import AsyncZeroconf
 
 from .protocol import Cipher, MAX_MESSAGE, MAX_PROFILES, b64, compact, endpoint, new_identity, profile, save_private, unb64
@@ -79,15 +82,19 @@ class Host:
             save_private(identity_path, self.identity)
         self.cipher = Cipher(self.identity)
         self.config_path = self.directory / "remotes.json"
-        self.config = dict(remotes=[], active_control="", signaling_url="", port=49731, lan=False, ice_servers=[])
+        self.config = dict(remotes=[], active_control="", signaling_url="", port=self.automatic_ports()[0], lan=True, ice_servers=[])
         if self.config_path.exists():
             self.config.update(json.loads(self.config_path.read_text()))
+        # Migrate previous opt-in LAN settings to automatic reachability.
+        # Qt's persisted enable switch still controls whether any listener runs.
+        self.config["lan"] = True
         self.validate_config(self.config)
         self.enabled = False
         self.server = None
         self.mdns = None
         self.service = None
         self.relay_task = None
+        self.discovery_task = None
         self.sessions = {}
         self.sockets = set()
         self.socket_peers = {}
@@ -137,14 +144,22 @@ class Host:
                 raise ValueError("Invalid ICE server URL")
         config["remotes"] = cleaned
 
+    def automatic_ports(self):
+        # Stable bounded alternatives allow a paired browser to recover from a
+        # port conflict without service enumeration or another pairing export.
+        first = 49152 + int(self.identity["public"]["id"].replace("-", "")[:8], 16) % 16000
+        return [first + offset for offset in range(4)]
+
+    def discovery_name(self):
+        return f"pvt-{self.cipher.public['id']}.local"
+
     def public(self):
         result = dict(self.cipher.public)
-        result["label"] = self.config.get("label", "PVT host")
+        result["label"] = self.config.get("label", "PVT desktop")
         port = self.config["port"]
         result["endpoints"] = [f"ws://127.0.0.1:{port}"]
         if self.config.get("lan"):
-            name = socket.gethostname().split(".")[0]
-            result["endpoints"].append(f"ws://{name}.local:{port}")
+            result["endpoints"].append(f"ws://{self.discovery_name()}:{port}")
             for address in self.lan_addresses():
                 result["endpoints"].append(f"ws://{address}:{port}")
         result["signaling_url"] = self.config.get("signaling_url", "")
@@ -152,11 +167,40 @@ class Host:
 
     @staticmethod
     def lan_addresses():
-        try:
-            return sorted({item[4][0] for item in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)
-                           if ipaddress.ip_address(item[4][0]).is_private and not ipaddress.ip_address(item[4][0]).is_loopback})[:12]
-        except OSError:
-            return []
+        # Hostname lookup often returns only loopback, notably on Linux.
+        # Enumerate interfaces without requiring an internet route.
+        return sorted({ip.ip for adapter in get_adapters() for ip in adapter.ips
+                       if isinstance(ip.ip, str)
+                       and not ipaddress.ip_address(ip.ip).is_loopback
+                       and not ipaddress.ip_address(ip.ip).is_unspecified})[:12]
+
+    async def refresh_discovery(self):
+        addresses = self.lan_addresses()
+        if self.service and self.service.parsed_addresses() == addresses:
+            return
+        # Recreate multicast sockets as well as records after interface changes.
+        if self.mdns:
+            await self.mdns.async_close()
+            self.mdns = self.service = None
+        if addresses:
+            self.mdns = AsyncZeroconf(ip_version=IPVersion.V4Only)
+            self.service = ServiceInfo("_pvt._tcp.local.", f"{self.cipher.public['id']}._pvt._tcp.local.",
+                addresses=[socket.inet_aton(a) for a in addresses], port=self.config["port"],
+                properties={"id": self.cipher.public["id"], "version": "1"},
+                server=self.discovery_name() + ".")
+            await self.mdns.async_register_service(self.service)
+
+    async def discover(self):
+        while self.enabled:
+            try:
+                await self.refresh_discovery()
+            except Exception:
+                # Multicast failures must never tear down same-machine output.
+                logging.exception("Discovery will retry")
+                if self.mdns:
+                    await self.mdns.async_close()
+                self.mdns = self.service = None
+            await asyncio.sleep(3)
 
     def peer(self, remote_id):
         return next((p for p in self.config["remotes"] if p["id"] == remote_id), None)
@@ -164,27 +208,34 @@ class Host:
     async def enable(self):
         if self.enabled:
             return
-        self.server = await serve(self.connection, "0.0.0.0" if self.config.get("lan") else "127.0.0.1", self.config["port"],
-                                  max_size=MAX_MESSAGE, max_queue=8, write_limit=65536, ping_interval=20, open_timeout=5)
-        self.enabled = True
+        for port in dict.fromkeys([self.config["port"], *self.automatic_ports()]):
+            try:
+                self.server = await serve(self.connection, "0.0.0.0" if self.config.get("lan") else "127.0.0.1", port,
+                    max_size=MAX_MESSAGE, max_queue=8, write_limit=65536, ping_interval=20, open_timeout=5)
+                self.config["port"] = port
+                break
+            except OSError as error:
+                if error.errno != errno.EADDRINUSE:
+                    raise
+        if not self.server:
+            raise OSError("Automatic connection endpoints are busy")
         try:
-            if self.config.get("lan"):
-                addresses = [socket.inet_aton(a) for a in self.lan_addresses()]
-                if addresses:
-                    self.mdns = AsyncZeroconf(ip_version=IPVersion.V4Only)
-                    self.service = ServiceInfo("_pvt._tcp.local.", f"{self.cipher.public['id']}._pvt._tcp.local.",
-                                               addresses=addresses, port=self.config["port"],
-                                               properties={"id": self.cipher.public["id"], "version": "1"},
-                                               server=socket.gethostname().split(".")[0] + ".local.")
-                    await self.mdns.async_register_service(self.service)
-            if self.config.get("signaling_url"):
-                self.relay_task = self.task(self.relay())
+            save_private(self.config_path, self.config)
         except Exception:
             await self.disable()
             raise
+        self.enabled = True
+        if self.config.get("lan"):
+            self.discovery_task = self.task(self.discover())
+        if self.config.get("signaling_url"):
+            self.relay_task = self.task(self.relay())
 
     async def disable(self):
         self.enabled = False
+        if self.discovery_task:
+            self.discovery_task.cancel()
+            await asyncio.gather(self.discovery_task, return_exceptions=True)
+            self.discovery_task = None
         if self.relay_task:
             self.relay_task.cancel()
             self.relay_task = None
@@ -385,7 +436,7 @@ class Host:
                         except Exception as error:
                             logging.info("Rejected signaling: %s", error)
             except Exception as error:
-                self.emit(dict(event="status", error=f"Signaling reconnecting: {error}"))
+                self.emit(dict(event="status", error=f"Reconnecting: {error}"))
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
 
@@ -393,12 +444,17 @@ class Host:
         op = message.get("op")
         if op == "configure":
             candidate = dict(self.config, **message["config"])
-            self.validate_config(candidate)
+            try:
+                self.validate_config(candidate)
+                save_private(self.config_path, candidate)
+            except Exception as error:
+                logging.warning("Pairing configuration rejected: %s", error)
+                self.emit(dict(event="rejected", profile=self.public(), config=self.config, enabled=self.enabled))
+                return True
             wanted = message.get("enabled", self.enabled)
             restart = any(candidate.get(key) != self.config.get(key)
                           for key in ("port", "lan", "signaling_url", "ice_servers"))
             previous = {p["id"]: p for p in self.config["remotes"]}
-            save_private(self.config_path, candidate)
             self.config = candidate  # Permission checks see the handoff immediately.
             revoked = {key for key, old in previous.items() if self.peer(key) != old}
             for ws, remote_id in list(self.socket_peers.items()):
@@ -451,10 +507,14 @@ class Host:
                     break
                 if len(raw) >= 4 * MAX_MESSAGE:
                     raise ValueError("Desktop message too large")
+                message = {}
                 try:
-                    if not await self.input(json.loads(raw)):
+                    message = json.loads(raw)
+                    if not await self.input(message):
                         break
                 except Exception as error:
+                    if isinstance(message, dict) and message.get("op") == "configure":
+                        self.emit(dict(event="configured", config=self.config, profile=self.public(), enabled=self.enabled))
                     self.emit(dict(event="status", error=str(error), enabled=self.enabled))
         finally:
             await self.disable()
@@ -463,12 +523,46 @@ class Host:
             await asyncio.gather(*self.work, return_exceptions=True)
 
 
+async def self_test():
+    from aiortc.codecs import get_encoder
+    from aiortc.rtcrtpparameters import RTCRtpCodecParameters
+    with tempfile.TemporaryDirectory() as directory:
+        host = Host(directory)
+        host.config["lan"] = False
+        await host.enable()
+        try:
+            remote = Cipher(new_identity("pvtremote", "display"))
+            host.config["remotes"] = [remote.public]
+            async with connect(host.public()["endpoints"][0]) as ws:
+                challenge = json.loads(await ws.recv())["challenge"]
+                await ws.send(compact(remote.seal(host.cipher.public, dict(op="hello", challenge=challenge))).decode())
+                assert remote.open(host.cipher.public, json.loads(await ws.recv()))["challenge"] == challenge
+            frame = VideoFrame.from_image(Image.new("RGB", (64, 64)))
+            frame.pts = 0
+            frame.time_base = fractions.Fraction(1, 90000)
+            assert get_encoder(RTCRtpCodecParameters(mimeType="video/VP8", clockRate=90000)).encode(frame)[0]
+            audio = Audio(host)
+            try:
+                assert get_encoder(RTCRtpCodecParameters(mimeType="audio/opus", clockRate=48000, channels=2)).encode(await audio.recv())[0]
+            finally:
+                audio.stop()
+        finally:
+            await host.disable()
+    print("PVT remote self-test passed")
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--directory", required=True)
+    parser.add_argument("--directory")
+    parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
-    asyncio.run(Host(args.directory).run())
+    if args.self_test:
+        asyncio.run(self_test())
+    elif args.directory:
+        asyncio.run(Host(args.directory).run())
+    else:
+        parser.error("--directory is required")
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,7 @@
 usr/bin/procedural-visualizer-tool
 usr/bin/pvt-render
+usr/bin/pvt-remote
+usr/lib/python3/dist-packages/pvt_remote
 usr/share/applications/procedural-visualizer-tool.desktop
 usr/share/doc/procedural-visualizer-tool/BEAT-AND-TEMPO-TRACKING-LICENSE
 usr/share/doc/procedural-visualizer-tool/IMPLEMENTATION_STATUS.md

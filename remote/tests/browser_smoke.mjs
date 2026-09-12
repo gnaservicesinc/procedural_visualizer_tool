@@ -10,7 +10,7 @@ const {chromium} = await import(process.env.PVT_PLAYWRIGHT_MODULE || 'playwright
 const root = resolve(import.meta.dirname, '../../..');
 const rc = join(root, 'PVT-RC/dist/chrome'), rd = join(root, 'PVT-RD/dist/chrome');
 const temporary = await mkdtemp(join(tmpdir(), 'pvt-browser-smoke-'));
-const worker = spawn(process.env.PVT_REMOTE_PYTHON || 'python3', ['-m','pvt_remote.host','--directory', join(temporary,'host')], {stdio:['pipe','pipe','pipe']});
+const worker = spawn(process.env.PVT_REMOTE_WORKER || process.env.PVT_REMOTE_PYTHON || 'python3', [...(process.env.PVT_REMOTE_WORKER ? [] : ['-m','pvt_remote.host']),'--directory', join(temporary,'host')], {stdio:['pipe','pipe','pipe']});
 const lines = createInterface({input:worker.stdout});
 const waiters = [];
 const events = [];
@@ -28,6 +28,7 @@ const send = message => worker.stdin.write(JSON.stringify(message)+'\n');
 let context;
 let relay;
 const useRelay = process.argv.includes("--relay");
+const useLan = process.argv.includes("--lan");
 try {
   const ready = await waitEvent(e=>e.event==='ready');
   if (useRelay) {
@@ -42,10 +43,19 @@ try {
   const workers = context.serviceWorkers(); assert.equal(workers.length,2);
   const pages=[];
   for (const service of workers) {
-    const page=await context.newPage(); await page.goto(service.url().replace('background.js','index.html'));
+    const page=await context.newPage();
+    page.on('console', message => { if (message.type() === 'error') console.error(message.text()); });
+    await page.addInitScript(() => {
+      window.openedConnections = [];
+      const Original = WebSocket;
+      window.WebSocket = class extends Original {
+        constructor(url, protocols) { super(url, protocols); this.addEventListener('open', () => window.openedConnections.push(url)); }
+      };
+    });
+    await page.goto(service.url().replace('background.js','index.html'));
     await page.locator('img.brand').waitFor();
     await page.waitForFunction(()=>document.querySelector('img.brand').naturalWidth === 128);
-    await page.getByRole('button',{name:'Hosts & settings'}).click();
+    // First-run pairing is open automatically.
     await page.getByRole('button',{name:'Export .pvtremote'}).waitFor({state:'visible'});
     await page.waitForFunction(async()=>!!(await chrome.storage.local.get('identity')).identity);
     const identity=await page.evaluate(async()=>(await chrome.storage.local.get('identity')).identity.public);
@@ -56,17 +66,17 @@ try {
   assert.ok(controller && display);
   send({op:'configure', enabled:true, config:{...ready.config,port:49739,remotes:pages.map(p=>p.identity),active_control:controller.identity.id, signaling_url:useRelay ? 'ws://127.0.0.1:49740' : ''}});
   const configured=await waitEvent(e=>e.event==='configured' && e.enabled);
-  const hostFile=join(temporary,'host.pvthost'); await writeFile(hostFile, JSON.stringify({...configured.profile, endpoints:useRelay ? [] : configured.profile.endpoints}));
+  const hostFile=join(temporary,'host.pvthost'); await writeFile(hostFile, JSON.stringify({...configured.profile, endpoints:useRelay ? [] : useLan ? configured.profile.endpoints.filter(url => url.includes(".local:")) : configured.profile.endpoints}));
   if(useRelay) await new Promise(resolve=>setTimeout(resolve,800));
   const largeTargets = Array.from({length:700},(_,i)=>({path:`layer.fixture.${i}`,label:`Fixture parameter ${i}`,section:'Fixture layer',kind:2,minimum:0,maximum:100,value:i%100}));
   send({op:'state',state:{revision:'1',targets:[{path:'project.fps',label:'Playback FPS',section:'Project',kind:2,minimum:1,maximum:120,value:30},...largeTargets],background:false,live:false,playing:false,busy:false}});
   for (const {page} of pages) {
     await page.locator('input[type=file]').setInputFiles(hostFile);
-    await page.getByRole('option',{name:'PVT host',exact:true}).waitFor({state:'attached'});
+    await page.getByRole('option',{name:configured.profile.label,exact:true}).waitFor({state:'attached'});
     await page.getByRole('button',{name:'Done',exact:true}).click();
-    await page.getByRole('button',{name:'Connect',exact:true}).click();
-    await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:30000});
+    await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:60000});
     assert.equal(await page.getByRole('alert').count(),0);
+    if (useLan) assert.ok((await page.evaluate(() => window.openedConnections[0])).includes('.local:'));
   }
   const input=controller.page.getByRole('spinbutton',{name:'Playback FPS'});
   await input.fill('35');
@@ -89,6 +99,25 @@ try {
   },33);
   try {
     await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
+    // Reload must restore the selected pairing and resume without Connect.
+    await display.page.reload();
+    await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:45000});
+    await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
+    // Simulate a desktop/network interruption while retaining both identities.
+    const since = events.length;
+    send({op:'enable',enabled:false});
+    await display.page.getByRole('button',{name:'Pause connection',exact:true}).waitFor({timeout:20000});
+    send({op:'enable',enabled:true});
+    await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:60000});
+    await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
+    assert.ok(events.slice(since).some(e => e.event === 'configured' && e.enabled));
+    // Explicit pause survives reload and does not silently reconnect.
+    await display.page.getByRole('button',{name:'Disconnect',exact:true}).click();
+    await display.page.reload();
+    await display.page.getByRole('button',{name:'Connect',exact:true}).waitFor();
+    await display.page.getByRole('button',{name:'Connect',exact:true}).click();
+    await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:45000});
+    await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
     const tracks=await display.page.locator('video').evaluate(video=>video.srcObject.getTracks().map(t=>t.kind));
     assert.deepEqual(tracks.sort(),['audio','video']);
     await controller.page.screenshot({path:join(temporary,'control.png'),fullPage:true});
@@ -102,7 +131,13 @@ try {
       await page.screenshot({path:join(temporary,(page===controller.page?'control':'display')+'-mobile.png'),fullPage:true});
     }
   } finally {clearInterval(interval);}
-  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','control request','responsive layout'],screenshots:temporary}));
+  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','reload reconnect','interruption recovery','persistent explicit pause','control request','responsive layout'],screenshots:temporary}));
+} catch (error) {
+  console.error('Worker diagnostics:', stderr);
+  for (const page of context?.pages() || []) {
+    if (page.url().includes('index.html')) console.error(await page.locator('body').innerText());
+  }
+  throw error;
 } finally {
   await context?.close(); worker.stdin.end(); worker.kill(); relay?.kill();
 }

@@ -7,6 +7,8 @@
 #include <QApplication>
 #include <QJsonArray>
 #include <QFile>
+#include <QFileDialog>
+#include <QListWidget>
 #include <QLineEdit>
 #include <QLabel>
 #include <QMenu>
@@ -180,7 +182,6 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         return fail(QString::fromUtf8(fixture.readAllStandardError()));
     const auto profiles = QJsonDocument::fromJson(fixture.readAllStandardOutput()).array();
     if (profiles.size() != 2) return fail(QStringLiteral("Pairing fixture was not created."));
-    QSettings().setValue("remotes/python", python);
     QSettings().setValue("remotes/directory", temporary.path());
     bool ready = false;
     QObject guard;
@@ -205,10 +206,8 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         if (!dialog) return;
         auto* enable = dialog->findChild<QCheckBox*>(QStringLiteral("remoteNetworkingEnabled"));
         auto* buttons = dialog->findChild<QDialogButtonBox*>(QStringLiteral("remoteManagerButtons"));
-        auto* label = dialog->findChild<QLineEdit*>(QStringLiteral("remoteHostName"));
-        if (!enable || !buttons || !label) { dialog->reject(); return; }
+        if (!enable || !buttons || !dialog->findChildren<QLineEdit*>().isEmpty()) { dialog->reject(); return; }
         enable->setChecked(true);
-        label->setText(QStringLiteral("Applied during startup"));
         buttons->button(QDialogButtonBox::Apply)->click();
         manager_applied = true;
         dialog->reject();
@@ -218,7 +217,7 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         return fail(QStringLiteral("Remote Manager could not enable networking."));
     QFile saved_config(temporary.path() + "/remotes.json");
     if (!saved_config.open(QIODevice::ReadOnly)
-        || QJsonDocument::fromJson(saved_config.readAll()).object().value("label") != "Applied during startup")
+        || QJsonDocument::fromJson(saved_config.readAll()).object().value("remotes").toArray().size() != 2)
         return fail(QStringLiteral("Remote Manager lost settings applied during startup."));
     const auto controller = profiles[0].toObject().value("id").toString();
     const auto display = profiles[1].toObject().value("id").toString();
@@ -266,6 +265,72 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
     if (remote_bridge_->authorized(controller, "set")) return fail(QStringLiteral("Previous controller retained permission."));
     remote_bridge_->selectControl(9999);
     if (remote_bridge_->activeControlSlot() != 0) return fail(QStringLiteral("MIDI selected an unknown profile."));
+    // Exercise the actual pairing manager actions and file dialogs using the
+    // same public profiles as the extension. No network settings are entered.
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto remote_file = temporary.path() + "/display.pvtremote";
+    const auto host_file = temporary.path() + "/desktop.pvthost";
+    QFile pairing(remote_file);
+    if (!pairing.open(QIODevice::WriteOnly)) return fail(QStringLiteral("Cannot write pairing fixture."));
+    pairing.write(QJsonDocument(profiles[1].toObject()).toJson());
+    pairing.close();
+    bool paired = false;
+    QTimer::singleShot(0, &guard, [&] {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        if (!dialog) return;
+        auto* list = dialog->findChild<QListWidget*>();
+        auto* enable = dialog->findChild<QCheckBox*>(QStringLiteral("remoteNetworkingEnabled"));
+        auto* buttons = dialog->findChild<QDialogButtonBox*>(QStringLiteral("remoteManagerButtons"));
+        QPushButton *remove = nullptr, *import = nullptr, *export_host = nullptr;
+        for (auto* button : dialog->findChildren<QPushButton*>()) {
+            if (button->text().contains(".pvtremote")) import = button;
+            else if (button->text().contains(".pvthost")) export_host = button;
+            else if (button->objectName() == "remoteRemove") remove = button;
+        }
+        if (!list || !enable || !buttons || !remove || !import || !export_host) { dialog->reject(); return; }
+        list->setCurrentRow(1);
+        remove->click();
+        if (!spin([&] { return import->isEnabled() && list->count() == 1; })) { dialog->reject(); return; }
+        if (remote_bridge_->authorized(display, "background")) { dialog->reject(); return; }
+        enable->setChecked(false);
+        buttons->button(QDialogButtonBox::Apply)->click();
+        if (!spin([&] { return import->isEnabled() && !remote_bridge_->enabled(); })) { dialog->reject(); return; }
+        const auto choose = [&](const QString& path) {
+            QTimer::singleShot(0, &guard, [&, path] {
+                auto* files = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+                if (!files) return;
+                files->selectFile(path);
+                QMetaObject::invokeMethod(files, "accept", Qt::QueuedConnection);
+            });
+        };
+        choose(remote_file); import->click();
+        if (!spin([&] { return export_host->isEnabled() && list->count() == 2
+            && remote_bridge_->authorized(display, "background"); })) { dialog->reject(); return; }
+        choose(host_file); export_host->click();
+        QFile exported(host_file);
+        if (exported.open(QIODevice::ReadOnly)) {
+            const auto host = QJsonDocument::fromJson(exported.readAll()).object();
+            paired = host.value("type") == "pvthost" && !host.value("endpoints").toArray().isEmpty()
+                && !host.contains("ed_private") && !host.contains("x_private");
+        }
+        if (!paired) { dialog->reject(); return; }
+        // Removing the only controller and importing it again must select it
+        // automatically through the existing controller management path.
+        list->setCurrentRow(0); remove->click();
+        if (!spin([&] { return import->isEnabled() && list->count() == 1; })) { paired = false; dialog->reject(); return; }
+        QFile control_pairing(remote_file);
+        if (!control_pairing.open(QIODevice::WriteOnly | QIODevice::Truncate)) { paired = false; dialog->reject(); return; }
+        control_pairing.write(QJsonDocument(profiles[0].toObject()).toJson());
+        control_pairing.close();
+        choose(remote_file); import->click();
+        paired = spin([&] { return import->isEnabled() && remote_bridge_->activeControlSlot() == 1
+            && remote_bridge_->authorized(controller, "set"); });
+        const auto screenshot = qEnvironmentVariable("PVT_REMOTE_TEST_SCREENSHOT");
+        if (!screenshot.isEmpty()) dialog->grab().save(screenshot);
+        dialog->accept();
+    });
+    remote_bridge_->showManager(this);
+    if (!paired) return fail(QStringLiteral("Pairing-file import, automatic enable, export or removal failed."));
     remote_bridge_->stop();
     return true;
 }

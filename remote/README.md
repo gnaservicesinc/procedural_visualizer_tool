@@ -2,34 +2,48 @@
 
 PVT-RC controls authored project parameters; PVT-RD receives the existing stage's
 video and audio. The extensions live in their own repositories. PVT owns the
-shared protocol/client source, desktop integration and optional WebRTC worker.
+shared protocol/client source, desktop integration and bundled WebRTC worker.
 Networking is off by default. No listener, discovery announcement, or signaling
 connection starts until the desktop preference is enabled.
 
-## Run locally
+## Pair once
 
-1. Build PVT normally. Install the optional transport with Python 3.11 or newer:
-   `python3 scripts/install-remote-worker.py`. This creates an isolated environment
-   under `~/.local/share/pvt-remotes/venv`, which the desktop detects automatically.
-   For another environment, install `./remote` with pip and enter its Python
-   executable in Networking & Remotes. Installing does not enable networking.
-2. In each extension repository, run `pnpm install --frozen-lockfile` and
-   `pnpm build` (Node 22+ and the pinned pnpm version from package.json).
-   Chrome: enable Developer mode at `chrome://extensions`, choose **Load unpacked**,
-   and select that repository's `dist/chrome` directory.
-3. Open the extension from its toolbar action. It creates or focuses one pinned
-   tab. In **Hosts & settings**, export its `.pvtremote` public identity.
-4. In PVT, open **Settings → Networking & Remotes** (also available from the
-   Remotes tab in Application Settings). Start the worker if necessary, import
-   each `.pvtremote`, choose the **Active Control Remote**, and Apply.
-5. Enable **Networking & Remotes**, Apply, then export `.pvthost`. Import the host
-   file in each extension and Connect. RC can view all shared Live registry
-   parameters; only the selected controller can edit, play, change Live state,
-   or undo/redo. RD receives audio/video and can toggle background mode.
+1. In Remote Display or Remote Control, save the `.pvtremote` pairing file.
+2. In PVT, open **Settings → Networking & Remotes** and import that file.
+   Importing enables remotes. The first imported controller becomes active.
+3. Save PVT's `.pvthost` pairing file and open it in the remote.
 
-Host profile export reflects the last successfully applied settings. Updating
-host endpoints or the relay URL requires exporting/importing the host file again
-(or editing those public endpoint fields in the extension).
+The remote connects automatically. Keep PVT running and the remote tab open.
+Saved pairings and the selected PVT survive restarts; temporary interruptions
+retry automatically. Disconnect pauses automatic connections until Connect is
+selected again. Remove a paired device in the normal manager to revoke it.
+Network and runtime configuration are not part of setup.
+
+## Developer builds and packaging
+
+Release applications include the transport executable and dependencies alongside
+the desktop executable, under `pvt-remote/`. No end-user interpreter, package
+installation, or download-on-first-use is used. Build the transport on each
+target platform with a dedicated build environment:
+
+```sh
+python -m pip install ./remote 'pyinstaller==6.22.0'
+python scripts/build-remote-worker.py --output /absolute/build/pvt-remote
+cmake -S . -B build -DPVT_REMOTE_WORKER_DIR=/absolute/build/pvt-remote
+```
+
+The script freezes the shared worker, includes dependency license metadata, and
+runs authenticated-loopback and actual VP8/Opus encoding checks. CMake stages the
+bundle next to the GUI; installation refuses to create a desktop package without
+it. The desktop CI and Snap build recipe produce the worker during their builds.
+Debian packaging uses `PVT_REMOTE_SYSTEM_RUNTIME` to install this same worker
+with distribution-managed dependencies. The package manager supplies them as part
+of PVT installation; no runtime configuration or separate setup is needed.
+Debian builds do not fetch dependencies from the network.
+
+For source debugging only, `PVT_REMOTE_TEST_PYTHON` selects a developer interpreter.
+The old persisted interpreter setting is ignored. The standalone extensions still
+build with their documented developer toolchain; store distribution is separate.
 
 ## Desktop behavior
 
@@ -67,42 +81,26 @@ when Live is on. Configure that mix in the existing Audio/Video routing matrix.
 No new microphone capture or audio device is opened by remote streaming. No
 routed output means silence. Browser audio starts muted and requires Enable audio.
 
-## LAN and internet
+## Automatic reachability and release boundary
 
-LAN opt-in binds the signaling listener to IPv4 interfaces and advertises
-`_pvt._tcp.local.`. Exported host profiles carry loopback, `.local`, and discovered
-IPv4 endpoints. Ordinary extension pages cannot enumerate native mDNS services;
-this implementation uses OS `.local` resolution and the paired host's endpoints.
-No public service or STUN server is needed on the same LAN. Changed IP addresses
-can be repaired through the existing profile editor or a fresh host export.
+Enabling remotes binds the listener automatically. The host enumerates active
+interfaces, advertises an identity-derived `.local` name, and refreshes multicast
+sockets and address records after interface changes. Loopback remains available
+without an external network or successful multicast discovery. A small stable
+set of identity-derived connection ports provides automatic conflict fallback;
+both ends derive the same alternatives. Existing identities, pinned keys and
+control permissions are preserved. A pre-repair pairing file may need a one-time
+replacement to gain the stable identity-derived name after its old address changes.
 
-For internet access, deploy the included opaque relay on your own server:
+The browser tries the paired endpoints and stable alternatives automatically,
+then retries with bounded backoff. Opening the saved remote tab, selecting another
+paired PVT, and restoring a connection need no manual Connect action. The operating system resolves the stable paired-device name; no network names
+or connection settings are entered by the user.
 
-```sh
-python -m pvt_remote.relay --bind 127.0.0.1 --port 8787
-```
-
-Put a TLS WebSocket reverse proxy in front of it, configure its `wss://` URL in
-PVT, and re-export the host profile. The relay is a single-process deployment;
-it supports 256 connections and remembers up to 4096 registered identity keys
-in memory. When that history fills, the oldest disconnected registration is
-evicted; active registration keys remain pinned. Signaling is limited to 256
-outbound messages per connection per minute and 60 to any one recipient.
-Restarting clears relay registrations, not desktop pairing. Configure
-reverse-proxy per-IP connection/rate limits and do not expose the plaintext
-backend port publicly. Public hosting and TLS/domain provisioning are deployment
-steps, not performed by this repository.
-
-Configure STUN/TURN servers in PVT as an ICE-server JSON array, for example:
-
-```json
-[{"urls":"turns:turn.example.org:5349","username":"allocated-user","credential":"allocated-secret"}]
-```
-
-Use your provider's actual endpoint and credentials. TURN credentials stay in the
-host's private configuration and are not exported or synced. TURN is required
-for networks where direct ICE connectivity is blocked. Public NAT traversal and
-third-party TURN services require testing in the intended deployment environment.
+The supported use case is PVT and its remotes on the same network, or on the
+same computer without an external network. No public connection service is
+required. The old optional relay protocol remains for compatibility with existing
+profiles; it is not part of setup or a requirement for using PVT Remotes.
 
 ## Pairing and privacy
 
@@ -120,8 +118,7 @@ recipient/sender IDs, timestamps, random nonces and a bounded replay cache rejec
 modified, misaddressed or repeated envelopes. Initial local connections also
 prove possession against a fresh server challenge. Media uses WebRTC DTLS-SRTP.
 The relay sees public UUIDs/registration keys, traffic timing and envelope sizes;
-it cannot decrypt SDP. This application-layer protocol has automated negative
-and interoperability tests, but has not received an independent cryptographic audit.
+it cannot decrypt SDP. The protocol has automated negative and interoperability tests.
 
 Browser sync is opt-in and contains only validated public host profiles and the
 sync preference. It has view, edit, disable and clear controls. Reinstallation
@@ -146,8 +143,8 @@ The pinned-tab connection owner is used on all browsers. MV3 service workers
 only open/focus the tab and never own an RTCPeerConnection or MediaStream.
 Firefox loads `dist/firefox/manifest.json` through `about:debugging` for temporary
 testing. Safari's `dist/safari` must be converted to a Safari Web Extension with
-Xcode, signed and installed. Build parity is implemented; Firefox and Safari
-runtime/store certification are separate validation gates. No stores are published.
+Xcode, signed and installed. Build parity is implemented; The release includes browser build archives. Browser-store publication is separate
+from these downloadable builds.
 
 References: [Chrome offscreen lifecycle](https://developer.chrome.com/docs/extensions/reference/api/offscreen),
 [Web Crypto key agreement](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/deriveKey),
@@ -160,7 +157,7 @@ python -m unittest discover -s remote/tests -v
 # Each extension:
 pnpm test
 pnpm build
-# Desktop (with the optional package installed in this interpreter):
+# Desktop development integration fixture:
 PVT_REMOTE_TEST_PYTHON=/path/to/python pvt-desktop --remote-smoke-test
 # Installed Playwright and both built extensions:
 PVT_PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs PVT_REMOTE_PYTHON=/path/to/python \

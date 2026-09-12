@@ -3,7 +3,7 @@ const prefix = 'pvt.host.';
 export class ProfileStore {
   constructor(api, role) { this.api = api; this.role = role; }
   async load() {
-    const saved = await this.api.storage.local.get(['identity', 'hosts', 'syncEnabled', 'selected']);
+    const saved = await this.api.storage.local.get(['identity', 'hosts', 'syncEnabled', 'selected', 'paused']);
     if (!saved.identity) {
       saved.identity = await newIdentity(this.role);
       await this.api.storage.local.set({identity: saved.identity});

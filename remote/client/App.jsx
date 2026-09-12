@@ -13,6 +13,7 @@ export function App({role, icon}) {
   const file = useRef(null);
   const [data, setData] = useState(null);
   const [selected, setSelected] = useState('');
+  const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState('Disconnected');
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
@@ -39,7 +40,9 @@ export function App({role, icon}) {
     store.current.load().then(saved => {
       if (cancelled) return;
       setData(saved); setSelected(saved.selected || saved.hosts[0]?.id || '');
-    }).catch(reason => setError(`Cannot initialize secure identity: ${reason.message}. Use a browser with Ed25519 and X25519 support.`));
+      setPaused(saved.paused === true);
+      if (!saved.hosts.length) setSettings(true);
+    }).catch(() => setError('This browser could not prepare pairing.'));
     return () => { cancelled = true; connection.current?.disconnect(); };
   }, []);
   useEffect(() => {
@@ -48,7 +51,7 @@ export function App({role, icon}) {
     const timer = setInterval(async () => {
       if (pending) return;
       pending = true;
-      try { await refresh(); } catch (reason) { setError(reason.message); } finally { pending = false; }
+      try { await refresh(); } catch { /* Transport owns reconnection; routine polling stays quiet. */ } finally { pending = false; }
     }, 1000);
     return () => clearInterval(timer);
   }, [connected]);
@@ -57,23 +60,29 @@ export function App({role, icon}) {
     setConnected(false); setHostState(null); setActiveController(''); setStatus('Disconnected'); setBusy(false);
   };
   const selectHost = id => {
-    disconnect(); setSelected(id); setSection('');
-    run(() => browser.storage.local.set({selected: id}));
+    disconnect(); setSelected(id); setSection(''); setPaused(false);
+    run(() => browser.storage.local.set({selected: id, paused: false}));
   };
-  const connect = async () => {
-    if (!selectedHost || !data) return;
-    disconnect(); setBusy(true);
+  useEffect(() => {
+    if (!selectedHost || !data || paused) return;
+    setBusy(true);
     const current = new Connection(data.identity, selectedHost, {
-      onStatus: text => { if (connection.current === current) { setStatus(text); if (text === 'Disconnected') setConnected(false); } },
-      onStream: stream => { if (video.current) video.current.srcObject = stream; },
+      onStatus: text => {
+        if (connection.current !== current) return;
+        setStatus(text); setConnected(text === 'Connected'); setBusy(text !== 'Connected');
+        if (text !== 'Connected') { setHostState(null); setActiveController(''); }
+      },
+      onStream: stream => { if (connection.current === current && video.current) video.current.srcObject = stream; },
     });
     connection.current = current;
-    try {
-      await current.connect();
-      if (connection.current !== current) return;
-      setConnected(true); await refresh(current);
-    } catch (reason) { if (connection.current === current) { disconnect(); throw reason; } }
-    finally { setBusy(false); }
+    current.connect().catch(() => { if (connection.current === current) setError('PVT could not connect.'); });
+    return () => { current.disconnect(); if (connection.current === current) connection.current = null; };
+  }, [selectedHost, data?.identity, paused]);
+  const toggleConnection = async () => {
+    const next = !paused;
+    if (next) disconnect();
+    setPaused(next);
+    await browser.storage.local.set({paused: next});
   };
   const saveHosts = async hosts => {
     await store.current.saveHosts(hosts, data.syncEnabled);
@@ -116,23 +125,21 @@ export function App({role, icon}) {
       <label>Host <select value={selected} onChange={event => selectHost(event.target.value)} aria-label="Active host">
         <option value="">Select a paired host</option>{data?.hosts.map(host => <option key={host.id} value={host.id}>{host.label}</option>)}
       </select></label>
-      <button className="primary" disabled={!data || !selectedHost} onClick={() => run(connected || busy ? async () => disconnect() : connect)}>{busy ? 'Cancel connection' : connected ? 'Disconnect' : 'Connect'}</button>
+      <button className="primary" disabled={!data || !selectedHost} onClick={() => run(toggleConnection)}>{paused ? 'Connect' : connected ? 'Disconnect' : 'Pause connection'}</button>
       <label className="switch"><input type="checkbox" disabled={!connected} checked={hostState?.background || false} onChange={event => run(() => command('background', {value: event.target.checked}))}/> Host in background</label>
     </div>
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}
     {settings && <section className="settings" aria-label="Hosts and settings">
       <div className="settings-heading"><h2>Hosts & pairing</h2><button onClick={() => setSettings(false)}>Done</button></div>
-      <p>Export this remote’s public identity and import it in PVT’s Networking & Remotes. Then import the host’s .pvthost file here.</p>
+      <p>Save this remote’s pairing file and open it in PVT’s Networking & Remotes. Save PVT’s pairing file there and open it here. After that, keep PVT running and this tab open; connections resume automatically.</p>
       <div className="button-row">
         <button disabled={!data} onClick={() => download(data.identity.public, `PVT-${display ? 'RD' : 'RC'}.pvtremote`)}>Export .pvtremote</button>
         <button disabled={!data} onClick={() => file.current.click()}>Import .pvthost</button>
         <input ref={file} type="file" accept=".pvthost,application/json" hidden onChange={event => { const selected = event.target.files[0]; event.target.value = ''; run(() => importHost(selected)); }}/>
       </div>
-      <ul className="hosts">{data?.hosts.map(host => <li key={host.id}><div><strong>{host.label}</strong><small>{host.id}</small><code title="Pinned Ed25519 public key">{host.ed25519}</code></div><div className="button-row"><button onClick={() => setEdit({...host, endpointText: host.endpoints.join('\n')})}>Edit</button><button onClick={() => run(async () => { if (selected === host.id) selectHost(''); await saveHosts(data.hosts.filter(p => p.id !== host.id)); })}>Remove</button></div></li>)}</ul>
-      {edit && <form className="edit-host" onSubmit={event => { event.preventDefault(); run(async () => { const updated = profile({...edit, endpoints: edit.endpointText.split('\n').map(s => s.trim()).filter(Boolean)}, 'pvthost'); if (selected === updated.id) disconnect(); await saveHosts(data.hosts.map(p => p.id === updated.id ? updated : p)); setEdit(null); }); }}>
+      <ul className="hosts">{data?.hosts.map(host => <li key={host.id}><div><strong>{host.label}</strong><small>{host.id}</small><code title="Pinned Ed25519 public key">{host.ed25519}</code></div><div className="button-row"><button onClick={() => setEdit({...host})}>Edit</button><button onClick={() => run(async () => { if (selected === host.id) selectHost(''); await saveHosts(data.hosts.filter(p => p.id !== host.id)); })}>Remove</button></div></li>)}</ul>
+      {edit && <form className="edit-host" onSubmit={event => { event.preventDefault(); run(async () => { const updated = profile(edit, 'pvthost'); if (selected === updated.id) disconnect(); await saveHosts(data.hosts.map(p => p.id === updated.id ? updated : p)); setEdit(null); }); }}>
         <h3>Edit host profile</h3><label>Name<input required maxLength={120} value={edit.label} onChange={event => setEdit({...edit, label: event.target.value})}/></label>
-        <label>Local endpoints, one per line<textarea rows={3} value={edit.endpointText} onChange={event => setEdit({...edit, endpointText: event.target.value})}/></label>
-        <label>Signaling URL<input value={edit.signaling_url} onChange={event => setEdit({...edit, signaling_url: event.target.value})}/></label>
         <div className="button-row"><button className="primary">Save profile</button><button type="button" onClick={() => setEdit(null)}>Cancel</button></div>
       </form>}
       <div className="sync"><h2>Browser sync</h2><p>Only public host profiles are synced. Your private remote identity stays on this device. Reinstalling restores synced hosts and your sync preference, but requires pairing the new remote identity in PVT.</p>
@@ -143,7 +150,7 @@ export function App({role, icon}) {
       </div>
     </section>}
     <main>
-      {display ? <section className="display"><div className="screen"><video ref={video} autoPlay playsInline muted={muted} controls={false}/>{!connected && <div className="empty"><div className="display-symbol" aria-hidden="true"/><h2>Your stage, wherever you are.</h2><p>Pair a PVT host, then connect to its live output.</p><button onClick={() => setSettings(true)}>Set up a host</button></div>}</div><div className="display-tools"><span>{connected ? 'Live audio & video' : 'Waiting for a host'}</span><button disabled={!connected} onClick={() => { setMuted(!muted); video.current?.play().catch(reason => setError(reason.message)); }}>{muted ? 'Enable audio' : 'Mute audio'}</button><button disabled={!connected} onClick={() => run(() => video.current.requestFullscreen())}>Full screen</button></div></section>
+      {display ? <section className="display"><div className="screen"><video ref={video} autoPlay playsInline muted={muted} controls={false}/>{!connected && <div className="empty"><div className="display-symbol" aria-hidden="true"/><h2>Your PVT stage.</h2><p>Pair with PVT once. Its live output connects automatically.</p><button onClick={() => setSettings(true)}>Set up a host</button></div>}</div><div className="display-tools"><span>{connected ? 'Live audio & video' : 'Waiting for a host'}</span><button disabled={!connected} onClick={() => { setMuted(!muted); video.current?.play().catch(reason => setError(reason.message)); }}>{muted ? 'Enable audio' : 'Mute audio'}</button><button disabled={!connected} onClick={() => run(() => video.current.requestFullscreen())}>Full screen</button></div></section>
       : <section className="control"><aside><h2>Parameters</h2><label className="search"><span>Search all controls</span><input type="search" value={search} placeholder="Layer, effect, or parameter…" onChange={event => { setSearch(event.target.value); setSection(''); }}/></label><nav aria-label="Parameter sections"><button className={!section ? 'selected' : ''} onClick={() => setSection('')}>All parameters <span>{targets.length}</span></button>{sections.map(name => <button key={name} className={section === name ? 'selected' : ''} onClick={() => setSection(name)}>{name}</button>)}</nav></aside><div className="parameters">
         <div className="performance"><h2>{selectedHost?.label || 'No host selected'}</h2><div className="button-row"><button disabled={!controlling || hostState?.busy} onClick={() => run(() => command('live', {value: !hostState.live}))}>{hostState?.live ? 'Stop live output' : 'Go live'}</button><button disabled={!controlling || hostState?.busy} onClick={() => run(() => command('playback', {value: !hostState.playing}))}>{hostState?.playing ? 'Pause' : 'Play'}</button><button disabled={!controlling || hostState?.busy} onClick={() => run(() => command('undo'))}>Undo</button><button disabled={!controlling || hostState?.busy} onClick={() => run(() => command('redo'))}>Redo</button></div></div>
         {!connected ? <div className="empty"><h2>Bring your controls closer.</h2><p>Connect a paired host to browse its layers, effects, and project controls.</p><button onClick={() => setSettings(true)}>Set up a host</button></div> : <>

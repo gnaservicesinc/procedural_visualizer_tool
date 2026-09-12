@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the optional PVT transport in its own user-owned Python environment.
+"""Developer-only transport environment; release applications bundle their worker.
 
 Does not enable networking, change desktop settings, or modify system Python.
 """
@@ -20,5 +20,5 @@ if not (source / 'pyproject.toml').exists():
 venv.EnvBuilder(with_pip=True).create(args.destination)
 python = args.destination / ('Scripts/python.exe' if sys.platform == 'win32' else 'bin/python')
 subprocess.run([str(python), '-m', 'pip', 'install', str(source)], check=True)
-print(f'Installed. PVT detects the default location automatically. Python path: {python}')
-print('Open Settings > Networking & Remotes to pair devices and enable networking.')
+print(f'Developer environment ready: {python}')
+print('For development tests only, set PVT_REMOTE_TEST_PYTHON to that interpreter.')

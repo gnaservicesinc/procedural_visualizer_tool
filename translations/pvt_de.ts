@@ -883,7 +883,7 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2309"/>
+        <location filename="../gui/live_workspace.cpp" line="+2311"/>
         <location line="+2168"/>
         <location line="+945"/>
         <source>Listening…</source>
@@ -899,17 +899,17 @@
         <translation>MIDI-Lernen</translation>
     </message>
     <message>
-        <location line="-4905"/>
+        <location line="-4907"/>
         <source>Active Control Remote: %1</source>
         <translation>Aktive Fernsteuerung: %1</translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>Networking &amp; Remotes</source>
         <translation>Netzwerk und Fernsteuerungen</translation>
     </message>
     <message>
-        <location line="+331"/>
+        <location line="+332"/>
         <location line="+2499"/>
         <source>STANDBY</source>
         <translation>BEREIT</translation>
@@ -8363,7 +8363,7 @@ Projekt-UUID: %2
     </message>
     <message>
         <location line="+22"/>
-        <location filename="../gui/main_window_remote.cpp" line="+118"/>
+        <location filename="../gui/main_window_remote.cpp" line="+122"/>
         <source>Networking &amp; Remotes…</source>
         <translation>Netzwerk und Fernsteuerungen…</translation>
     </message>
@@ -14330,7 +14330,7 @@ Stoppen Sie die Videoausgabe, um hier eine Vorschau zu sehen.</translation>
         <translation>Maximale Unschärfe</translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3457"/>
+        <location filename="../gui/live_workspace.cpp" line="-3459"/>
         <source> · display %1 of %2</source>
         <translation> · Bildschirm %1 von %2</translation>
     </message>
@@ -15025,17 +15025,12 @@ Hinweise:</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+36"/>
-        <source>Remote worker could not run: %1</source>
-        <translation>Der Fernsteuerungsprozess konnte nicht gestartet werden: %1</translation>
-    </message>
-    <message>
-        <location line="+55"/>
+        <location filename="../gui/remote_bridge.cpp" line="+114"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Der Fernsteuerungsprozess hat das Nachrichtenlimit überschritten.</translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+24"/>
         <source>Networking &amp; Remotes enabled</source>
         <translation>Netzwerk und Fernsteuerungen aktiviert</translation>
     </message>
@@ -15045,78 +15040,28 @@ Hinweise:</translation>
         <translation>Netzwerk und Fernsteuerungen deaktiviert</translation>
     </message>
     <message>
-        <location line="+48"/>
-        <location line="+86"/>
+        <location line="+64"/>
+        <location line="+78"/>
         <source>None</source>
         <translation>Keine</translation>
     </message>
     <message>
-        <location line="-56"/>
+        <location line="-48"/>
         <source>Networking &amp; Remotes</source>
         <translation>Netzwerk und Fernsteuerungen</translation>
     </message>
     <message>
-        <location line="+5"/>
-        <source>Start / restart worker</source>
-        <translation>Prozess starten / neu starten</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Python with pvt-remote installed</source>
-        <translation>Python mit installiertem pvt-remote</translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+4"/>
         <source>Enable Networking &amp; Remotes</source>
         <translation>Netzwerk und Fernsteuerungen aktivieren</translation>
     </message>
     <message>
         <location line="+2"/>
-        <source>Allow paired remotes on the local network (mDNS)</source>
-        <translation>Gekoppelte Fernsteuerungen im lokalen Netzwerk zulassen (mDNS)</translation>
-    </message>
-    <message>
-        <location line="+1"/>
         <source>Close window to system tray / menu bar</source>
         <translation>Fenster in den Infobereich / die Menüleiste schließen</translation>
     </message>
     <message>
-        <location line="+6"/>
-        <source>Optional wss:// signaling server</source>
-        <translation>Optionaler wss://-Signalisierungsserver</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>ICE servers as JSON; [] keeps LAN connections offline</source>
-        <translation>ICE-Server als JSON; [] hält LAN-Verbindungen offline</translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Host name</source>
-        <translation>Hostname</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Local signaling port</source>
-        <translation>Lokaler Signalisierungsport</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Remote signaling URL</source>
-        <translation>URL für entfernte Signalisierung</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>STUN / TURN servers</source>
-        <translation>STUN-/TURN-Server</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Paired remotes — public identities only</source>
-        <translation>Gekoppelte Fernsteuerungen — nur öffentliche Identitäten</translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+12"/>
         <source>Active Control Remote</source>
         <translation>Aktive Fernsteuerung</translation>
     </message>
@@ -15131,7 +15076,7 @@ Hinweise:</translation>
         <translation>Fernsteuerung entfernen</translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>Export .pvthost…</source>
         <translation>.pvthost exportieren…</translation>
     </message>
@@ -15141,12 +15086,37 @@ Hinweise:</translation>
         <translation>Hintergrundmodus umschalten</translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>Install the optional transport: python3 -m pip install /path/to/PVT/remote</source>
-        <translation>Optionalen Transport installieren: python3 -m pip install /path/to/PVT/remote</translation>
+        <location line="-220"/>
+        <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
+        <translation>Fernsteuerungen sind vorübergehend nicht verfügbar. PVT versucht es automatisch erneut.</translation>
     </message>
     <message>
-        <location line="+31"/>
+        <location line="+98"/>
+        <source>Pairing changes could not be saved. Check the pairing file and try again.</source>
+        <translation>Kopplungsänderungen konnten nicht gespeichert werden. Prüfen Sie die Kopplungsdatei und versuchen Sie es erneut.</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>Waiting for a connection. PVT will reconnect automatically.</source>
+        <translation>Warten auf eine Verbindung. PVT stellt die Verbindung automatisch wieder her.</translation>
+    </message>
+    <message>
+        <location line="+96"/>
+        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote. Paired devices reconnect automatically while PVT is running.</source>
+        <translation>Einmal koppeln: Speichern Sie die Kopplungsdatei von Remote Display oder Remote Control und öffnen Sie sie hier. Speichern Sie dann die Kopplungsdatei von PVT und öffnen Sie sie in der Fernsteuerung. Gekoppelte Geräte verbinden sich automatisch, solange PVT läuft.</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Paired devices</source>
+        <translation>Gekoppelte Geräte</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>Preparing pairing…</source>
+        <translation>Kopplung wird vorbereitet…</translation>
+    </message>
+    <message>
+        <location line="+34"/>
         <source>Import remote</source>
         <translation>Fernsteuerung importieren</translation>
     </message>
@@ -15171,7 +15141,7 @@ Hinweise:</translation>
         <translation>Vor dem Ersetzen der Schlüssel die vorhandene Identität entfernen.</translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+25"/>
         <source>Export host</source>
         <translation>Host exportieren</translation>
     </message>
@@ -15182,13 +15152,8 @@ Hinweise:</translation>
     </message>
     <message>
         <location line="+6"/>
-        <source>Host profile exported. Apply networking changes before exporting a new profile.</source>
-        <translation>Hostprofil exportiert. Netzwerkänderungen vor dem Exportieren eines neuen Profils anwenden.</translation>
-    </message>
-    <message>
-        <location line="+8"/>
-        <source>ICE servers must be a JSON array.</source>
-        <translation>ICE-Server müssen ein JSON-Array sein.</translation>
+        <source>Pairing file saved. Open it in Remote Display or Remote Control to finish setup.</source>
+        <translation>Kopplungsdatei gespeichert. Öffnen Sie sie in Remote Display oder Remote Control, um die Einrichtung abzuschließen.</translation>
     </message>
 </context>
 <context>

@@ -21,6 +21,7 @@ override_dh_auto_configure:
 		-DPVT_BUILD_EXAMPLES=OFF \
 		-DPVT_BUILD_QT_GUI=ON \
 		-DPVT_DEPLOY_QT_RUNTIME=OFF \
+		-DPVT_REMOTE_SYSTEM_RUNTIME=ON \
 		-DPVT_ENABLE_METAL=OFF
 
 override_dh_auto_test:

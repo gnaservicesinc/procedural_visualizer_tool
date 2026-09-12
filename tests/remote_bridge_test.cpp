@@ -29,6 +29,7 @@ static int worker() {
         const auto message = QJsonDocument::fromJson(QByteArray::fromStdString(line)).object();
         const auto op = message.value("op").toString();
         if (op == "shutdown") break;
+        if (op == "enable") emitJson({{"event", "configured"}, {"config", config}, {"enabled", message.value("enabled")}});
         if (op == "configure") {
             const auto changes = message.value("config").toObject();
             for (auto it = changes.begin(); it != changes.end(); ++it) config.insert(it.key(), it.value());
@@ -36,7 +37,10 @@ static int worker() {
         }
         if (op == "video") {
             const auto image = QImage::fromData(QByteArray::fromBase64(message.value("jpeg").toString().toLatin1()));
-            emitJson({{"event", "status"}, {"error", QStringLiteral("frame %1x%2").arg(image.width()).arg(image.height())}});
+            if (image.size() == QSize(1, 1)) return 23;
+            auto frames = config;
+            frames.insert("remotes", QJsonArray{QJsonObject{{"role", "control"}, {"label", QStringLiteral("frame %1x%2").arg(image.width()).arg(image.height())}}});
+            emitJson({{"event", "configured"}, {"config", frames}, {"enabled", true}});
         }
     }
     return 0;
@@ -53,14 +57,14 @@ static bool spin(const std::function<bool()>& condition) {
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
-    if (argc > 1 && QByteArray(argv[1]) == "-I") return worker();
+    if (argc > 1 && QByteArray(argv[1]) == "--directory") return worker();
     QTemporaryDir temporary;
     if (!temporary.isValid()) return 1;
     QCoreApplication::setOrganizationName("PVT-test");
     QCoreApplication::setApplicationName("remote-bridge");
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, temporary.path());
-    QSettings().setValue("remotes/python", QCoreApplication::applicationFilePath());
+    qputenv("PVT_REMOTE_TEST_WORKER", QCoreApplication::applicationFilePath().toUtf8());
     RemoteBridge bridge;
     QString last_status;
     QObject::connect(&bridge, &RemoteBridge::statusChanged, &app, [&](const QString& status) { last_status = status; });
@@ -68,17 +72,15 @@ int main(int argc, char** argv) {
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
-        auto* label = dialog->findChild<QLineEdit*>("remoteHostName");
         auto* enabled = dialog->findChild<QCheckBox*>("remoteNetworkingEnabled");
         auto* buttons = dialog->findChild<QDialogButtonBox*>("remoteManagerButtons");
-        if (!label || !enabled || !buttons) { dialog->reject(); return; }
-        label->setText("Applied before ready");
+        if (!enabled || !buttons || !dialog->findChildren<QLineEdit*>().isEmpty() || !dialog->findChildren<QSpinBox*>().isEmpty()) { dialog->reject(); return; }
         enabled->setChecked(true);
         buttons->button(QDialogButtonBox::Apply)->click();
         // Keep editing while startup and configure acknowledgments arrive.
-        label->setText("Unapplied draft");
+        enabled->setChecked(false);
         const bool enabled_ok = spin([&] { return bridge.enabled(); });
-        applied = enabled_ok && label->text() == "Unapplied draft";
+        applied = enabled_ok && !enabled->isChecked();
         dialog->reject();
     });
     bridge.showManager(nullptr);
@@ -87,9 +89,7 @@ int main(int argc, char** argv) {
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
-        auto* label = dialog->findChild<QLineEdit*>("remoteHostName");
-        const auto* port = dialog->findChild<QSpinBox*>();
-        retained = label && label->text() == "Applied before ready" && port && port->value() == 54321
+        retained = dialog->findChildren<QLineEdit*>().isEmpty() && dialog->findChildren<QSpinBox*>().isEmpty()
             && bridge.controlNames().contains("Saved control");
         dialog->reject();
     });
@@ -104,10 +104,15 @@ int main(int argc, char** argv) {
         last_status.clear();
         bridge.sendFrame(image);
         const auto expected = QStringLiteral("frame %1x%2").arg(output.width()).arg(output.height());
-        if (!spin([&] { return last_status == expected; })) {
+        if (!spin([&] { return bridge.controlNames().contains(expected); })) {
             std::cerr << "Unexpected encoded frame dimensions: " << last_status.toStdString() << '\n'; return 1;
         }
     }
+    bool lost = false;
+    QObject::connect(&bridge, &RemoteBridge::configurationChanged, &app, [&] { if (!bridge.enabled()) lost = true; });
+    QImage crash(1, 1, QImage::Format_RGB32); crash.fill(Qt::black);
+    bridge.sendFrame(crash);
+    if (!spin([&] { return lost && bridge.enabled(); })) { std::cerr << "Worker did not recover automatically\n"; return 1; }
     bridge.stop();
     std::cout << "Remote startup configuration, draft retention and encoded video dimensions passed\n";
     return 0;

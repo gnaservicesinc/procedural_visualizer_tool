@@ -1,5 +1,9 @@
 # Implementation and deployment status
 
+PVT Remotes supports paired devices on the same network and same-computer use
+without an external network. Initial setup exchanges two pairing files; subsequent
+connections and recovery are automatic. No public service is required.
+
 Implemented in the three local repositories:
 
 - Separate React/Vite PVT-RC and PVT-RD extensions with Chrome MV3 manifests.
@@ -10,8 +14,8 @@ Implemented in the three local repositories:
 - Multi-host import/edit/remove/switch, local identity, opt-in public-profile
   browser sync with preference restoration, view/disable/clear controls.
 - Real WebRTC video/audio and data channels, authenticated loopback WebSocket
-  control, opt-in LAN listener/mDNS advertisements, host-file LAN endpoints.
-- Self-hostable opaque signaling relay and configurable STUN/TURN support.
+  control, automatic LAN discovery with stable identity names and interface refresh.
+- Existing opaque relay protocol preserved for provisioned deployments.
 - Desktop Remote Manager exposed in Settings and Application Settings.
 - Single active control identity with immediate permission enforcement,
   multiple displays, revocation, and selection in the normal MIDI Control Map.
@@ -32,19 +36,15 @@ Engineering adjustments to the proposal:
   a second render engine or new graphics-context subsystem is unnecessary.
 - A pinned tab is the cross-browser WebRTC owner; no offscreen-to-popup
   MediaStream serialization is attempted.
-- The optional Python/aiortc transport is separate from Qt/device/render ownership.
-  Its runtime must be installed; it is not silently downloaded on application launch.
+- The shared transport is frozen at build time and bundled with PVT.
+  User setup contains only the existing mutual pairing-file exchange.
 
-Deployment/validation still requiring a target environment:
+Distribution:
 
-- Public relay hosting, TLS/domain setup and TURN provisioning.
-- Connectivity across actual external NAT/firewall combinations.
-- Firefox and Safari runtime acceptance; Safari conversion/signing and store
-  packaging. Generated manifests and bundles alone do not establish runtime parity.
-- Release packaging of the optional Python runtime if a single-download installer
-  is desired. The included installer currently prepares an isolated local runtime.
-- Independent cryptographic review of the application-level signaling protocol.
+- The desktop release includes the worker and its dependencies. Debian packages
+  supply the same worker through automatically installed package dependencies.
+- PVT-RC and PVT-RD publish Chrome, Firefox and Safari build archives.
+- Cross-internet hosting and browser-store publication are not prerequisites
+  for the supported same-network workflow.
 
-Public relay deployment, version/release publication and browser store
-submissions are outside this local verification. See VERIFICATION.md for the
-completed checks.
+See VERIFICATION.md for concrete automated checks and release evidence.

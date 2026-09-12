@@ -7,17 +7,39 @@ export class Connection {
     this.session = crypto.randomUUID(); this.stream = new MediaStream();
   }
   async connect() {
-    const choices = [...this.host.endpoints.map(url => ({url, relay: false})), ...(this.host.signaling_url ? [{url: this.host.signaling_url, relay: true}] : [])];
-    let error = Error('This host has no connection endpoints. Export it again from PVT.');
-    for (const choice of choices) {
-      if (this.closed) throw Error('Connection cancelled');
-      try { await this.attempt(choice); return; }
-      catch (reason) { error = reason; this.cleanup(); }
+    const first = 49152 + parseInt(this.host.id.replaceAll('-', '').slice(0, 8), 16) % 16000;
+    const automatic = Array.from({length: 4}, (_, offset) => first + offset).flatMap(port =>
+      [`ws://127.0.0.1:${port}`, `ws://pvt-${this.host.id}.local:${port}`]);
+    const choices = [...new Set([...this.host.endpoints, ...automatic])].map(url => ({url, relay: false}));
+    if (this.host.signaling_url) choices.push({url: this.host.signaling_url, relay: true});
+    while (!this.closed) {
+      for (const choice of choices) {
+        if (this.closed) return;
+        try { await this.attempt(choice); this.retryDelay = 1000; return; }
+        catch { this.cleanup(); }
+      }
+      if (this.closed) return;
+      this.onStatus('Waiting for PVT · reconnecting automatically');
+      await new Promise(resolve => {
+        const finish = () => { clearTimeout(this.retryTimer); globalThis.removeEventListener?.('online', finish); this.cancelRetry = null; resolve(); };
+        this.cancelRetry = finish;
+        globalThis.addEventListener?.('online', finish, {once: true});
+        this.retryTimer = setTimeout(finish, this.retryDelay || 1000);
+      });
+      this.retryDelay = Math.min((this.retryDelay || 1000) * 2, 10000);
     }
-    throw error;
+  }
+  reconnect() {
+    if (this.closed || this.reconnecting) return;
+    this.reconnecting = true;
+    this.cleanup();
+    this.onStatus('Waiting for PVT · reconnecting automatically');
+    // Let the previous event finish before opening a replacement connection.
+    Promise.resolve().then(() => this.connect()).finally(() => { this.reconnecting = false; });
   }
   async attempt({url, relay}) {
-    this.onStatus(`Connecting to ${new URL(url).hostname}…`);
+    this.onStatus('Connecting to PVT…');
+    this.session = crypto.randomUUID();
     const ws = new WebSocket(url); this.ws = ws;
     this.local = !relay && ['127.0.0.1', '[::1]', 'localhost'].includes(new URL(url).hostname);
     this.authenticated = false;
@@ -31,24 +53,24 @@ export class Connection {
     }
     await new Promise((resolve, reject) => {
       let connected = false;
-      const timer = setTimeout(() => reject(Error('Connection timed out. Check pairing, networking and ICE servers.')), relay ? 35000 : 12000);
+      let timer = setTimeout(() => reject(Error('Waiting for PVT')), 2500);
       this.cancelAttempt = () => { clearTimeout(timer); reject(Error('Connection cancelled')); };
       const fail = reason => { clearTimeout(timer); reject(reason); };
       const success = () => {
         if (connected) return;
         connected = true; clearTimeout(timer); this.cancelAttempt = null;
-        this.onStatus(this.local ? 'Connected · local control + WebRTC' : 'Connected · WebRTC'); resolve();
+        this.onStatus('Connected'); resolve();
       };
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected' && this.channel.readyState === 'open') success();
         if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
-          this.onStatus('Disconnected');
           if (!connected) fail(Error('WebRTC connection failed'));
-          else { this.cleanup(); }
+          else { this.reconnect(); }
         }
       };
       this.channel.onopen = success;
-      ws.onerror = () => fail(Error(`Cannot reach ${new URL(url).hostname}`));
+      this.channel.onclose = () => { if (connected) this.reconnect(); else fail(Error('Waiting for PVT')); };
+      ws.onerror = () => { if (!connected) fail(Error('Waiting for PVT')); };
       ws.onclose = () => { this.authenticated = false; if (!connected) fail(Error('Host rejected the connection; check mutual pairing')); };
       // Serialize signaling to protect ordering and avoid duplicate offer work.
       let messages = Promise.resolve();
@@ -57,6 +79,8 @@ export class Connection {
           if (this.closed || this.ws !== ws) return;
           const message = JSON.parse(event.data);
           if (message.challenge) {
+            clearTimeout(timer);
+            timer = setTimeout(() => reject(Error('Waiting for PVT')), 35000);
             if (relay) {
               ws.send(JSON.stringify({op: 'register', id: this.identity.public.id, key: this.identity.public.ed25519,
                 signature: await this.cipher.sign(['pvt-relay-v1', this.identity.public.id, message.challenge])}));
@@ -76,7 +100,7 @@ export class Connection {
               await pc.setRemoteDescription({type: 'answer', sdp: payload.sdp});
             } else throw Error('Unexpected signaling reply');
           }
-        }).catch(reason => { if (connected) { this.cleanup(); this.onStatus('Disconnected'); } else fail(reason); });
+        }).catch(reason => { if (connected) { this.reconnect(); } else fail(reason); });
       };
     });
   }
@@ -131,6 +155,7 @@ export class Connection {
   cleanup() {
     this.cancelAttempt?.(); this.cancelAttempt = null;
     if (this.ws) { this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; this.ws.close(); }
+    if (this.channel) this.channel.onclose = this.channel.onmessage = this.channel.onopen = null;
     if (this.pc) { this.pc.onconnectionstatechange = null; this.pc.close(); }
     this.channel = this.ws = this.pc = null; this.authenticated = false;
     for (const request of this.pending.values()) { clearTimeout(request.timer); request.reject(Error('Disconnected')); }
@@ -138,5 +163,5 @@ export class Connection {
     for (const track of this.stream.getTracks()) track.stop();
     this.stream = new MediaStream(); this.onStream(null);
   }
-  disconnect() { this.closed = true; this.cleanup(); this.onStatus('Disconnected'); }
+  disconnect() { this.closed = true; this.cancelRetry?.(); this.cleanup(); this.onStatus('Disconnected'); }
 }

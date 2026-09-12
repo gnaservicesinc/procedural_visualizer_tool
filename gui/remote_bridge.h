@@ -8,7 +8,7 @@
 #include <functional>
 #include <optional>
 
-// An optional transport worker. The desktop is the sole owner of project state,
+// The bundled transport worker. The desktop is the sole owner of project state,
 // render contexts, devices and undo. Disabled networking never launches listeners.
 class RemoteBridge final : public QObject {
     Q_OBJECT
@@ -43,6 +43,7 @@ private:
     void receive();
     void configure(const QJsonObject& config, bool enabled);
     QProcess process_;
+    QTimer restart_timer_;
     QTimer state_timer_;
     QTimer frame_timer_;
     QImage pending_frame_;
@@ -57,5 +58,6 @@ private:
     bool requested_enabled_ = false;
     bool ready_ = false;
     bool config_loaded_ = false;
+    bool configuring_ = false;
 };
 #endif

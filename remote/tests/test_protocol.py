@@ -127,4 +127,73 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(display['id'],host.sessions)
             await host.disable()
 
-if __name__ == '__main__': unittest.main()
+
+class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
+    async def test_offline_localhost_and_busy_port(self):
+        from websockets.asyncio.server import serve
+        with tempfile.TemporaryDirectory() as temp:
+            host = Host(temp)
+            self.assertTrue(host.config['lan'])
+            async with serve(lambda ws: None, '0.0.0.0', host.config['port']):
+                with patch.object(host, 'lan_addresses', return_value=[]):
+                    await host.enable()
+                    try:
+                        self.assertEqual(host.config['port'], host.automatic_ports()[1])
+                        # An unavailable LAN doesn't remove loopback or change identity.
+                        await asyncio.sleep(0)
+                        self.assertIsNone(host.mdns)
+                        self.assertIn('127.0.0.1', host.public()['endpoints'][0])
+                        saved = Host(temp)
+                        self.assertEqual(saved.cipher.public, host.cipher.public)
+                        self.assertEqual(saved.automatic_ports(), host.automatic_ports())
+                    finally:
+                        await host.disable()
+
+    async def test_invalid_import_does_not_enable_or_replace_saved_pairing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            host = Host(temp)
+            events = []
+            host.emit = events.append
+            before = dict(host.config)
+            bad = new_identity('pvtremote', 'display')['public']
+            bad['ed25519'] = 'bad'
+            await host.input(dict(op='configure', enabled=True, config=dict(remotes=[bad])))
+            self.assertEqual(events[-1]['event'], 'rejected')
+            self.assertEqual(host.config, before)
+            self.assertFalse(host.enabled)
+            self.assertIsNone(host.server)
+
+    async def test_legacy_pairing_migration_preserves_keys_and_controller(self):
+        with tempfile.TemporaryDirectory() as temp:
+            host = Host(temp)
+            remote = new_identity('pvtremote', 'control')['public']
+            host.config.update(lan=False, remotes=[remote], active_control=remote['id'])
+            save_private(host.config_path, host.config)
+            loaded = Host(temp)
+            self.assertTrue(loaded.config['lan'])
+            self.assertFalse(loaded.enabled)
+            self.assertEqual(loaded.config['remotes'], [remote])
+            self.assertEqual(loaded.config['active_control'], remote['id'])
+            self.assertEqual(loaded.cipher.public, host.cipher.public)
+
+    async def test_address_change_republishes_stable_identity(self):
+        from unittest.mock import AsyncMock
+        with tempfile.TemporaryDirectory() as temp:
+            host = Host(temp)
+            first, second = AsyncMock(), AsyncMock()
+            with patch('pvt_remote.host.AsyncZeroconf', side_effect=[first, second]), patch.object(host, 'lan_addresses', return_value=['192.168.1.8']):
+                await host.refresh_discovery()
+                name = host.service.server
+                self.assertEqual(name, host.discovery_name() + '.')
+                exported = host.public()['endpoints'][1]
+                with patch.object(host, 'lan_addresses', return_value=['192.168.2.20']):
+                    await host.refresh_discovery()
+                    self.assertEqual(host.service.server, name)
+                    self.assertEqual(host.public()['endpoints'][1], exported)
+                    self.assertEqual(host.service.parsed_addresses(), ['192.168.2.20'])
+                first.async_close.assert_awaited_once()
+                second.async_register_service.assert_awaited_once()
+                await host.disable()
+
+if __name__ == "__main__":
+    unittest.main()

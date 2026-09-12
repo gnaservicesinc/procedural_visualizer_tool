@@ -883,7 +883,7 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2309"/>
+        <location filename="../gui/live_workspace.cpp" line="+2311"/>
         <location line="+2168"/>
         <location line="+945"/>
         <source>Listening…</source>
@@ -899,17 +899,17 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4905"/>
+        <location line="-4907"/>
         <source>Active Control Remote: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>Networking &amp; Remotes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+331"/>
+        <location line="+332"/>
         <location line="+2499"/>
         <source>STANDBY</source>
         <translation type="unfinished"></translation>
@@ -8351,7 +8351,7 @@ Project UUID: %2
     </message>
     <message>
         <location line="+22"/>
-        <location filename="../gui/main_window_remote.cpp" line="+118"/>
+        <location filename="../gui/main_window_remote.cpp" line="+122"/>
         <source>Networking &amp; Remotes…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14296,7 +14296,7 @@ Stop video output to preview here.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3457"/>
+        <location filename="../gui/live_workspace.cpp" line="-3459"/>
         <source> · display %1 of %2</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14977,17 +14977,12 @@ Notes:</source>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+36"/>
-        <source>Remote worker could not run: %1</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+55"/>
+        <location filename="../gui/remote_bridge.cpp" line="+114"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+24"/>
         <source>Networking &amp; Remotes enabled</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14997,78 +14992,28 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+48"/>
-        <location line="+86"/>
+        <location line="+64"/>
+        <location line="+78"/>
         <source>None</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-56"/>
+        <location line="-48"/>
         <source>Networking &amp; Remotes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+5"/>
-        <source>Start / restart worker</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Python with pvt-remote installed</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+4"/>
         <source>Enable Networking &amp; Remotes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+2"/>
-        <source>Allow paired remotes on the local network (mDNS)</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
         <source>Close window to system tray / menu bar</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+6"/>
-        <source>Optional wss:// signaling server</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>ICE servers as JSON; [] keeps LAN connections offline</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Host name</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Local signaling port</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Remote signaling URL</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>STUN / TURN servers</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Paired remotes — public identities only</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+12"/>
         <source>Active Control Remote</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15083,7 +15028,7 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>Export .pvthost…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15093,12 +15038,37 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>Install the optional transport: python3 -m pip install /path/to/PVT/remote</source>
+        <location line="-220"/>
+        <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+31"/>
+        <location line="+98"/>
+        <source>Pairing changes could not be saved. Check the pairing file and try again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>Waiting for a connection. PVT will reconnect automatically.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+96"/>
+        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote. Paired devices reconnect automatically while PVT is running.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Paired devices</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>Preparing pairing…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+34"/>
         <source>Import remote</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15123,7 +15093,7 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+25"/>
         <source>Export host</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15134,12 +15104,7 @@ Notes:</source>
     </message>
     <message>
         <location line="+6"/>
-        <source>Host profile exported. Apply networking changes before exporting a new profile.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+8"/>
-        <source>ICE servers must be a JSON array.</source>
+        <source>Pairing file saved. Open it in Remote Display or Remote Control to finish setup.</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
