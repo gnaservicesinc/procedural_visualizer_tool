@@ -17357,6 +17357,10 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     bool post_effect_changed = false;
     auto before = captureActiveState();
     bool affects_preview = true;
+    // MSVC represents an else-if chain as nested conditional blocks. Keep the
+    // post-process controls in a separate dispatch chain so this already-large
+    // editor method remains portable to the Windows ARM64 compiler.
+    bool dispatch_post_process_editor = false;
     if (changed_editor == width_) {
         config_.width = width_->value();
     } else if (changed_editor == height_) {
@@ -17867,7 +17871,11 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
             surface_composite_backfaces_->isChecked();
     } else if (changed_editor == surface_normalize_obj_) {
         config_.surface.normalize_obj = surface_normalize_obj_->isChecked();
-    } else if (changed_editor == post_invert_rgb_enabled_) {
+    } else {
+        dispatch_post_process_editor = true;
+    }
+    if (dispatch_post_process_editor
+        && changed_editor == post_invert_rgb_enabled_) {
         if (selected_post_effect == nullptr
             || selected_post_effect->stage
                    != pvt::PostProcessStage::InvertRgb) return;
@@ -18085,7 +18093,7 @@ void MainWindow::applyGlobalEditor(const QObject* changed_editor) {
     } else if (changed_editor == overwrite_) {
         config_.output.overwrite_existing = overwrite_->isChecked();
         affects_preview = false;
-    } else {
+    } else if (dispatch_post_process_editor) {
         return;
     }
 
