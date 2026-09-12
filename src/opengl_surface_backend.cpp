@@ -1741,8 +1741,11 @@ public:
         else {
             // Never wait for the context thread while owning mutex_. On a
             // non-threaded driver that is the GUI thread, which can itself be
-            // entering the service. The queued retry reacquires the try-lock
-            // and performs the same checks on the context's own thread.
+            // entering the service. Release the CPU mesh owner immediately;
+            // the queued retry reclaims the thread-affine GPU objects after it
+            // reacquires the try-lock on the context's own thread.
+            cached_mesh_.reset();
+            mesh_index_count_ = 0;
             (void)QMetaObject::invokeMethod(
                 worker_, [this, heights] { prune_mesh_cache(heights); },
                 Qt::QueuedConnection);
