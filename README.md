@@ -3,7 +3,7 @@
 Current Live Controls workflow: [audio routing, one video destination, playback, and saved looks](LIVE_CONTROLS.md). The controls panel now opens independently of output; the editor defaults to full canvas resolution, and audio sources can feed independent analysis and speaker/headphone mixes.
 
 
-Current product version: **19.1.2**. The version is read from `VERSION` by every
+Current product version: **19.1.3**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
