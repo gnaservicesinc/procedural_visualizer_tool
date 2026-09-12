@@ -6,6 +6,31 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 19.1.2 project safety and Live authoring reliability
+
+Live now displays reduced-resolution frames with the monitor's smooth scaling,
+requests a new performance frame immediately after authoring edits, and releases
+stale mapping or scene overrides without disturbing unrelated controls. Relative,
+toggle, smoothing, rebinding, duplicate-connection, and row-deletion behavior use
+stable runtime identities and begin from the currently visible setting.
+
+Project attachment materialization now uses per-file leases, copy-on-write cache
+snapshots, bounded cleanup, and race-safe publication. Disabled layer groups no
+longer inflate render-memory admission, BLACKOUT releases unused render assets,
+and OpenGL drops stale CPU mesh ownership before queued thread-affine GPU cleanup.
+The CLI parses real values independently of the process locale and reorders
+non-copyable items in place. Displacement-plane OBJ generation runs in the
+background, is cancellable and atomic, and writes deterministic LF line endings
+on every platform.
+
+The functional changes passed the fresh macOS 46/46 CTest suite. Follow-up gates
+passed the Metal-disabled OpenGL lifetime regression and focused GUI smoke. Main
+desktop run `34676254824` passed Linux x64/ARM64, Windows x64/ARM64, and macOS
+ARM64, including shared/installed package checks; CodeQL run `34676254620` also
+passed. The cross-platform gate caught and repaired AppleClang/clang-cl bit-field
+narrowing, queued OpenGL mesh retention, and Windows text-mode OBJ output before
+the release tag was created.
+
 ## 19.1.1 safe Block size LFO creation defaults
 
 The shared numeric-LFO creation path now seeds Block size ranges at or above one

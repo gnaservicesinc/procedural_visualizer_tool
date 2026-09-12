@@ -43,5 +43,6 @@ The user's broader intermittent report that any numeric widget could jump was
 not independently reproduced as an authored-value mutation. The display
 mismatch, delayed updates, and stale overrides above were demonstrated.
 
-Changes are uncommitted. No version bump, release, or replacement of the running
-installed app was performed.
+These fixes are included in 19.1.2. The release gate also repaired the portable
+validation, OpenGL cache-lifetime, and Windows OBJ-output issues exposed by the
+five-platform package matrix.
