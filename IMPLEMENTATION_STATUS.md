@@ -6,6 +6,30 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 19.1.4 PVT browser remotes and Live frame pacing
+
+PVT now integrates the separate PVT-RC control and PVT-RD display extensions
+through the existing Live target registry, document validation, undo/redo,
+renderer, output-mix audio, and application settings. Networking remains opt-in.
+Pairing uses separate public identities, authenticated encrypted signaling, one
+active controller, multiple displays, LAN discovery/endpoints, and an optional
+self-hosted relay with configurable ICE servers. Remote hosting can continue in
+the background through the normal system tray and unsaved-changes lifecycle.
+
+Live and presentation refresh requests now share the configured output timer,
+so repeated routine requests cannot deliver frames above the project FPS.
+Authored edits retain immediate refresh behavior, including sub-Hz projects.
+The regression reproduced 364 frames in 650 ms at a configured 60 FPS before
+the repair, then passed at 60 and 23.976 FPS with repeated 2 ms requests.
+
+Native desktop, Remote Manager, Live workspace, audio tap, translated GUI,
+protocol, extension, real Chromium WebRTC audio/video/control, relay, responsive
+layout, and 701-parameter fragmented-transfer checks passed locally. The first
+main CI run found that Qt 6.8's translation extractor rejected the new inline
+remote-target labels; those labels now use Qt's explicit LiveWorkspace context,
+and the same extraction check passes with Qt 6.11.2. Tagged five-platform package
+validation and release assets are handled by the release workflow.
+
 ## 19.1.2 project safety and Live authoring reliability
 
 Live now displays reduced-resolution frames with the monitor's smooth scaling,

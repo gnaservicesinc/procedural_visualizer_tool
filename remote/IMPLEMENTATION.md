@@ -45,5 +45,6 @@ Deployment/validation still requiring a target environment:
   is desired. The included installer currently prepares an isolated local runtime.
 - Independent cryptographic review of the application-level signaling protocol.
 
-No commits, version bumps, tags, pushes, public deployments or store submissions
-are part of this implementation handoff.
+Public relay deployment, version/release publication and browser store
+submissions are outside this local verification. See VERIFICATION.md for the
+completed checks.

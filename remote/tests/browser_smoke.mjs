@@ -69,7 +69,7 @@ try {
   const input=controller.page.getByRole('spinbutton',{name:'Playback FPS'});
   await input.fill('45');
   const commandReceived=waitEvent(e=>e.event==='command' && e.command.action==='set');
-  await controller.page.getByRole('button',{name:'Set',exact:true}).click();
+  await controller.page.locator('form').filter({has:input}).getByRole('button',{name:'Set',exact:true}).click();
   const command=await commandReceived;
   assert.equal(command.command.value,45); assert.equal(command.remote,controller.identity.id);
   send({op:'reply',token:command.token,result:{ok:true,revision:'2'}});

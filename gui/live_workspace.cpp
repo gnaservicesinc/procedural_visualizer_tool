@@ -515,8 +515,10 @@ struct LiveWorkspace::Impl {
     void appendRemoteTarget(std::vector<LiveTargetDescriptor>& targets) const {
         if (remote_names.isEmpty()) return;
         targets.push_back({QStringLiteral("runtime.active_control_remote"),
-            LiveWorkspace::tr("Active Control Remote: %1").arg(remote_names.join(QStringLiteral(" / "))),
-            LiveWorkspace::tr("Networking & Remotes"), LiveTargetKind::Integer, 0.0,
+            QCoreApplication::translate("LiveWorkspace", "Active Control Remote: %1")
+                .arg(remote_names.join(QStringLiteral(" / "))),
+            QCoreApplication::translate("LiveWorkspace", "Networking & Remotes"),
+            LiveTargetKind::Integer, 0.0,
             static_cast<double>(remote_names.size() - 1), static_cast<double>(remote_control), [](pvt::ProjectConfig&, double) { return false; }});
     }
     DeviceSleepGuard sleep_guard;
