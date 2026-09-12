@@ -8,14 +8,15 @@ import asyncio
 import json
 import time
 import uuid
+from collections import OrderedDict, deque
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from websockets.asyncio.server import serve
-from .protocol import MAX_MESSAGE, compact, unb64
+from .protocol import MAX_MESSAGE, MAX_PROFILES, compact, unb64
 
 class Relay:
     def __init__(self):
         self.clients = {}
-        self.keys = {}
+        self.keys = OrderedDict()
         self.connections = 0
 
     async def connection(self, ws):
@@ -35,23 +36,36 @@ class Relay:
             if identity in self.keys and self.keys[identity] != key:
                 raise ValueError("Registration key mismatch")
             if identity not in self.keys and len(self.keys) >= 4096:
-                raise ValueError("Registration capacity")
+                # Retain recent registration pins, but never let disconnected
+                # identities exhaust capacity forever. Active pins cannot be
+                # evicted. Endpoints independently pin the pairing-file keys.
+                expired = next((item for item in self.keys if item not in self.clients), None)
+                if expired is None:
+                    raise ValueError("Registration capacity")
+                del self.keys[expired]
             self.keys[identity] = key
+            self.keys.move_to_end(identity)
             old = self.clients.get(identity)
             self.clients[identity] = ws
             if old:
                 await old.close(1000, "Reconnected")
-            times = []
+            times = deque()
             async for raw in ws:
                 now = time.monotonic()
-                times = [t for t in times if t > now - 60]
-                if len(times) >= 60:
-                    raise ValueError("Rate limit")
-                times.append(now)
+                while times and times[0][0] <= now - 60:
+                    times.popleft()
                 envelope = json.loads(raw)
                 if envelope.get("version") != 1 or envelope.get("from") != identity:
                     raise ValueError("Invalid sender")
-                destination = self.clients.get(envelope.get("to"))
+                recipient = envelope.get("to")
+                uuid.UUID(recipient)
+                # A host serves up to 64 paired remotes. Keep the existing
+                # per-recipient limit plus a bounded aggregate handshake budget;
+                # no self-declared host role is trusted by this opaque relay.
+                if len(times) >= 4 * MAX_PROFILES or sum(to == recipient for _, to in times) >= 60:
+                    raise ValueError("Rate limit")
+                times.append((now, recipient))
+                destination = self.clients.get(recipient)
                 if destination:
                     await asyncio.wait_for(destination.send(raw), 5)
         except Exception:

@@ -43,6 +43,8 @@ try {
   const pages=[];
   for (const service of workers) {
     const page=await context.newPage(); await page.goto(service.url().replace('background.js','index.html'));
+    await page.locator('img.brand').waitFor();
+    await page.waitForFunction(()=>document.querySelector('img.brand').naturalWidth === 128);
     await page.getByRole('button',{name:'Hosts & settings'}).click();
     await page.getByRole('button',{name:'Export .pvtremote'}).waitFor({state:'visible'});
     await page.waitForFunction(async()=>!!(await chrome.storage.local.get('identity')).identity);
@@ -67,10 +69,15 @@ try {
     assert.equal(await page.getByRole('alert').count(),0);
   }
   const input=controller.page.getByRole('spinbutton',{name:'Playback FPS'});
+  await input.fill('35');
+  await input.fill('40');
   await input.fill('45');
+  await new Promise(resolve=>setTimeout(resolve,100));
+  assert.equal(events.filter(e=>e.event==='command' && e.command.action==='set').length,0);
   const commandReceived=waitEvent(e=>e.event==='command' && e.command.action==='set');
   await controller.page.locator('form').filter({has:input}).getByRole('button',{name:'Set',exact:true}).click();
   const command=await commandReceived;
+  assert.equal(events.filter(e=>e.event==='command' && e.command.action==='set').length,1);
   assert.equal(command.command.value,45); assert.equal(command.remote,controller.identity.id);
   send({op:'reply',token:command.token,result:{ok:true,revision:'2'}});
   send({op:'state',state:{revision:'2',targets:[{path:'project.fps',label:'Playback FPS',section:'Project',kind:2,minimum:1,maximum:120,value:45}],background:false,live:false,playing:false,busy:false}});

@@ -1039,6 +1039,16 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
+        add_executable(pvt_remote_bridge_tests
+            tests/remote_bridge_test.cpp gui/remote_bridge.cpp gui/remote_bridge.h)
+        set_target_properties(pvt_remote_bridge_tests PROPERTIES AUTOMOC ON)
+        target_compile_features(pvt_remote_bridge_tests PRIVATE cxx_std_17)
+        target_include_directories(pvt_remote_bridge_tests PRIVATE gui)
+        target_link_libraries(pvt_remote_bridge_tests PRIVATE Qt6::Widgets)
+        pvt_enable_warnings(pvt_remote_bridge_tests)
+        add_test(NAME pvt_remote_bridge COMMAND pvt_remote_bridge_tests)
+        set_tests_properties(pvt_remote_bridge PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
         add_executable(pvt_audio_processing_dialog_tests
             tests/audio_processing_dialog_test.cpp gui/audio_processing_dialog.cpp
             gui/audio_processing_dialog.h gui/flexible_spin_box.cpp)

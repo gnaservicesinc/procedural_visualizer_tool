@@ -6,6 +6,8 @@
 #include "../src/audio_playback.h"
 #include <QApplication>
 #include <QJsonArray>
+#include <QFile>
+#include <QLineEdit>
 #include <QLabel>
 #include <QMenu>
 #include <QPushButton>
@@ -194,14 +196,19 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
     remote_bridge_->start();
     if (!spin([&] { return ready; })) return fail(QStringLiteral("Remote worker did not start."));
     if (remote_bridge_->enabled()) return fail(QStringLiteral("Networking started without opt-in."));
+    // Apply while a new worker is still starting, with the existing pairing
+    // draft retained from the previous process.
+    remote_bridge_->stop();
     bool manager_applied = false;
     QTimer::singleShot(0, &guard, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
         auto* enable = dialog->findChild<QCheckBox*>(QStringLiteral("remoteNetworkingEnabled"));
         auto* buttons = dialog->findChild<QDialogButtonBox*>(QStringLiteral("remoteManagerButtons"));
-        if (!enable || !buttons) { dialog->reject(); return; }
+        auto* label = dialog->findChild<QLineEdit*>(QStringLiteral("remoteHostName"));
+        if (!enable || !buttons || !label) { dialog->reject(); return; }
         enable->setChecked(true);
+        label->setText(QStringLiteral("Applied during startup"));
         buttons->button(QDialogButtonBox::Apply)->click();
         manager_applied = true;
         dialog->reject();
@@ -209,6 +216,10 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
     remote_bridge_->showManager(this);
     if (!manager_applied || !spin([&] { return remote_bridge_->enabled(); }))
         return fail(QStringLiteral("Remote Manager could not enable networking."));
+    QFile saved_config(temporary.path() + "/remotes.json");
+    if (!saved_config.open(QIODevice::ReadOnly)
+        || QJsonDocument::fromJson(saved_config.readAll()).object().value("label") != "Applied during startup")
+        return fail(QStringLiteral("Remote Manager lost settings applied during startup."));
     const auto controller = profiles[0].toObject().value("id").toString();
     const auto display = profiles[1].toObject().value("id").toString();
     if (!remote_bridge_->authorized(controller, "set") || remote_bridge_->authorized(display, "set")

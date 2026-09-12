@@ -6,6 +6,7 @@
 #include <QImage>
 #include <QTimer>
 #include <functional>
+#include <optional>
 
 // An optional transport worker. The desktop is the sole owner of project state,
 // render contexts, devices and undo. Disabled networking never launches listeners.
@@ -48,11 +49,13 @@ private:
     void flushFrame();
     QByteArray input_;
     QJsonObject config_;
+    std::optional<QJsonObject> pending_config_;
     QJsonObject profile_;
     std::function<QJsonObject()> state_provider_;
     bool enabled_ = false;
     bool background_ = false;
     bool requested_enabled_ = false;
     bool ready_ = false;
+    bool config_loaded_ = false;
 };
 #endif

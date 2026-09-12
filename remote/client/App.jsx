@@ -5,7 +5,7 @@ import {profile} from './protocol.mjs';
 import {Connection} from './transport.mjs';
 import './style.css';
 
-export function App({role}) {
+export function App({role, icon}) {
   const display = role === 'display';
   const store = useRef(new ProfileStore(browser, role));
   const connection = useRef(null);
@@ -107,7 +107,7 @@ export function App({role}) {
   const filtered = targets.filter(t => (!section || t.section === section) && `${t.label} ${t.section} ${t.path}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="app">
     <header>
-      <div className="brand" aria-hidden="true"><span/><span/><span/><span/></div>
+      <img className="brand" src={icon} alt={`PVT-${display ? 'RD' : 'RC'}`} width="52" height="52"/>
       <div className="title"><h1>{display ? 'Remote Display' : 'Remote Control'}</h1><p>Procedural Visualizer Tool</p></div>
       <span className={`connection-status ${connected ? 'online' : ''}`} role="status"><i/>{status}</span>
       <button onClick={() => setSettings(!settings)} aria-expanded={settings}>Hosts & settings</button>

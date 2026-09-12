@@ -19,6 +19,7 @@
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSettings>
+#include <QSet>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QTextEdit>
@@ -97,10 +98,16 @@ void RemoteBridge::receive() {
         if (event == "ready" || event == "configured") {
             ready_ = true;
             config_ = object.value("config").toObject();
+            config_loaded_ = true;
             profile_ = object.value("profile").toObject();
             enabled_ = object.value("enabled").toBool();
+            if (event == "ready" && pending_config_) {
+                const auto pending = *pending_config_;
+                configure(pending, requested_enabled_);
+            } else if (event == "ready" && requested_enabled_) {
+                send({{"op", "enable"}, {"enabled", true}});
+            }
             emit configurationChanged();
-            if (event == "ready" && requested_enabled_) send({{"op", "enable"}, {"enabled", true}});
             state_timer_.start();
             emit statusChanged(enabled_ ? tr("Networking & Remotes enabled") : tr("Networking & Remotes disabled"));
         } else if (event == "command") {
@@ -111,14 +118,22 @@ void RemoteBridge::receive() {
             emit configurationChanged();
         }
     }
+    // Keep normal packet capacity for reuse, but release an exceptional large
+    // worker burst once only a small partial line (or nothing) remains.
+    if (input_.capacity() > 64 * 1024 && input_.size() < 64 * 1024) input_.squeeze();
 }
 void RemoteBridge::configure(const QJsonObject& config, bool enabled) {
-    if (!ready_) return;
     // Deny commands immediately, including commands queued before revocation.
     enabled_ = false;
     requested_enabled_ = enabled;
-    send({{"op", "configure"}, {"config", config}, {"enabled", enabled}});
     QSettings().setValue("remotes/enabled", enabled);
+    if (!ready_) {
+        pending_config_ = config;
+        start();
+        return;
+    }
+    send({{"op", "configure"}, {"config", config}, {"enabled", enabled}});
+    pending_config_.reset();
 }
 bool RemoteBridge::authorized(const QString& remote, const QString& action) const {
     if (!enabled_) return false;
@@ -142,7 +157,9 @@ void RemoteBridge::flushFrame() {
     QByteArray bytes;
     QBuffer buffer(&bytes);
     buffer.open(QIODevice::WriteOnly);
-    image.scaled(QSize(1920,1080), Qt::KeepAspectRatio, Qt::FastTransformation).save(&buffer, "JPEG", 85);
+    const auto output = image.width() > 1920 || image.height() > 1080
+        ? image.scaled(QSize(1920,1080), Qt::KeepAspectRatio, Qt::FastTransformation) : image;
+    output.save(&buffer, "JPEG", 85);
     send({{"op", "video"}, {"jpeg", QString::fromLatin1(bytes.toBase64())}});
 }
 void RemoteBridge::sendAudio(const QByteArray& pcm) {
@@ -194,6 +211,7 @@ void RemoteBridge::showManager(QWidget* parent) {
     auto* close = new QCheckBox(tr("Close window to system tray / menu bar"));
     close->setChecked(minimizeOnClose());
     auto* label = new QLineEdit;
+    label->setObjectName(QStringLiteral("remoteHostName"));
     auto* port = new QSpinBox;
     port->setRange(1024,65535);
     auto* relay = new QLineEdit;
@@ -229,22 +247,34 @@ void RemoteBridge::showManager(QWidget* parent) {
     buttons->setObjectName(QStringLiteral("remoteManagerButtons"));
     layout->addWidget(buttons);
     QJsonArray profiles;
+    QSet<QString> edited_fields;
+    bool loading = false;
     const auto reload = [&] {
-        enable->setChecked(enabled_); lan->setChecked(config_.value("lan").toBool());
-        label->setText(config_.value("label").toString("PVT host"));
-        port->setValue(config_.value("port").toInt(49731));
-        relay->setText(config_.value("signaling_url").toString());
-        ice->setPlainText(QString::fromUtf8(QJsonDocument(config_.value("ice_servers").toArray()).toJson()));
-        profiles = config_.value("remotes").toArray();
+        export_host->setEnabled(ready_);
+        import->setEnabled(config_loaded_);
+        remove->setEnabled(config_loaded_);
+        active->setEnabled(config_loaded_);
+        // Worker status and startup must not replace an in-progress draft.
+        loading = true;
+        if (!edited_fields.contains("enabled")) enable->setChecked(enabled_);
+        if (!edited_fields.contains("lan")) lan->setChecked(config_.value("lan").toBool());
+        if (!edited_fields.contains("label")) label->setText(config_.value("label").toString("PVT host"));
+        if (!edited_fields.contains("port")) port->setValue(config_.value("port").toInt(49731));
+        if (!edited_fields.contains("signaling_url")) relay->setText(config_.value("signaling_url").toString());
+        if (!edited_fields.contains("ice_servers")) ice->setPlainText(QString::fromUtf8(QJsonDocument(config_.value("ice_servers").toArray()).toJson()));
+        if (!edited_fields.contains("remotes")) profiles = config_.value("remotes").toArray();
+        const auto active_id = edited_fields.contains("active_control")
+            ? active->currentData().toString() : config_.value("active_control").toString();
         list->clear(); active->clear(); active->addItem(tr("None"), "");
         for (const auto& item : profiles) {
             const auto p = item.toObject();
             list->addItem(p.value("label").toString() + " · " + p.value("role").toString() + " · " + p.value("id").toString());
             if (p.value("role") == "control") active->addItem(p.value("label").toString(), p.value("id").toString());
         }
-        active->setCurrentIndex(std::max(0, active->findData(config_.value("active_control").toString())));
+        active->setCurrentIndex(std::max(0, active->findData(active_id)));
         buttons->button(QDialogButtonBox::Apply)->setEnabled(true);
         export_host->setEnabled(ready_);
+        loading = false;
     };
     connect(this, &RemoteBridge::configurationChanged, &dialog, reload);
     connect(this, &RemoteBridge::statusChanged, status, &QLabel::setText);
@@ -261,12 +291,14 @@ void RemoteBridge::showManager(QWidget* parent) {
         if (p.value("type") != "pvtremote" || p.value("version").toInt() != 1 || profiles.size() >= 64) { status->setText(tr("Invalid pairing file or remote limit reached.")); return; }
         for (const auto& existing : profiles) if (existing.toObject().value("id") == p.value("id")) { status->setText(tr("Remove the existing identity before replacing its keys.")); return; }
         profiles.append(p);
+        edited_fields.insert("remotes");
         list->addItem(p.value("label").toString() + " · " + p.value("role").toString());
         if (p.value("role") == "control") active->addItem(p.value("label").toString(), p.value("id").toString());
     });
     connect(remove, &QPushButton::clicked, &dialog, [&] {
         const int index = list->currentRow();
         if (index < 0) return;
+        edited_fields.insert("remotes");
         const auto id = profiles[index].toObject().value("id").toString();
         profiles.removeAt(index); delete list->takeItem(index);
         const int choice = active->findData(id);
@@ -290,13 +322,28 @@ void RemoteBridge::showManager(QWidget* parent) {
         if (error.error != QJsonParseError::NoError || !servers.isArray()) { status->setText(tr("ICE servers must be a JSON array.")); return; }
         QSettings().setValue("remotes/python", python->text().trimmed());
         QSettings().setValue("remotes/minimizeOnClose", close->isChecked());
-        if (!ready_) { start(); return; }
-        configure({{"remotes", profiles}, {"active_control", active->currentData().toString()},
+        QJsonObject changes{{"remotes", profiles}, {"active_control", active->currentData().toString()},
                    {"label", label->text()}, {"lan", lan->isChecked()}, {"port", port->value()},
-                   {"signaling_url", relay->text().trimmed()}, {"ice_servers", servers.array()}}, enable->isChecked());
+                   {"signaling_url", relay->text().trimmed()}, {"ice_servers", servers.array()}};
+        // On first startup we haven't read the saved configuration yet. Send
+        // only authored fields so defaults cannot erase unseen paired remotes
+        // or network settings; the worker already merges configuration patches.
+        if (!config_loaded_) {
+            for (const auto& key : changes.keys())
+                if (!edited_fields.contains(key)) changes.remove(key);
+        }
+        configure(changes, enable->isChecked());
     });
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     reload();
+    const auto edited = [&](const QString& key) { if (!loading) edited_fields.insert(key); };
+    connect(label, &QLineEdit::textChanged, &dialog, [&] { edited("label"); });
+    connect(relay, &QLineEdit::textChanged, &dialog, [&] { edited("signaling_url"); });
+    connect(enable, &QCheckBox::toggled, &dialog, [&] { edited("enabled"); });
+    connect(lan, &QCheckBox::toggled, &dialog, [&] { edited("lan"); });
+    connect(port, &QSpinBox::valueChanged, &dialog, [&] { edited("port"); });
+    connect(ice, &QTextEdit::textChanged, &dialog, [&] { edited("ice_servers"); });
+    connect(active, &QComboBox::currentIndexChanged, &dialog, [&] { edited("active_control"); });
     if (!ready_) start();
     dialog.exec();
 }

@@ -85,7 +85,10 @@ python -m pvt_remote.relay --bind 127.0.0.1 --port 8787
 Put a TLS WebSocket reverse proxy in front of it, configure its `wss://` URL in
 PVT, and re-export the host profile. The relay is a single-process deployment;
 it supports 256 connections and remembers up to 4096 registered identity keys
-in memory. Restarting clears relay registrations, not desktop pairing. Configure
+in memory. When that history fills, the oldest disconnected registration is
+evicted; active registration keys remain pinned. Signaling is limited to 256
+outbound messages per connection per minute and 60 to any one recipient.
+Restarting clears relay registrations, not desktop pairing. Configure
 reverse-proxy per-IP connection/rate limits and do not expose the plaintext
 backend port publicly. Public hosting and TLS/domain provisioning are deployment
 steps, not performed by this repository.
