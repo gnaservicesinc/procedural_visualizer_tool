@@ -11,7 +11,6 @@ import io
 import ipaddress
 import json
 import logging
-import platform
 import socket
 import sys
 import time
@@ -585,8 +584,6 @@ async def self_test():
 
 
 def main():
-    if sys.platform == 'darwin' and int(platform.mac_ver()[0].split('.')[0]) < 27:
-        raise SystemExit('PVT requires macOS 27.0 or later')
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory")
     parser.add_argument("--self-test", action="store_true")

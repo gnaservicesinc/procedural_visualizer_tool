@@ -109,3 +109,11 @@ smokes passed locally. The full-screen test waits for native window state.
 PVT-RC and PVT-RD 0.1.1 are published. All six downloaded extension archives
 match their published SHA256 checksums. Desktop tagged CI and publication are
 tracked by the v19.1.6 release workflow.
+
+## Support policy clarification
+
+macOS 27+ is the supported/tested baseline, not a deny-list. Explicit OS-version
+checks and the policy-only 27 deployment floor have been removed. The native
+API floor is 15 (unguarded ProRes 4444 XQ); package checks still reject actual
+dependencies newer than the declared deployment target. No old-OS fallback or
+dependency pin is introduced. Earlier enforcement statements are superseded.

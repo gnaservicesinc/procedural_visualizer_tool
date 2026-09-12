@@ -15,17 +15,13 @@ endif()
 option(PVT_DEPLOY_QT_RUNTIME
     "Deploy the Qt runtime and plugins when installing the GUI"
     ${PVT_DEPLOY_QT_RUNTIME_DEFAULT})
-# Product policy: every macOS build requires macOS 27, including the CLI.
-# Set this before project() initializes compiler flags and the bundle plist.
+# Support policy is macOS 27+, not a runtime deny-list. The deployment floor
+# reflects the newest unguarded native API we use (ProRes 4444 XQ, macOS 15).
+# Explicit build targets remain available without promising older-OS support.
 if(CMAKE_HOST_APPLE)
-    if(DEFINED CMAKE_OSX_DEPLOYMENT_TARGET
-       AND NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL ""
-       AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "27.0")
-        message(FATAL_ERROR "PVT supports macOS 27.0 and later only.")
-    endif()
     if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "27.0" CACHE STRING
-            "Minimum macOS version for generated binaries" FORCE)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING
+            "Minimum macOS version required by native APIs" FORCE)
     endif()
     execute_process(COMMAND xcrun --sdk macosx --show-sdk-version
         OUTPUT_VARIABLE PVT_MACOS_SDK_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE

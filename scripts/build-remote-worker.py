@@ -7,7 +7,6 @@ PyInstaller. Never downloads or installs anything on an end user's machine.
 import argparse
 import importlib.metadata
 import json
-import platform
 import shutil
 import subprocess
 import sys
@@ -23,12 +22,10 @@ work.mkdir(parents=True, exist_ok=True)
 entry = work / 'entry.py'
 entry.write_text('from pvt_remote.host import main\nif __name__ == "__main__":\n    main()\n')
 if sys.platform == 'darwin':
-    if int(platform.mac_ver()[0].split('.')[0]) < 27:
-        raise SystemExit('PVT requires macOS 27.0 or later')
     native = work / 'pvt-videotoolbox.dylib'
     sdk = Path(subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip())
     subprocess.run(['xcrun', 'clang++', '-std=c++17', '-O2', '-dynamiclib',
-        '-fobjc-arc', '-mmacosx-version-min=27.0', '-nostdlib++',
+        '-fobjc-arc', '-mmacosx-version-min=15.0', '-nostdlib++',
         '-Wl,-install_name,@rpath/pvt-videotoolbox.dylib',
         str(sdk / 'usr/lib/libc++.tbd'),
         str(root / 'remote/pvt_remote/macos_video.mm'), '-o', str(native),

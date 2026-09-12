@@ -29,6 +29,8 @@ editor; they do not create a separate oscillator implementation per destination.
 
 # macOS support policy
 
-PVT supports macOS 27.0 and later only. Do not lower the deployment target,
-restore older-OS fallbacks, or pin dependencies to preserve old macOS support.
-Use the current macOS SDK and system VideoToolbox for Mac video encoding.
+macOS 27.0 and later is the supported and tested baseline. Unsupported does not
+mean prohibited: do not add OS-version rejection checks or raise deployment
+metadata solely to block older systems. Deployment requirements should reflect
+actual APIs and dependencies. Do not add older-OS fallbacks or pin dependencies
+to preserve old macOS support. Use the current SDK and system VideoToolbox.

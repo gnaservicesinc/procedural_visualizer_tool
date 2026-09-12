@@ -3,7 +3,7 @@
 Current Live Controls workflow: [audio routing, one video destination, playback, and saved looks](LIVE_CONTROLS.md). The controls panel now opens independently of output; the editor defaults to full canvas resolution, and audio sources can feed independent analysis and speaker/headphone mixes.
 
 
-**Mac support: macOS 27.0 and later only.** Older macOS versions are unsupported.
+**Mac support: macOS 27.0 and later.** Older macOS versions are unsupported, but are not deliberately blocked; actual API and dependency requirements determine whether they run.
 Mac movie export and Remote video encoding use Apple’s system video frameworks.
 
 Current product version: **19.1.6**. The version is read from `VERSION` by every
@@ -1227,7 +1227,7 @@ identity can pass `-DPVT_DISTRIBUTION_CODE_SIGN_IDENTITY="Developer ID
 Application: ..."` through `CMAKE_CONFIGURE_ARGS` and complete Apple's
 notarization process themselves.
 Unless the caller explicitly supplies `CMAKE_OSX_DEPLOYMENT_TARGET`, this path
-targets macOS 27.0 and later only. It builds the existing libpng dependency statically from a
+is supported and tested on macOS 27.0 and later. Its deployment minimum follows actual native API requirements. It builds the existing libpng dependency statically from a
 SHA-256-pinned upstream archive instead of inheriting a local/Homebrew dylib,
 and therefore needs network access on its first distribution build.
 
@@ -1241,7 +1241,7 @@ The **Build desktop packages** workflow also retains per-commit artifacts for
 30 days:
 
 - `procedural-visualizer-tool-macos-arm64.zip` supports Apple Silicon Macs on
-  macOS 27.0 or newer.
+  macOS 27.0 or newer for supported use; older systems are not deliberately blocked.
 - `procedural-visualizer-tool-windows-x86_64.zip` is a portable 64-bit Windows
   directory.
 - `procedural-visualizer-tool-windows-arm64.zip` is a native Windows on ARM

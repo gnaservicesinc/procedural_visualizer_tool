@@ -49,9 +49,6 @@ if(NOT DEFINED PVT_DEPLOYMENT_TARGET
     message(FATAL_ERROR
         "Distribution deployment-target verification is not configured.")
 endif()
-if(PVT_DEPLOYMENT_TARGET VERSION_LESS "27.0")
-    message(FATAL_ERROR "PVT distributions require macOS 27.0 or later.")
-endif()
 execute_process(COMMAND /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion"
     "${PVT_APP_BUNDLE}/Contents/Info.plist"
     OUTPUT_VARIABLE _pvt_plist_minimum OUTPUT_STRIP_TRAILING_WHITESPACE
