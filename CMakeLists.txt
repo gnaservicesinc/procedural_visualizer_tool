@@ -731,6 +731,11 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME pvt_beat_tracker COMMAND pvt_beat_tracker_tests)
 
+    add_executable(pvt_live_audio_routing_tests tests/live_audio_routing_test.cpp)
+    target_link_libraries(pvt_live_audio_routing_tests PRIVATE ProceduralVisualizerTool::Audio)
+    pvt_enable_warnings(pvt_live_audio_routing_tests)
+    add_test(NAME pvt_live_audio_routing COMMAND pvt_live_audio_routing_tests)
+
     add_executable(pvt_audio_analysis_tests tests/audio_analysis_test.cpp)
     target_compile_features(pvt_audio_analysis_tests PRIVATE cxx_std_17)
     set_target_properties(pvt_audio_analysis_tests PROPERTIES CXX_EXTENSIONS NO)

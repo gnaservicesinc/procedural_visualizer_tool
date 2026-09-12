@@ -15,6 +15,8 @@
 #include <QStyle>
 #include <QTabWidget>
 #include <QTimer>
+#include <QSettings>
+#include <QTemporaryDir>
 
 #include <cstdio>
 
@@ -160,6 +162,13 @@ int main(int argc, char** argv) {
 #endif
     QApplication::setOrganizationName(QStringLiteral("GNA Services"));
     const QStringList arguments = application.arguments();
+    // Smoke tests must not overwrite a user's device bindings or output choices.
+    QTemporaryDir smoke_settings;
+    if (arguments.contains(QStringLiteral("--smoke-test"))) {
+        if (!smoke_settings.isValid()) return 1;
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, smoke_settings.path());
+    }
     QString requested_language = Localization::savedLanguage();
     const qsizetype language_index = arguments.indexOf(QStringLiteral("--language"));
     if (language_index >= 0) {

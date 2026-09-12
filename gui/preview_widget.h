@@ -10,6 +10,7 @@
 
 class PreviewWidget final : public QWidget {
     Q_OBJECT
+    bool output_active_ = false;
 
 public:
     enum class OverlayMode {
@@ -22,6 +23,7 @@ public:
 
     void setPreview(const QImage& image,
                     Qt::TransformationMode scaling = Qt::FastTransformation);
+    void setOutputActive(bool active);
     void setConfiguration(const pvt::RenderConfig& config);
     void setOverlayMode(OverlayMode mode);
     void setSelectedWave(std::optional<std::size_t> index);

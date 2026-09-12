@@ -1609,8 +1609,9 @@ bool deserialize_split_layer_and_music(
             validation_analysis, validation_analysis_bytes, error)) {
         return false;
     }
-    constexpr std::string_view analysis_header =
-        "PVT_MUSIC_ANALYSIS\t1\n";
+    const std::string analysis_header =
+        "PVT_MUSIC_ANALYSIS\t"
+        + std::to_string(detail::kMusicAnalysisConfigFormatVersion) + "\n";
     std::string combined =
         "PVT_LAYER\t" + std::to_string(layer_format_version) + "\n";
     if (split_payload.size() > kMaximumMetadataBytes - combined.size()) {

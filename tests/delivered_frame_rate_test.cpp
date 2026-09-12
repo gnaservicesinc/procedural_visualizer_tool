@@ -33,6 +33,12 @@ int main() {
     check(!rate.record(0));
     const auto stalled = rate.record(1000000000);
     check(stalled && *stalled == 1.0);
+    check(pvt::display::missed_frame_deadlines(1000000000LL, 6000.0, 414) == 5586);
+    check(pvt::display::missed_frame_deadlines(10000000000LL, 6000.0, 4140) == 55860);
+    check(pvt::display::missed_frame_deadlines(1000000000LL, 60.0, 60) == 0);
+    check(pvt::display::missed_frame_deadlines(1000000000LL, 60.0, 61) == 0);
+    check(pvt::display::missed_frame_deadlines(0, 6000.0, 0) == 0);
+    check(pvt::display::missed_frame_deadlines(-1, 6000.0, 0) == 0);
     if (failures) {
         std::cerr << failures << " delivered frame rate checks failed.\n";
         return EXIT_FAILURE;

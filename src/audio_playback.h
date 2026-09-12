@@ -2,6 +2,7 @@
 #define PVT_AUDIO_PLAYBACK_H
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,12 +37,20 @@ public:
     bool start_mix(const std::vector<PlaybackTrack>& tracks,
                    double timeline_position_seconds,
                    std::string* error = nullptr);
+    // Decode through the same voices without opening a playback device. One
+    // caller owns read_stream; stop/reconfigure only after that caller joins.
+    bool prepare_stream(const std::vector<PlaybackTrack>& tracks,
+                        std::string* error = nullptr);
+    void read_stream(float* stereo, std::uint32_t frames) noexcept;
     void stop();
     bool is_playing() const noexcept;
     double position_seconds() const noexcept;
     void set_volume(double volume) noexcept;
 
 private:
+    bool prepare_mix(const std::vector<PlaybackTrack>& tracks,
+                     double timeline_position_seconds, bool open_device,
+                     std::string* error);
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

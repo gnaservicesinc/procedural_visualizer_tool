@@ -207,6 +207,12 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     painter.setRenderHint(QPainter::Antialiasing);
     painter.fillRect(rect(), QColor(25, 27, 32));
 
+    if (output_active_) {
+        painter.setPen(QColor(190, 202, 210));
+        painter.drawText(rect(), Qt::AlignCenter,
+            tr("Video output is using the preview renderer.\nStop video output to preview here."));
+        return;
+    }
     const QRectF target = imageRectangle();
     painter.save();
     painter.setClipRect(target);
@@ -451,4 +457,10 @@ void PreviewWidget::emitSelected(std::size_t index) {
         case OverlayMode::Swings: emit swingSelected(index); break;
         case OverlayMode::Effects: emit effectSelected(index); break;
     }
+}
+
+void PreviewWidget::setOutputActive(bool active) {
+    output_active_ = active;
+    setEnabled(!active);
+    update();
 }

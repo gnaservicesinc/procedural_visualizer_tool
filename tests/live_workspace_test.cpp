@@ -1,12 +1,19 @@
 #include "live_workspace.h"
 #include "live_frame_controller.h"
 #include "studio_widgets.h"
+#include "stage_output_window.h"
 #include "project_bundle.h"
 
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QLabel>
 #include <QSettings>
+#include <QTableWidget>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QComboBox>
+#include <QPushButton>
+#include <QLineEdit>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QThreadPool>
@@ -132,6 +139,74 @@ int main(int argc, char** argv) {
         std::cout << "Delivered: " << delivered << std::endl;
         return 0;
     }
+    // Clock files join the normal input list and machine routing matrix without
+    // starting devices or rendering just because their controls are visible.
+    {
+        auto source_project = pvt::default_project();
+        LiveWorkspace routes([&] { return source_project; }, [&] { return source_project; },
+            [] { return 0; }, [] { return pvt::FrameRenderOptions{}; }, [] { return 1U; },
+            [&] { return source_project.layers.front().uuid; },
+            [&](const pvt::LiveConfig& live, const QString&) { source_project.canvas.live = live; });
+        routes.setClockAudioProvider([] {
+            return QVector<LiveWorkspace::ClockAudioSource>{
+                {QStringLiteral("clock:test"), QStringLiteral("Test song"), QStringLiteral("/test/song.wav")}};
+        });
+        routes.refreshAudioInputs();
+        auto* matrix = routes.findChild<QTableWidget*>(QStringLiteral("liveAudioRoutingMatrix"));
+        int file_row = -1;
+        for (int row = 0; matrix && row < matrix->rowCount(); ++row)
+            if (matrix->item(row, 0)->text().startsWith(QStringLiteral("Test song"))) file_row = row;
+        bool file_choice = false;
+        for (const auto& input : routes.availableAudioInputs())
+            file_choice |= input.id == QStringLiteral("clock:test");
+        bool file_role = false;
+        QString file_role_uuid;
+        for (const auto& role : source_project.canvas.live.endpoints) {
+            if (routes.audioInputBinding(role.uuid) == QStringLiteral("clock:test")) {
+                file_role = true;
+                file_role_uuid = QString::fromStdString(role.uuid);
+            }
+        }
+        if (file_row < 0 || !file_choice || !file_role || routes.isRealtimeOutputActive()) return 1;
+        matrix->item(file_row, 2)->setCheckState(Qt::Checked);
+        routes.refreshAudioInputs();
+        if (matrix->item(file_row, 2)->checkState() != Qt::Checked
+            || !QSettings().value(QStringLiteral("live/audioMatrix/clock:test/analysis")).toBool()) return 1;
+        matrix->item(file_row, 2)->setCheckState(Qt::Unchecked);
+        QPushButton* manager = nullptr;
+        for (auto* button : routes.findChildren<QPushButton*>())
+            if (button->text() == LiveWorkspace::tr("Manage Roles…")) manager = button;
+        if (!manager) return 1;
+        QTimer::singleShot(0, &routes, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            auto* selection = dialog->findChild<QComboBox*>(QStringLiteral("liveRoleSelection"));
+            selection->setCurrentIndex(selection->findData(file_role_uuid));
+            dialog->findChild<QLineEdit*>()->setText(QStringLiteral("Renamed song"));
+            dialog->accept();
+        });
+        manager->click();
+        const auto renamed = source_project.canvas.live;
+        const auto named = std::find_if(renamed.endpoints.begin(), renamed.endpoints.end(),
+            [&](const auto& role) { return QString::fromStdString(role.uuid) == file_role_uuid; });
+        if (named == renamed.endpoints.end() || named->name != "Renamed song") return 1;
+        QTimer::singleShot(0, &routes, [&] {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (!dialog) return;
+            auto* selection = dialog->findChild<QComboBox*>(QStringLiteral("liveRoleSelection"));
+            selection->setCurrentIndex(selection->findData(file_role_uuid));
+            auto* buttons = dialog->findChild<QDialogButtonBox*>();
+            for (auto* button : buttons->buttons())
+                if (buttons->buttonRole(button) == QDialogButtonBox::DestructiveRole) button->click();
+        });
+        manager->click();
+        routes.refreshAudioInputs();
+        if (std::any_of(source_project.canvas.live.endpoints.begin(), source_project.canvas.live.endpoints.end(),
+            [&](const auto& role) { return QString::fromStdString(role.uuid) == file_role_uuid; })) return 1;
+        // The authored undo/load path restores the same role identity and binding.
+        routes.setProjectLiveConfig(renamed);
+        if (routes.audioInputBinding(named->uuid) != QStringLiteral("clock:test")) return 1;
+    }
     if (!test_live_mapping_controls()) return 1;
     pvt::ProjectDocument document;
     auto project = pvt::default_project();
@@ -167,8 +242,11 @@ int main(int argc, char** argv) {
                             + QString::fromStdString(endpoint.uuid)
                             + QStringLiteral("/audioDevice"),
                         QStringLiteral("pvt-nonexistent-test-input"));
+    QElapsedTimer project_clock;
+    project_clock.start();
     LiveWorkspace workspace([&] { return project; }, [&] { return project; },
-        [] { return 0; }, [] {
+        [&] { return static_cast<int>(project_clock.elapsed() * project.canvas.fps / 1000.0)
+            % std::max(1, project.canvas.total_frames); }, [] {
             pvt::FrameRenderOptions options;
             options.backend = pvt::RenderBackend::Cpu;
             return options;
@@ -218,8 +296,11 @@ int main(int argc, char** argv) {
         waiting_for_audio |= widget->toolTip() == LiveWorkspace::tr(
             "Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission.");
     }
-    const auto* monitor = workspace.findChild<QLabel*>(QStringLiteral("liveProgramLabel"));
-    const bool visible_image = monitor != nullptr && !monitor->pixmap().isNull();
+    StageOutputWindow* stage = nullptr;
+    for (auto* widget : QApplication::topLevelWidgets())
+        if (auto* candidate = qobject_cast<StageOutputWindow*>(widget)) stage = candidate;
+    const bool visible_image = stage && stage->isVisible() && stage->hasGoodFrame();
+    if (workspace.findChild<QLabel*>(QStringLiteral("liveProgramLabel"))) return 1;
     workspace.setLiveActive(false);
     QCoreApplication::processEvents();
     if (!restarted || !waiting_for_audio || !visible_image || workspace.isRealtimeOutputActive()) {
@@ -230,7 +311,7 @@ int main(int argc, char** argv) {
     workspace.setProjectLiveConfig(config);
     workspace.setLiveActive(true);
     const bool blacked_out = wait_for([&] {
-        return monitor->text() == LiveWorkspace::tr("SAFETY BLACKOUT\nLast-good watchdog");
+        return stage && stage->isBlackout();
     }, 2000);
     workspace.setLiveActive(false);
     if (!blacked_out) {

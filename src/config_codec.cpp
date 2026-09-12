@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <map>
 #include <new>
+#include <set>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -1055,11 +1056,13 @@ bool deserialize_music_analysis_config(const std::string& serialized,
         ConfigCompatibility partial_compatibility;
         std::vector<std::string_view> usable_analysis_records;
         usable_analysis_records.reserve(analysis_records.size());
+        std::set<std::string_view> usable_analysis_keys;
         for (const std::string_view line : analysis_records) {
             const std::string_view key = line.substr(0U, line.find('\t'));
             if (starts_with(key, "timing.music.")
                 || starts_with(key, "compatibility.rejected.")) {
                 usable_analysis_records.push_back(line);
+                usable_analysis_keys.insert(key);
             } else {
                 partial_compatibility.records.push_back(
                     {std::string(key),
@@ -1092,7 +1095,24 @@ bool deserialize_music_analysis_config(const std::string& serialized,
         combined.push_back('\n');
         for (const std::string_view line : default_records) {
             const std::string_view key = line.substr(0U, line.find('\t'));
-            if (starts_with(key, "timing.music.")) continue;
+            if (starts_with(key, "timing.music.")) {
+                // Music-analysis v1 predates the input-processing and named
+                // frequency-stream records added with setup v14. Supply their
+                // neutral defaults as a normal schema migration. Leaving them
+                // absent made the recovery decoder report a damaged project
+                // on every open; a no-change Save only cleared that transient
+                // notice because the immutable v1 analysis remained intact.
+                //
+                // Do not hide missing records from v2 or newer analyses: those
+                // formats declare the extension fields, so omissions still
+                // receive the normal repair diagnostics. Also let any v1 file
+                // that already carries an extension value win over the default.
+                if (analysis_version != 1U || !is_setup_v14_key(key)
+                    || usable_analysis_keys.find(key)
+                           != usable_analysis_keys.end()) {
+                    continue;
+                }
+            }
             combined.append(line);
             combined.push_back('\n');
         }

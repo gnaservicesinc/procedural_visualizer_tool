@@ -22,6 +22,8 @@ void scale_project_for_stage(pvt::ProjectConfig& project,
     if (source_width <= 0 || source_height <= 0 || source_block_size < 0.0) {
         return;
     }
+    if (requested_scale == 1.0 && display_pixels.width() >= source_width
+        && display_pixels.height() >= source_height) return;
     const int source_short_edge = std::max(
         1, std::min(source_width, source_height));
     requested_scale = std::clamp(requested_scale, 0.10, 1.0);

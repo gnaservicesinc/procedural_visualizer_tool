@@ -1,9 +1,27 @@
 #pragma once
 
 #include <cstdint>
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <optional>
 
 namespace pvt::display {
+
+// Missed presentation deadlines include ticks the event loop never scheduled,
+// not merely work replaced in a render queue. Supply only playing time and
+// reset the epoch when the target FPS changes or playback resumes.
+inline std::uint64_t missed_frame_deadlines(std::int64_t playing_nanoseconds,
+                                           double fps, std::uint64_t delivered) noexcept {
+    if (playing_nanoseconds <= 0 || !std::isfinite(fps) || fps <= 0) return 0;
+    const long double expected = std::floor(
+        static_cast<long double>(playing_nanoseconds) * fps / 1.0e9L);
+    const auto count = expected >= static_cast<long double>(
+        std::numeric_limits<std::uint64_t>::max())
+        ? std::numeric_limits<std::uint64_t>::max()
+        : static_cast<std::uint64_t>(expected);
+    return count > delivered ? count - delivered : 0;
+}
 
 // Count completed-frame intervals over a quarter second. Averaging rates for
 // individual (millisecond-rounded) intervals exaggerates jitter and throughput.

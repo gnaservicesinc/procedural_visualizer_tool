@@ -253,6 +253,23 @@ bool AudioPlayback::start(const std::string& path, double position_seconds,
 bool AudioPlayback::start_mix(const std::vector<PlaybackTrack>& tracks,
                               double timeline_position_seconds,
                               std::string* error) {
+    return prepare_mix(tracks, timeline_position_seconds, true, error);
+}
+
+bool AudioPlayback::prepare_stream(const std::vector<PlaybackTrack>& tracks,
+                                   std::string* error) {
+    return prepare_mix(tracks, 0.0, false, error);
+}
+
+void AudioPlayback::read_stream(float* stereo, std::uint32_t frames) noexcept {
+    ma_device source{};
+    source.pUserData = impl_.get();
+    Impl::data_callback(&source, stereo, nullptr, frames);
+}
+
+bool AudioPlayback::prepare_mix(const std::vector<PlaybackTrack>& tracks,
+                                double timeline_position_seconds,
+                                bool open_device, std::string* error) {
     if (error != nullptr) error->clear();
     impl_->uninitialize();
     if (tracks.empty() || !std::isfinite(timeline_position_seconds)
@@ -308,6 +325,17 @@ bool AudioPlayback::start_mix(const std::vector<PlaybackTrack>& tracks,
         }
     }
 
+    const long double timeline_frame =
+        static_cast<long double>(timeline_position_seconds)
+        * static_cast<long double>(kPlaybackSampleRate);
+    impl_->cursor_frames.store(
+        timeline_frame >= static_cast<long double>(
+                              (std::numeric_limits<ma_uint64>::max)())
+            ? (std::numeric_limits<ma_uint64>::max)()
+            : static_cast<ma_uint64>(timeline_frame),
+        std::memory_order_relaxed);
+    impl_->started.store(true, std::memory_order_relaxed);
+    if (!open_device) return true;
     ma_device_config device_config = ma_device_config_init(ma_device_type_playback);
     device_config.playback.format = ma_format_f32;
     device_config.playback.channels = kPlaybackChannels;
@@ -322,16 +350,6 @@ bool AudioPlayback::start_mix(const std::vector<PlaybackTrack>& tracks,
                                            device_result));
     }
     impl_->device_initialized = true;
-    const long double timeline_frame =
-        static_cast<long double>(timeline_position_seconds)
-        * static_cast<long double>(kPlaybackSampleRate);
-    impl_->cursor_frames.store(
-        timeline_frame >= static_cast<long double>(
-                              (std::numeric_limits<ma_uint64>::max)())
-            ? (std::numeric_limits<ma_uint64>::max)()
-            : static_cast<ma_uint64>(timeline_frame),
-        std::memory_order_relaxed);
-    impl_->started.store(true, std::memory_order_relaxed);
     const ma_result start_result = ma_device_start(&impl_->device);
     if (start_result != MA_SUCCESS) {
         impl_->uninitialize();

@@ -8,17 +8,35 @@
 #include <QResizeEvent>
 #include <QScreen>
 #include <QWindow>
+#include <QMenuBar>
+#include <QMenu>
+#include <QAction>
 
 #include <algorithm>
 #include <cmath>
 
 StageOutputWindow::StageOutputWindow(QWidget* parent)
-    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint) {
+    : QWidget(parent, Qt::Window) {
     setObjectName(QStringLiteral("stageOutputWindow"));
     setAccessibleName(tr("Live stage output"));
+    setWindowTitle(tr("PVT — Video Output"));
+    setMinimumSize(320, 200);
+    menu_bar_ = new QMenuBar(this);
+    menu_bar_->setNativeMenuBar(false);
+    auto* output_menu = menu_bar_->addMenu(tr("Output"));
+    auto* fullscreen = output_menu->addAction(tr("Enter / Leave Full Screen"));
+    fullscreen->setShortcut(QKeySequence(Qt::Key_F11));
+    addAction(fullscreen);
+    connect(fullscreen, &QAction::triggered, this, [this] {
+        if (isFullScreen()) showNormal(); else showFullScreen();
+    });
+    auto* playback = output_menu->addAction(tr("Play / Pause"));
+    connect(playback, &QAction::triggered, this, &StageOutputWindow::playbackRequested);
+    auto* close = output_menu->addAction(tr("Stop Video Output"));
+    connect(close, &QAction::triggered, this, &StageOutputWindow::dismissRequested);
     setAttribute(Qt::WA_OpaquePaintEvent);
     setAutoFillBackground(false);
-    setCursor(Qt::BlankCursor);
+    setCursor(Qt::ArrowCursor);
     setFocusPolicy(Qt::StrongFocus);
     setStyleSheet(QStringLiteral("background: #000000;"));
 }
@@ -110,6 +128,9 @@ bool StageOutputWindow::event(QEvent* event) {
 #endif
         );
     const bool handled = QWidget::event(event);
+    if (menu_bar_ && event && event->type() == QEvent::WindowStateChange) {
+        menu_bar_->setVisible(!isFullScreen());
+    }
     if (metrics_changed) emit outputMetricsChanged();
     return handled;
 }
@@ -126,21 +147,28 @@ void StageOutputWindow::paintEvent(QPaintEvent*) {
     painter.setRenderHint(QPainter::SmoothPixmapTransform, smooth_scaling_);
     const QSize source = last_good_frame_.size();
     if (source.isEmpty()) return;
+    const int top = menu_bar_->isVisible() ? menu_bar_->height() : 0;
+    const int available_height = height() - top;
     const double scale = std::min(
         static_cast<double>(width()) / source.width(),
-        static_cast<double>(height()) / source.height());
+        static_cast<double>(available_height) / source.height());
     const QSize target_size(
         std::max(1, static_cast<int>(std::lround(source.width() * scale))),
         std::max(1, static_cast<int>(std::lround(source.height() * scale))));
     const QRect target(QPoint((width() - target_size.width()) / 2,
-                              (height() - target_size.height()) / 2),
+                              top + (available_height - target_size.height()) / 2),
                        target_size);
     painter.drawImage(target, last_good_frame_);
 }
 
 void StageOutputWindow::keyPressEvent(QKeyEvent* event) {
     if (event != nullptr && event->key() == Qt::Key_Escape) {
-        emit dismissRequested();
+        if (isFullScreen()) showNormal(); else emit dismissRequested();
+        event->accept();
+        return;
+    }
+    if (event && event->key() == Qt::Key_Space && event->modifiers() == Qt::NoModifier) {
+        if (!event->isAutoRepeat()) emit playbackRequested();
         event->accept();
         return;
     }
@@ -149,5 +177,6 @@ void StageOutputWindow::keyPressEvent(QKeyEvent* event) {
 
 void StageOutputWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    if (menu_bar_) menu_bar_->setGeometry(0, 0, width(), menu_bar_->sizeHint().height());
     emit outputMetricsChanged();
 }

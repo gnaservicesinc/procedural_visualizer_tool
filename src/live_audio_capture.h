@@ -127,6 +127,20 @@ struct LiveAudioSnapshot {
     std::vector<FrequencyStream> frequency_streams;
 };
 
+// Machine-local routing. Each source may contribute to analysis and any
+// number of output mixes. Files reuse the project decoder and loop forever.
+struct LiveAudioSourceRoute {
+    std::string id;
+    std::string device_id;
+    std::string file_path;
+    float gain = 1.0F;
+    bool analysis = false;
+};
+struct LiveAudioOutputRoute {
+    std::string device_id;
+    std::vector<std::string> source_ids;
+};
+
 // A small, allocation-free incremental analyzer runs in miniaudio's capture
 // callback. It is intentionally causal: the snapshot reflects only samples
 // already received and is never written into MusicAnalysis or a project.
@@ -139,6 +153,11 @@ public:
     LiveAudioCapture& operator=(const LiveAudioCapture&) = delete;
 
     std::vector<LiveAudioDevice> devices(std::string* error = nullptr) const;
+    std::vector<LiveAudioDevice> output_devices(std::string* error = nullptr) const;
+    bool start_routing(const std::vector<LiveAudioSourceRoute>& sources,
+                       const std::vector<LiveAudioOutputRoute>& outputs,
+                       std::uint32_t period_frames = 256U,
+                       std::string* error = nullptr);
     bool start(const std::string& runtime_device_id_or_name = {},
                std::uint32_t requested_period_frames = 128U,
                std::string* error = nullptr);

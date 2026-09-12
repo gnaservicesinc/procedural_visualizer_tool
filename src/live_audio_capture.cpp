@@ -1,6 +1,9 @@
 #include "live_audio_capture.h"
 
 #include "audio_input_processing.h"
+#include "audio_playback.h"
+#include <thread>
+#include <unordered_set>
 
 #include "miniaudio.h"
 
@@ -349,6 +352,100 @@ struct LiveAudioCapture::Impl {
         }
     };
 
+    // Each ring has one device callback and one mixer worker as producer and
+    // consumer. Devices never block on the UI, file decoding, or other devices.
+    struct RoutedDevice {
+        ma_device device{};
+        ma_pcm_rb ring{};
+        bool initialized = false;
+        bool ring_initialized = false;
+        bool input = false;
+        ma_linear_resampler resampler{};
+        bool resampler_initialized = false;
+        bool buffered = false; // consumer thread only
+        float rate_ratio = 1.0F;
+        ma_uint32 target_buffer_frames = 512;
+        LiveAudioSourceRoute route;
+        std::vector<std::size_t> source_indices;
+        AudioPlayback file;
+        std::vector<float> samples;
+        std::atomic<std::uint64_t> underruns{0U};
+        ~RoutedDevice() {
+            if (initialized) ma_device_uninit(&device);
+            if (ring_initialized) ma_pcm_rb_uninit(&ring);
+            if (resampler_initialized) ma_linear_resampler_uninit(&resampler, nullptr);
+        }
+        // Independent hardware clocks drift even when both report 48 kHz.
+        // Gently match each consumer to its producer using the existing
+        // miniaudio resampler; buffering stays bounded rather than growing
+        // latency indefinitely or periodically dropping whole audio blocks.
+        ma_uint32 read_adjusted(float* output, ma_uint32 frames) noexcept {
+            const ma_uint32 available = ma_pcm_rb_available_read(&ring);
+            if (!buffered) {
+                if (available < target_buffer_frames) return 0;
+                buffered = true;
+            }
+            const double deviation = (static_cast<double>(available)
+                - target_buffer_frames - frames) / std::max(1.0, static_cast<double>(target_buffer_frames));
+            const float desired = static_cast<float>(std::clamp(1.0 + deviation * 0.001, 0.995, 1.005));
+            rate_ratio += (desired - rate_ratio) * 0.01F;
+            (void)ma_linear_resampler_set_rate_ratio(&resampler, rate_ratio);
+            ma_uint32 produced = 0;
+            while (produced < frames) {
+                ma_uint32 readable = ma_pcm_rb_available_read(&ring);
+                if (readable == 0) break;
+                void* input_samples = nullptr;
+                ma_pcm_rb_acquire_read(&ring, &readable, &input_samples);
+                ma_uint64 consumed = readable;
+                ma_uint64 generated = frames - produced;
+                const auto result = ma_linear_resampler_process_pcm_frames(
+                    &resampler, input_samples, &consumed, output + produced * 2U, &generated);
+                ma_pcm_rb_commit_read(&ring, static_cast<ma_uint32>(consumed));
+                produced += static_cast<ma_uint32>(generated);
+                if (result != MA_SUCCESS || (consumed == 0 && generated == 0)) break;
+            }
+            if (produced == 0) buffered = false;
+            return produced;
+        }
+        static ma_uint32 transfer(ma_pcm_rb& ring, float* samples,
+                                   ma_uint32 count, bool write) noexcept {
+            ma_uint32 offset = 0;
+            while (offset < count) {
+                ma_uint32 available = count - offset;
+                void* buffer = nullptr;
+                if (write) ma_pcm_rb_acquire_write(&ring, &available, &buffer);
+                else ma_pcm_rb_acquire_read(&ring, &available, &buffer);
+                if (available == 0) break;
+                if (write) std::memcpy(buffer, samples + offset * 2U,
+                                       available * 2U * sizeof(float));
+                else std::memcpy(samples + offset * 2U, buffer,
+                                 available * 2U * sizeof(float));
+                if (write) ma_pcm_rb_commit_write(&ring, available);
+                else ma_pcm_rb_commit_read(&ring, available);
+                offset += available;
+            }
+            return offset;
+        }
+        static void callback(ma_device* device, void* output,
+                              const void* input, ma_uint32 frames) noexcept {
+            auto* self = static_cast<RoutedDevice*>(device->pUserData);
+            if (self->input) {
+                if (input && transfer(self->ring,
+                        const_cast<float*>(static_cast<const float*>(input)),
+                        frames, true) < frames) ++self->underruns;
+            } else if (output) {
+                auto* samples = static_cast<float*>(output);
+                const auto read = self->read_adjusted(samples, frames);
+                std::fill(samples + read * 2U, samples + frames * 2U, 0.0F);
+                if (read < frames) ++self->underruns;
+            }
+        }
+    };
+    std::vector<std::unique_ptr<RoutedDevice>> routed_sources;
+    std::vector<std::unique_ptr<RoutedDevice>> routed_outputs;
+    std::thread mixer_thread;
+    std::atomic_bool mixer_stop{true};
+
     ma_context context{};
     ma_device device{};
     bool context_initialized = false;
@@ -576,6 +673,10 @@ struct LiveAudioCapture::Impl {
 
     void uninitialize() noexcept {
         running.store(false, std::memory_order_relaxed);
+        mixer_stop.store(true, std::memory_order_release);
+        if (mixer_thread.joinable()) mixer_thread.join();
+        routed_outputs.clear();
+        routed_sources.clear();
         if (device_initialized) {
             (void)ma_device_stop(&device);
             ma_device_uninit(&device);
@@ -653,6 +754,198 @@ std::vector<LiveAudioDevice> LiveAudioCapture::devices(
     }
     ma_context_uninit(&context);
     return found;
+}
+
+std::vector<LiveAudioDevice> LiveAudioCapture::output_devices(std::string* error) const {
+    if (error) error->clear();
+    ma_context context{};
+    auto result = ma_context_init(nullptr, 0U, nullptr, &context);
+    if (result != MA_SUCCESS) {
+        fail(error, miniaudio_error("Could not discover audio outputs", result));
+        return {};
+    }
+    ma_device_info* info = nullptr;
+    ma_uint32 count = 0U;
+    result = ma_context_get_devices(&context, &info, &count, nullptr, nullptr);
+    std::vector<LiveAudioDevice> devices;
+    if (result == MA_SUCCESS) devices = describe_devices(context.backend, info, count);
+    else fail(error, miniaudio_error("Could not enumerate audio outputs", result));
+    ma_context_uninit(&context);
+    return devices;
+}
+
+bool LiveAudioCapture::start_routing(
+    const std::vector<LiveAudioSourceRoute>& sources,
+    const std::vector<LiveAudioOutputRoute>& outputs,
+    std::uint32_t period_frames, std::string* error) {
+    if (error) error->clear();
+    if (period_frames == 0 || period_frames > kMaximumLiveAudioPeriodFrames)
+        return fail(error, "Invalid audio routing period.");
+    std::unordered_set<std::string> ids;
+    for (const auto& source : sources) {
+        if (source.id.empty() || !ids.insert(source.id).second
+            || !std::isfinite(source.gain) || source.gain < 0.0F)
+            return fail(error, "Audio sources require unique IDs and finite, nonnegative gains.");
+    }
+    std::unordered_set<std::string> output_ids;
+    for (const auto& output : outputs) {
+        if (!output_ids.insert(output.device_id).second)
+            return fail(error, "An output device must have one combined mix.");
+        std::unordered_set<std::string> routed;
+        for (const auto& id : output.source_ids)
+            if (!ids.count(id) || !routed.insert(id).second)
+                return fail(error, "An output mix has an unknown or repeated source.");
+    }
+    stop();
+    if (!impl_->input_processor.configure(impl_->processing_config, 48000, error)) return false;
+    impl_->clear_analysis();
+    auto result = ma_context_init(nullptr, 0, nullptr, &impl_->context);
+    if (result != MA_SUCCESS)
+        return fail(error, miniaudio_error("Could not initialize audio routing", result));
+    impl_->context_initialized = true;
+    const auto abort = [&](const std::string& message) {
+        impl_->uninitialize();
+        return fail(error, message);
+    };
+    try {
+        ma_device_info *input_info = nullptr, *output_info = nullptr;
+        ma_uint32 input_count = 0, output_count = 0;
+        result = ma_context_get_devices(&impl_->context, &output_info, &output_count,
+                                        &input_info, &input_count);
+        if (result != MA_SUCCESS) return abort(miniaudio_error("Could not enumerate audio routes", result));
+        const auto input_choices = describe_devices(impl_->context.backend, input_info, input_count);
+        const auto output_choices = describe_devices(impl_->context.backend, output_info, output_count);
+        const auto prepare_device = [&](Impl::RoutedDevice& route,
+                                         const std::string& id, bool capture) {
+            ma_device_id selected{};
+            const ma_device_id* selected_ptr = nullptr;
+            if (!id.empty()) {
+                const auto index = find_live_audio_device(capture ? input_choices : output_choices, id, error);
+                if (!index) return false;
+                selected = capture ? input_info[*index].id : output_info[*index].id;
+                selected_ptr = &selected;
+            }
+            result = ma_pcm_rb_init(ma_format_f32, 2, 24000, nullptr, nullptr, &route.ring);
+            if (result != MA_SUCCESS) return fail(error, "Could not allocate an audio route buffer.");
+            route.ring_initialized = true;
+            route.input = capture;
+            route.target_buffer_frames = std::clamp(period_frames * 2U, 64U, 8192U);
+            const auto resampler_config = ma_linear_resampler_config_init(ma_format_f32, 2, 48000, 48000);
+            result = ma_linear_resampler_init(&resampler_config, nullptr, &route.resampler);
+            if (result != MA_SUCCESS) return fail(error, "Could not prepare device clock synchronization.");
+            route.resampler_initialized = true;
+            auto config = ma_device_config_init(capture ? ma_device_type_capture : ma_device_type_playback);
+            if (capture) {
+                config.capture.format = ma_format_f32;
+                config.capture.channels = 2;
+                config.capture.pDeviceID = selected_ptr;
+            } else {
+                config.playback.format = ma_format_f32;
+                config.playback.channels = 2;
+                config.playback.pDeviceID = selected_ptr;
+            }
+            config.sampleRate = 48000;
+            config.periodSizeInFrames = period_frames;
+            config.noFixedSizedCallback = MA_TRUE;
+            config.dataCallback = &Impl::RoutedDevice::callback;
+            config.pUserData = &route;
+            result = ma_device_init(&impl_->context, &config, &route.device);
+            if (result != MA_SUCCESS) return fail(error, miniaudio_error("Could not open an audio route", result));
+            route.initialized = true;
+            return true;
+        };
+        for (const auto& source : sources) {
+            auto route = std::make_unique<Impl::RoutedDevice>();
+            route->route = source;
+            route->samples.resize(period_frames * 2U);
+            if (!source.file_path.empty()) {
+                PlaybackTrack track;
+                track.path = source.file_path;
+                track.loop = true;
+                if (!route->file.prepare_stream({track}, error)) {
+                    route.reset();
+                    return abort(error ? *error : "Could not decode a clock audio source.");
+                }
+            } else if (!prepare_device(*route, source.device_id, true)) {
+                route.reset();
+                return abort(error ? *error : "Could not open audio input.");
+            }
+            impl_->routed_sources.push_back(std::move(route));
+        }
+        for (const auto& output : outputs) {
+            auto route = std::make_unique<Impl::RoutedDevice>();
+            route->samples.resize(period_frames * 2U);
+            for (const auto& id : output.source_ids) {
+                const auto found = std::find_if(sources.begin(), sources.end(),
+                    [&](const auto& source) { return source.id == id; });
+                route->source_indices.push_back(static_cast<std::size_t>(found - sources.begin()));
+            }
+            if (!prepare_device(*route, output.device_id, false)) {
+                route.reset();
+                return abort(error ? *error : "Could not open audio output.");
+            }
+            impl_->routed_outputs.push_back(std::move(route));
+        }
+        for (const auto& route : impl_->routed_sources) {
+            if (route->initialized && ma_device_start(&route->device) != MA_SUCCESS)
+                return abort("Could not start an audio input.");
+        }
+        for (const auto& route : impl_->routed_outputs) {
+            if (ma_device_start(&route->device) != MA_SUCCESS)
+                return abort("Could not start an audio output.");
+        }
+        impl_->mixer_stop.store(false, std::memory_order_release);
+        impl_->running.store(true, std::memory_order_release);
+        std::vector<float> analysis_buffer(period_frames);
+        impl_->mixer_thread = std::thread([self = impl_.get(), period_frames,
+                                          analysis = std::move(analysis_buffer)]() mutable {
+            ma_device analyzer{};
+            analyzer.pUserData = self;
+            const auto period = std::chrono::nanoseconds(
+                static_cast<std::int64_t>(1.0e9 * period_frames / 48000.0));
+            auto due = std::chrono::steady_clock::now();
+            while (!self->mixer_stop.load(std::memory_order_acquire)) {
+                std::fill(analysis.begin(), analysis.end(), 0.0F);
+                bool has_analysis = false;
+                for (const auto& route : self->routed_sources) {
+                    auto& samples = route->samples;
+                    ma_uint32 received = period_frames;
+                    if (!route->route.file_path.empty()) {
+                        route->file.read_stream(samples.data(), period_frames);
+                    } else {
+                        received = route->read_adjusted(samples.data(), period_frames);
+                        std::fill(samples.begin() + received * 2U, samples.end(), 0.0F);
+                    }
+                    for (auto& sample : samples) sample *= route->route.gain;
+                    if (route->route.analysis && received > 0U) {
+                        has_analysis = true;
+                        for (ma_uint32 f = 0; f < period_frames; ++f)
+                            analysis[f] += (samples[f * 2U] + samples[f * 2U + 1U]) * 0.5F;
+                    }
+                }
+                if (has_analysis)
+                    Impl::data_callback(&analyzer, nullptr, analysis.data(), period_frames);
+                for (const auto& output : self->routed_outputs) {
+                    std::fill(output->samples.begin(), output->samples.end(), 0.0F);
+                    for (auto index : output->source_indices) {
+                        const auto& samples = self->routed_sources[index]->samples;
+                        for (std::size_t i = 0; i < samples.size(); ++i)
+                            output->samples[i] += samples[i];
+                    }
+                    for (auto& sample : output->samples) sample = std::clamp(sample, -1.0F, 1.0F);
+                    if (Impl::RoutedDevice::transfer(output->ring, output->samples.data(), period_frames, true) < period_frames)
+                        ++output->underruns;
+                }
+                due += period;
+                const auto now = std::chrono::steady_clock::now();
+                if (due < now - period) { due = now + period; ++self->dropouts; }
+                std::this_thread::sleep_until(due);
+            }
+        });
+    } catch (const std::exception& exception) {
+        return abort(std::string("Could not prepare audio routing: ") + exception.what());
+    }
+    return true;
 }
 
 bool LiveAudioCapture::start(const std::string& runtime_device_id_or_name,
@@ -817,6 +1110,8 @@ LiveAudioSnapshot LiveAudioCapture::snapshot() const {
     value.estimated_input_latency_ms = impl_->estimated_latency_ms.load(
         std::memory_order_relaxed);
     value.callback_dropouts = impl_->dropouts.load(std::memory_order_relaxed);
+    for (const auto& route : impl_->routed_sources) value.callback_dropouts += route->underruns.load();
+    for (const auto& route : impl_->routed_outputs) value.callback_dropouts += route->underruns.load();
     const std::int64_t callback_ns = impl_->last_callback_ns.load(
         std::memory_order_acquire);
     if (callback_ns != 0) {

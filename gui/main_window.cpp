@@ -1736,55 +1736,6 @@ bool visible_stack_requires_alpha(
     return !guaranteed_opaque;
 }
 
-void scale_project_for_preview(pvt::ProjectConfig& project) {
-    const int source_width = project.canvas.width;
-    const int source_height = project.canvas.height;
-    const double source_block_size = project.canvas.block_size;
-    const int source_short_edge =
-        std::max(1, std::min(project.canvas.width, project.canvas.height));
-    const double scale = std::min(
-        {1.0, 720.0 / static_cast<double>(project.canvas.width),
-         480.0 / static_cast<double>(project.canvas.height)});
-    const int preview_width =
-        std::max(16, static_cast<int>(std::lround(project.canvas.width * scale)));
-    const int preview_height =
-        std::max(16, static_cast<int>(std::lround(project.canvas.height * scale)));
-    const double pixel_scale =
-        static_cast<double>(std::min(preview_width, preview_height))
-        / static_cast<double>(source_short_edge);
-
-    // These controls are defined in output pixels. Scale them with the preview
-    // so the low-resolution image preserves their full-resolution proportions.
-    for (auto& layer : project.layers) {
-        layer.render.starting_colors.reference_width =
-            source_block_size > 0.0 ? source_width : 0;
-        layer.render.starting_colors.reference_height =
-            source_block_size > 0.0 ? source_height : 0;
-        layer.render.starting_colors.reference_block_size = source_block_size;
-        pvt::detail::scale_parameter_lfo_target_ranges(layer.render, "block_size", scale);
-        layer.render.displacement *= pixel_scale;
-        for (auto& effect : layer.render.effects) {
-            if (effect.type == pvt::EffectType::Glow
-                || effect.type == pvt::EffectType::ParticleField
-                || effect.type == pvt::EffectType::Blur) {
-                effect.radius_pixels *= pixel_scale;
-            } else if (effect.type == pvt::EffectType::EdgeDetect) {
-                effect.frequency = std::max(
-                    1.0, std::round(effect.frequency * pixel_scale));
-            }
-        }
-    }
-    project.canvas.width = preview_width;
-    project.canvas.height = preview_height;
-    // Match Live: reducing a pixel-sized project must not supersample all
-    // effects back to full resolution. Authored subpixel sizes still resolve.
-    project.canvas.block_size = source_block_size == 0.0
-        ? 0.0 : std::max(source_block_size >= 1.0 ? 1.0 : 0.000001,
-                         source_block_size * scale);
-    project.canvas.block_size_modulation.minimum *= scale;
-    project.canvas.block_size_modulation.maximum *= scale;
-}
-
 void set_form_label(QFormLayout* form, QWidget* field, const QString& text) {
     if (auto* label = qobject_cast<QLabel*>(form->labelForField(field))) {
         label->setText(text);
@@ -2598,27 +2549,31 @@ MainWindow::MainWindow(QWidget* parent)
         [this](const pvt::LiveConfig& live, const QString& reason) {
             applyAuthoredLiveConfig(live, reason);
         });
+    live_workspace_->setClockAudioProvider([this] {
+        QVector<LiveWorkspace::ClockAudioSource> sources;
+        if (!document_) return sources;
+        const auto append = [&](const pvt::ClockConfig& clock, const std::string& attachment,
+                                 const QString& id, const QString& label) {
+            if (clock.data_only) return;
+            const auto path = pvt::project_attachment_path(*document_, attachment);
+            if (!path.empty()) sources.push_back({id, label, QString::fromStdString(path)});
+        };
+        append(project_.canvas.clock, pvt::kMusicSourceAttachmentId,
+               QStringLiteral("clock:project"), tr("Project clock audio"));
+        for (const auto& layer : project_.layers)
+            append(layer.render.layer_clock.clock, pvt::layer_music_attachment_id(layer.uuid),
+                   QStringLiteral("clock:") + QString::fromStdString(layer.uuid),
+                   tr("%1 clock audio").arg(QString::fromStdString(layer.name)));
+        return sources;
+    });
     live_workspace_->setObjectName(QStringLiteral("livePerformanceWorkspace"));
     connect(live_workspace_, &LiveWorkspace::requestEditMode,
             this, [this] { setLiveMode(false); });
-    connect(live_workspace_, &LiveWorkspace::livePreviewFrame,
-            this, [this](const QImage& image) {
-                if (preview_ != nullptr && live_workspace_ != nullptr
-                    && live_workspace_->isRealtimeOutputActive()
-                    && (workspace_stack_ == nullptr
-                        || workspace_stack_->currentWidget() != live_workspace_)) {
-                    // Match the Live monitor/stage when enlarging its reduced
-                    // resolution frame; nearest-neighbor scaling invents large
-                    // visible pixels even when the authored block size is one.
-                    preview_->setPreview(image, Qt::SmoothTransformation);
-                    if (palette_remix_dialog_ && live_workspace_->isPresentationActive())
-                        palette_remix_dialog_->setArtwork(image);
-                }
-            });
+    connect(live_workspace_, &LiveWorkspace::requestTogglePlayback,
+            this, &MainWindow::togglePlayback);
     connect(live_workspace_, &LiveWorkspace::runtimeStatusChanged,
             this, [this](const QString& summary) {
-                if (status_ != nullptr && live_workspace_ != nullptr
-                    && live_workspace_->isRealtimeOutputActive()) {
+                if (status_ != nullptr && live_workspace_ != nullptr) {
                     status_->setText(summary);
                     status_->setToolTip({});
                 }
@@ -2632,7 +2587,7 @@ MainWindow::MainWindow(QWidget* parent)
                 updateExportAvailability();
                 if (active) {
                     suspendEditorPreviewForRealtime();
-                    stopPlayback();
+                    if (!playback_timer_->isActive()) togglePlayback();
                 } else if (!suppress_realtime_preview_resume_
                     && live_workspace_ != nullptr
                     && !live_workspace_->isPresentationActive()) {
@@ -3056,11 +3011,18 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() {
     qApp->removeEventFilter(this);
+    suppress_realtime_preview_resume_ = true;
+    stopPlayback();
     if (live_workspace_ != nullptr
         && live_workspace_->isPresentationActive()) {
         live_workspace_->setPresentationActive(false);
     }
+    if (live_workspace_) live_workspace_->setLiveActive(false);
     restoreLiveWorkspace(false);
+    // Stop independent audio routing and join output workers before the
+    // document and the callbacks' other MainWindow state are destroyed.
+    delete live_workspace_;
+    live_workspace_ = nullptr;
     if (audio_playback_ != nullptr) audio_playback_->stop();
     if (preview_cancel_ != nullptr) {
         preview_cancel_->store(true, std::memory_order_relaxed);
@@ -3460,6 +3422,7 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         && live_workspace_->isPresentationActive()) {
         live_workspace_->setPresentationActive(false);
     }
+    if (live_workspace_) live_workspace_->setLiveActive(false);
     restoreLiveWorkspace(false);
     saveUserSettings();
     QMainWindow::closeEvent(event);
@@ -3538,9 +3501,9 @@ bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
         auto* key = static_cast<QKeyEvent*>(event);
         auto* target = qobject_cast<QWidget*>(watched);
         if (key->key() == Qt::Key_Space && key->modifiers() == Qt::NoModifier
-            && target != nullptr && target->window() == this
-            && (live_workspace_ == nullptr
-                || !live_workspace_->isLiveActive())) {
+            && target != nullptr
+            && (target->window() == this
+                || target->window() == live_popout_window_)) {
             QWidget* const focus = QApplication::focusWidget();
             const bool editing_text = qobject_cast<QLineEdit*>(focus) != nullptr
                                       || qobject_cast<QPlainTextEdit*>(focus) != nullptr;
@@ -6366,14 +6329,13 @@ QWidget* MainWindow::createOutputPage() {
     live_preview_quality_->setObjectName(
         QStringLiteral("livePreviewOutputQuality"));
     live_preview_quality_->addItem(tr("Auto · frame-budget managed"), 0.0);
-    live_preview_quality_->addItem(tr("100% of output size"), 1.0);
+    live_preview_quality_->addItem(tr("100% · canvas resolution"), 1.0);
     live_preview_quality_->addItem(tr("75%"), 0.75);
     live_preview_quality_->addItem(tr("50%"), 0.5);
     live_preview_quality_->addItem(tr("25%"), 0.25);
     live_preview_quality_->setToolTip(tr(
-        "Fits the project to the output window's pixels, capped at project resolution. "
-        "Auto reduces resolution when frames miss their deadline. Choose a fixed "
-        "percentage for performance comparisons and compare the delivered dimensions."));
+        "Render at the selected percentage of the canvas resolution, independently of window size. "
+        "Auto may reduce resolution to meet the requested frame rate."));
     live_preview_fullscreen_ = new QCheckBox(tr("Full-screen output"));
     live_preview_fullscreen_->setObjectName(
         QStringLiteral("livePreviewOutputFullscreen"));
@@ -7679,14 +7641,6 @@ void MainWindow::togglePlayback() {
         }
         return;
     }
-    if (live_workspace_ != nullptr && live_workspace_->isLiveActive()) {
-        stopPlayback();
-        if (status_ != nullptr) {
-            status_->setText(tr(
-                "Stop performance LIVE before starting editor playback."));
-        }
-        return;
-    }
     if (playback_timer_->isActive()) {
         stopPlayback();
     } else {
@@ -7698,11 +7652,13 @@ void MainWindow::togglePlayback() {
         playback_timer_->start(std::max(
             1, static_cast<int>(std::lround(1000.0 / config_.fps))));
         play_button_->setText(tr("Pause"));
+        if (live_workspace_) live_workspace_->setPlaybackRunning(true);
     }
     schedulePreview();
 }
 
 void MainWindow::stopPlayback() {
+    if (live_workspace_) live_workspace_->setPlaybackRunning(false);
     if (playback_timer_ != nullptr) playback_timer_->stop();
     playback_clock_.invalidate();
     preview_delivery_clock_.invalidate();
@@ -7774,53 +7730,23 @@ void MainWindow::suspendEditorPreviewForRealtime() {
 }
 
 void MainWindow::setLiveMode(bool live) {
-    if (workspace_stack_ == nullptr || editor_workspace_ == nullptr
-        || live_workspace_ == nullptr) {
-        return;
-    }
+    if (!live_workspace_ || !workspace_stack_ || !editor_workspace_) return;
+    if (live && (project_io_active_ || export_active_ || music_analysis_active_)) return;
     workspace_stack_->setCurrentWidget(editor_workspace_);
-    if (edit_mode_action_ != nullptr) {
-        const QSignalBlocker blocker(edit_mode_action_);
-        edit_mode_action_->setChecked(true);
-    }
-    if (live_mode_action_ != nullptr) {
-        const QSignalBlocker blocker(live_mode_action_);
-        live_mode_action_->setChecked(false);
-    }
     if (!live) {
-        if (live_popout_window_ != nullptr) {
-            show();
-            raise();
-            activateWindow();
-        }
-        if (status_ != nullptr) {
-            status_->setText(live_workspace_->isLiveActive()
-                ? tr("Editing the live project — input, rendering, and stage output remain active in the LIVE window.")
-                : tr("Edit mode — Flow Workbench ready."));
-        }
-        if (!live_workspace_->isLiveActive()) schedulePreview();
+        show();
+        raise();
+        activateWindow();
         return;
     }
-
-    if (export_active_ || (export_watcher_ != nullptr
-                           && export_watcher_->isRunning())
-        || project_io_active_ || music_analysis_active_) {
-        if (status_ != nullptr) {
-            status_->setText(tr(
-                "Finish or cancel the active export, project operation, or music analysis before opening LIVE."));
-        }
+    // This is a tool window. Showing it does not acquire render or audio ownership.
+    if (live_popout_window_ && live_popout_window_->isVisible()) {
+        live_popout_window_->close();
         return;
     }
-    if (live_workspace_->isPresentationActive()) {
-        setLivePreviewOutputActive(false);
-    }
-
-    suspendEditorPreviewForRealtime();
-    stopPlayback();
-    live_workspace_->setProjectLiveConfig(project_.canvas.live);
-    live_workspace_->refreshProjectSnapshot();
-    if (!live_workspace_->isLiveActive()) live_workspace_->setLiveActive(true);
+    live_workspace_->refreshAudioInputs();
     showLiveWindow();
+    if (live_mode_action_) live_mode_action_->setChecked(true);
     updateExportAvailability();
 }
 
@@ -7898,9 +7824,9 @@ void MainWindow::showLiveWindow() {
     live_popout_window_ = new QMainWindow(this, Qt::Window);
     live_popout_window_->setObjectName(QStringLiteral("livePopoutWindow"));
     live_popout_window_->setAttribute(Qt::WA_DeleteOnClose, false);
-    live_popout_window_->setWindowTitle(tr("Procedural Visualizer Tool — LIVE"));
+    live_popout_window_->setWindowTitle(tr("Procedural Visualizer Tool — Live Controls"));
     live_popout_window_->setCentralWidget(live_workspace_);
-    live_popout_window_->resize(1180, 760);
+    live_popout_window_->resize(1120, 800);
     live_popout_window_->installEventFilter(this);
     live_popout_window_->show();
     live_workspace_->show();
@@ -7908,7 +7834,7 @@ void MainWindow::showLiveWindow() {
     live_popout_window_->activateWindow();
     if (status_ != nullptr) {
         status_->setText(tr(
-            "Live opened in its own window; the editor preview follows the same routed clocks."));
+            "Live Controls"));
     }
 }
 
@@ -7921,8 +7847,6 @@ void MainWindow::restoreLiveWorkspace(bool resume_editor_preview) {
     ScopeExit restore_preview_suppression([this, previous_preview_suppression] {
         suppress_realtime_preview_resume_ = previous_preview_suppression;
     });
-    if (live_workspace_->isLiveActive()) live_workspace_->setLiveActive(false);
-
     if (live_popout_window_ != nullptr) {
         QMainWindow* window = live_popout_window_;
         live_popout_window_ = nullptr;
@@ -8006,6 +7930,7 @@ void MainWindow::applyAuthoredLiveConfig(const pvt::LiveConfig& live,
     updateSynchronizationState();
     updateWorkflowSummaries();
     refreshStandardMicControls();
+    schedulePreview();
 }
 
 void MainWindow::createToolbar() {
@@ -8139,7 +8064,7 @@ void MainWindow::createToolbar() {
     edit_mode_action_->setObjectName(QStringLiteral("editModeAction"));
     live_mode_action_->setObjectName(QStringLiteral("liveModeAction"));
     edit_mode_action_->setCheckable(true);
-    live_mode_action_->setCheckable(false);
+    live_mode_action_->setCheckable(true);
     edit_mode_action_->setChecked(true);
     edit_mode_action_->setShortcut(
         QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
@@ -8150,14 +8075,13 @@ void MainWindow::createToolbar() {
     live_mode_action_->setIcon(
         style()->standardIcon(QStyle::SP_MediaPlay));
     live_mode_action_->setToolTip(tr(
-        "Open the stage-focused Live controls in a separate window immediately. The editor remains available, and freeze, blackout, current scene, and captured input remain ephemeral."));
+        "Show or hide Live Controls. Opening this panel does not start output or change playback."));
     auto* mode_group = new QActionGroup(this);
-    mode_group->setExclusive(true);
+    mode_group->setExclusive(false);
     mode_group->addAction(edit_mode_action_);
     mode_group->addAction(live_mode_action_);
     mode_menu->addActions({edit_mode_action_, live_mode_action_});
     toolbar->addSeparator();
-    toolbar->addAction(edit_mode_action_);
     toolbar->addAction(live_mode_action_);
     connect(edit_mode_action_, &QAction::triggered,
             this, [this] { setLiveMode(false); });
@@ -13928,11 +13852,12 @@ void MainWindow::updateMusicSummary() {
 }
 
 void MainWindow::updateExportAvailability() {
+    if (preview_ && live_workspace_)
+        preview_->setOutputActive(live_workspace_->isRealtimeOutputActive());
     const bool realtime_output = live_workspace_ != nullptr
         && live_workspace_->isRealtimeOutputActive();
-    const bool performance_live = live_workspace_ != nullptr
-        && live_workspace_->isLiveActive();
     const bool transaction_idle = !music_analysis_active_ && !project_io_active_;
+    if (live_workspace_) live_workspace_->setOutputStartingEnabled(!export_active_ && transaction_idle);
     const QString realtime_tooltip = tr(
         "Stop LIVE or Live Preview Output before exporting so the realtime display keeps its frame budget.");
     bit_depth_->setEnabled(true);
@@ -13992,13 +13917,11 @@ void MainWindow::updateExportAvailability() {
     if (play_button_ != nullptr) {
         const bool paused_for_export = export_active_
             && performance_settings_.pause_editor_preview_during_export;
-        play_button_->setEnabled(!performance_live && !paused_for_export);
+        play_button_->setEnabled(!paused_for_export);
         play_button_->setToolTip(
-            performance_live
-                ? tr("Stop performance LIVE before starting editor playback.")
-                : (paused_for_export
-                       ? tr("Editor playback is paused until the export finishes.")
-                       : QString{}));
+            paused_for_export
+                ? tr("Editor playback is paused until the export finishes.")
+                : tr("Play or pause the project in the editor or video output. Shortcut: Space."));
     }
 }
 
@@ -19378,7 +19301,6 @@ MainWindow::PreviewResult MainWindow::generatePreview(pvt::ProjectConfig project
             result.error = tr("Preview cancelled.");
             return result;
         }
-        scale_project_for_preview(project);
         pvt::Image image;
         std::string error;
         QElapsedTimer render_timer;
@@ -20139,7 +20061,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || !mode_menu->actions().contains(edit_mode_action_)
         || !mode_menu->actions().contains(live_mode_action_)
         || !project_toolbar->actions().contains(live_mode_action_)
-        || live_mode_action_->isCheckable()
+        || !live_mode_action_->isCheckable()
         || live_mode_action_->text() != tr("Live Controls")
         || live_preview_output_action_ == nullptr
         || !live_preview_output_action_->isCheckable()
@@ -20161,9 +20083,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || workspace_stack_->currentWidget() != editor_workspace_
         || live_workspace_->isLiveActive()
         || live_tabs == nullptr || live_tabs->count() != 3
-        || live_tabs->tabText(0) != tr("Rig")
+        || live_tabs->tabText(0) != LiveWorkspace::tr("Audio & Video")
         || live_tabs->tabText(1) != tr("Control Map")
-        || live_tabs->tabText(2) != tr("Scenes")
+        || live_tabs->tabText(2) != LiveWorkspace::tr("Saved Looks")
         || edit_live_project == nullptr || live_runtime_button == nullptr
         || music_processing_ == nullptr || music_frequency_stream_ == nullptr
         || layer_music_processing_ == nullptr
@@ -20400,6 +20322,13 @@ bool MainWindow::runSmokeChecks(QString* error) {
         presentation_stage->installEventFilter(&dismissal_observer);
         QApplication::sendEvent(presentation_stage, &escape);
         QApplication::processEvents();
+        if (!presentation_stage->isVisible() || presentation_stage->isFullScreen()
+            || !live_workspace_->isPresentationActive()) {
+            if (error) *error = QStringLiteral("Escape must leave fullscreen while retaining windowed output.");
+            return false;
+        }
+        QApplication::sendEvent(presentation_stage, &escape);
+        QApplication::processEvents();
         presentation_stage->removeEventFilter(&dismissal_observer);
         const bool dismissed_fullscreen =
             !live_workspace_->isPresentationActive()
@@ -20518,9 +20447,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         || live_workspace_->size().isEmpty()
         || workspace_stack_->currentWidget() != editor_workspace_
         || workspace_stack_->indexOf(live_workspace_) >= 0
-        || !live_workspace_->isLiveActive()
+        || live_workspace_->isLiveActive()
         || !edit_mode_action_->isChecked()
-        || live_mode_action_->isChecked()) {
+        || !live_mode_action_->isChecked()) {
         restoreLiveWorkspace(false);
         if (error != nullptr) {
             *error = tr("Opening LIVE did not create a populated, visible companion window while preserving the editor.");
@@ -20528,7 +20457,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    // Dismissing only the stage surface must not tear down performance Live.
+    // Output activation is explicit; dismissing it returns the render budget to the editor.
     live_stage_output->click();
     QApplication::processEvents();
     QWidget* const performance_stage = stage_output_window();
@@ -20543,7 +20472,11 @@ bool MainWindow::runSmokeChecks(QString* error) {
         QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
     QApplication::sendEvent(performance_stage, &performance_escape);
     QApplication::processEvents();
-    if (!live_workspace_->isLiveActive() || performance_stage->isVisible()
+    if (performance_stage->isVisible()) {
+        QApplication::sendEvent(performance_stage, &performance_escape);
+        QApplication::processEvents();
+    }
+    if (live_workspace_->isLiveActive() || performance_stage->isVisible()
         || live_stage_output->isChecked()
         || live_popout_window_ != automatic_live_window
         || !automatic_live_window->isVisible()) {
@@ -20554,6 +20487,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
+    live_runtime_button->click();
     // Exercise the perform/capture boundary through the actual widgets and
     // authoring callback. Moving a fader must not add undo entries; explicitly
     // capturing its result must make exactly one undoable, portable scene.
@@ -20639,8 +20573,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
             QApplication::processEvents();
             const bool saved = automatic_live_window->grab().save(
                 smoke_arguments.at(morph_screenshot + 1));
+            scene_tabs->setCurrentIndex(0);
+            QApplication::processEvents();
+            const bool routing_saved = automatic_live_window->grab().save(
+                smoke_arguments.at(morph_screenshot + 1) + QStringLiteral(".routing.png"));
             scene_tabs->setCurrentIndex(previous_tab);
-            if (!saved) {
+            if (!saved || !routing_saved) {
                 if (error) *error = QStringLiteral("Could not save the Scene Morph smoke screenshot.");
                 return false;
             }
@@ -20687,7 +20625,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         && export_action_->isEnabled()
         && current_frame_export_action_->isEnabled()
         && (preview_timer_->isActive() || preview_watcher_->isRunning());
-    togglePlayback();
+    if (!playback_timer_->isActive()) togglePlayback();
     const bool editor_playback_started = playback_timer_->isActive();
     live_runtime_button->click();
     QApplication::processEvents();
@@ -20695,7 +20633,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         && !export_action_->isEnabled()
         && !current_frame_export_action_->isEnabled()
         && !preview_timer_->isActive() && !preview_deferred_
-        && !playback_timer_->isActive();
+        && playback_timer_->isActive();
     if (!stopped_runtime_cleanly || !editor_playback_started
         || !restarted_runtime_cleanly) {
         restoreLiveWorkspace(false);
@@ -20721,7 +20659,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
     const bool editor_playback_guarded = play_button_ != nullptr
-        && !play_button_->isEnabled();
+        && play_button_->isEnabled();
     if (play_button_ != nullptr) play_button_->click();
     QApplication::processEvents();
     if (!editor_playback_guarded || playback_timer_->isActive()) {
@@ -20730,6 +20668,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
             *error = tr(
                 "Editor playback remained reachable while performance LIVE was active.");
         }
+        return false;
+    }
+
+    // Space controls the same transport from both top-level windows.
+    play_button_->setFocus(Qt::OtherFocusReason);
+    QKeyEvent live_space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+    QApplication::sendEvent(this, &live_space);
+    if (!playback_timer_->isActive()) {
+        if (error) *error = QStringLiteral("Space did not resume playback from the editor during output.");
+        return false;
+    }
+    live_runtime_button->setFocus(Qt::OtherFocusReason);
+    QKeyEvent controls_space(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier);
+    QApplication::sendEvent(automatic_live_window, &controls_space);
+    if (playback_timer_->isActive()) {
+        if (error) *error = QStringLiteral("Space did not pause playback from Live Controls.");
         return false;
     }
 
@@ -20781,16 +20735,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    // Closing the companion window is an explicit stop. The workspace must be
-    // returned to its private stack slot so opening LIVE again is repeatable,
-    // and no hidden runtime may continue capturing audio or preventing sleep.
+    // Closing a tool panel preserves output and playback. Reopening it restores
+    // the controls without replacing the active renderer.
     automatic_live_window->close();
     QApplication::processEvents();
     if (live_popout_window_ != nullptr
         || workspace_stack_->count() != 2
         || workspace_stack_->indexOf(live_workspace_) < 0
         || workspace_stack_->currentWidget() != editor_workspace_
-        || live_workspace_->isLiveActive()
+        || !live_workspace_->isLiveActive()
         || !edit_mode_action_->isChecked()
         || live_mode_action_->isChecked()) {
         restoreLiveWorkspace(false);
@@ -20816,7 +20769,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     reopened_live_window->close();
     QApplication::processEvents();
-    if (live_popout_window_ != nullptr || live_workspace_->isLiveActive()
+    if (live_popout_window_ != nullptr || !live_workspace_->isLiveActive()
         || workspace_stack_->indexOf(live_workspace_) < 0) {
         restoreLiveWorkspace(false);
         if (error != nullptr) {
@@ -20824,6 +20777,9 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+
+    live_workspace_->setLiveActive(false);
+    stopPlayback();
 
     // Blank-project authoring must not depend on the next performance tick.
     // Use the real editor widgets and Live companion lifecycle at 0.1 fps:
@@ -20837,9 +20793,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
                                       this, [&](const QImage& frame) { delivered = frame; });
         ScopeExit cleanup([&] {
             disconnect(delivery);
+            live_workspace_->setLiveActive(false);
             restoreLiveWorkspace(false);
             render_backend_ = saved_backend;
             restoreProjectState(saved_project, saved_active);
+            live_workspace_->setLiveActive(false);
+            stopPlayback();
             clearUndoHistory(false);
         });
         project_ = built_in_workbench_project_document().project;
@@ -20873,34 +20832,18 @@ bool MainWindow::runSmokeChecks(QString* error) {
         for (int cycle = 0; cycle < 3; ++cycle) {
             delivered = {};
             live_mode_action_->trigger();
+            live_workspace_->setLiveActive(true);
             if (!wait_for_frame()) {
                 if (error) *error = QStringLiteral("Blank Live did not deliver its opening frame.");
                 return false;
             }
             if (cycle == 0) {
-                // Exercise the actual Live-to-editor delivery connection with a
-                // tiny known frame. The monitor interpolates between these two
-                // colors; nearest-neighbor editor painting would stay black here.
-                QImage ramp(2, 2, QImage::Format_RGB32);
-                for (int y = 0; y < 2; ++y) {
-                    ramp.setPixelColor(0, y, Qt::black);
-                    ramp.setPixelColor(1, y, Qt::white);
-                }
-                live_workspace_->livePreviewFrame(ramp);
-                const QImage painted = preview_->grab().toImage();
-                const double ratio = painted.devicePixelRatio();
-                const int x = static_cast<int>(ratio * (preview_->width() * 0.5
-                    - std::min(preview_->width(), preview_->height()) * 0.1));
-                const int y = static_cast<int>(ratio * preview_->height() * 0.5);
-                const int red = painted.pixelColor(x, y).red();
-                if (red < 16 || red > 240) {
-                    if (error) *error = QStringLiteral("Live frames became blocky in the main editor.");
-                    return false;
-                }
-                // A normal editor frame chooses its own display policy again.
-                preview_->setPreview(ramp);
-                if (preview_->grab().toImage().pixelColor(x, y).red() != 0) {
-                    if (error) *error = QStringLiteral("Live scaling leaked into a normal editor frame.");
+                const QImage before = preview_->grab().toImage();
+                QImage other(8, 8, QImage::Format_RGB32);
+                other.fill(Qt::magenta);
+                live_workspace_->livePreviewFrame(other);
+                if (preview_->grab().toImage() != before || preview_->isEnabled()) {
+                    if (error) *error = QStringLiteral("External output also painted an editor preview.");
                     return false;
                 }
             }
@@ -20935,10 +20878,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
             if (project_.canvas.block_size != block || block_size_->value() != block
                 || project_.canvas.fps != 0.1 || fps_->value() != 0.1
                 || project_.layers.front().opacity != 1.0
-                || layer_opacity_->value() != 100.0 || live_workspace_->isLiveActive()) {
+                || layer_opacity_->value() != 100.0 || !live_workspace_->isLiveActive()) {
                 if (error) *error = QStringLiteral("Closing Live changed authored editor values.");
                 return false;
             }
+            live_workspace_->setLiveActive(false);
+            stopPlayback();
             clearUndoHistory(false);
         }
     }
@@ -23247,74 +23192,31 @@ bool MainWindow::runSmokeChecks(QString* error) {
         return false;
     }
 
-    pvt::ProjectConfig preview_scale_probe = pvt::default_project();
-    preview_scale_probe.canvas.width = 3840;
-    preview_scale_probe.canvas.height = 2160;
-    preview_scale_probe.canvas.block_size = 16;
-    preview_scale_probe.canvas.block_size_modulation.lfo_enabled = true;
-    preview_scale_probe.canvas.block_size_modulation.minimum = 16.0;
-    preview_scale_probe.canvas.block_size_modulation.maximum = 3840.0;
-    pvt::ParameterLfo preview_block_lfo;
-    preview_block_lfo.target_path = "block_size";
-    preview_block_lfo.minimum = 16.0;
-    preview_block_lfo.maximum = 3840.0;
-    preview_scale_probe.layers.front().render.parameter_lfos = {preview_block_lfo};
-    preview_scale_probe.layers.front().render.displacement = 40.0;
-    preview_scale_probe.layers.front().render.effects.clear();
-    auto preview_particle = pvt::default_effect(pvt::EffectType::ParticleField);
-    preview_particle.radius_pixels = 40.0;
-    auto preview_glow = pvt::default_effect(pvt::EffectType::Glow);
-    preview_glow.radius_pixels = 20.0;
-    auto preview_blur = pvt::default_effect(pvt::EffectType::Blur);
-    preview_blur.radius_pixels = 12.0;
-    preview_scale_probe.layers.front().render.effects = {
-        preview_particle, preview_glow, preview_blur};
-    scale_project_for_preview(preview_scale_probe);
-    if (preview_scale_probe.canvas.width != 720
-        || preview_scale_probe.canvas.height != 405
-        || preview_scale_probe.canvas.block_size != 3
-        || preview_scale_probe.canvas.block_size_modulation.minimum != 3.0
-        || preview_scale_probe.canvas.block_size_modulation.maximum != 720.0
-        || preview_scale_probe.layers.front().render.parameter_lfos.front().minimum != 3.0
-        || preview_scale_probe.layers.front().render.parameter_lfos.front().maximum != 720.0
-        || std::abs(preview_scale_probe.layers.front().render.displacement
-                    - 7.5) > 1.0e-12
-        || std::abs(preview_scale_probe.layers.front().render.effects[0U]
-                        .radius_pixels - 7.5) > 1.0e-12
-        || std::abs(preview_scale_probe.layers.front().render.effects[1U]
-                        .radius_pixels - 3.75) > 1.0e-12) {
-        if (error != nullptr) {
-            *error = tr("Output-pixel controls were not scaled consistently for preview rendering.");
-        }
-        return false;
-    }
-    if (std::abs(preview_scale_probe.layers.front().render.effects[2U]
-                     .radius_pixels - 2.25) > 1.0e-12) {
-        if (error != nullptr) {
-            *error = tr("Output-pixel controls were not scaled consistently for preview rendering.");
-        }
-        return false;
-    }
-
-    // Wood's 1024-square, one-pixel canvas exposed accidental full-resolution
-    // supersampling in the reduced editor preview. Preserve authored subpixel
-    // sizes, blackout, and fractional blocks above one preview pixel as well.
-    for (const auto sizes : {std::pair{1.0, 1.0}, std::pair{2.0, 1.0},
-                             std::pair{3.0, 1.40625},
-                             std::pair{0.5, 0.234375}, std::pair{0.0, 0.0}}) {
-        auto reduced = pvt::default_project();
-        reduced.canvas.width = 1024;
-        reduced.canvas.height = 1024;
-        reduced.canvas.block_size = sizes.first;
-        scale_project_for_preview(reduced);
-        if (reduced.canvas.width != 480 || reduced.canvas.height != 480
-            || reduced.canvas.block_size != sizes.second
-            || reduced.layers.front().render.starting_colors.reference_block_size
-                   != sizes.first) {
-            if (error != nullptr) {
-                *error = tr("Output-pixel controls were not scaled consistently for preview rendering.");
-            }
+    // Preview quality is a canvas property, not a side effect of a tool panel
+    // or a fixed 720-pixel cap. Compare final display pixels to a core render.
+    {
+        auto source = pvt::default_project();
+        source.canvas.width = 960;
+        source.canvas.height = 540;
+        source.canvas.block_size = 4.5;
+        pvt::FrameRenderOptions cpu;
+        cpu.backend = pvt::RenderBackend::Cpu;
+        const auto preview_result = generatePreview(source, 1, 1U, 1U, 0, cpu, {});
+        pvt::Image expected;
+        std::string render_error;
+        if (!pvt::render_project_frame(source, 1, cpu, expected, nullptr, &render_error)
+            || !preview_result.error.isEmpty() || preview_result.image.size() != QSize(960, 540)) {
+            if (error) *error = QStringLiteral("Editor preview changed the canvas resolution.");
             return false;
+        }
+        std::vector<unsigned char> row(static_cast<std::size_t>(expected.width) * 4U);
+        for (int y = 0; y < expected.height; ++y) {
+            pvt::display::convert_rgba_row(expected.pixel(0, y), row.data(),
+                                          static_cast<std::size_t>(expected.width));
+            if (std::memcmp(row.data(), preview_result.image.constScanLine(y), row.size()) != 0) {
+                if (error) *error = QStringLiteral("Editor preview differs from full-resolution rendering.");
+                return false;
+            }
         }
     }
 

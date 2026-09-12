@@ -763,7 +763,7 @@
 <context>
     <name>LiveFrameController</name>
     <message>
-        <location filename="../gui/live_frame_controller.cpp" line="+95"/>
+        <location filename="../gui/live_frame_controller.cpp" line="+97"/>
         <source>Live renderer failed: %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -883,45 +883,29 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2144"/>
-        <location line="+1908"/>
-        <location line="+924"/>
+        <location filename="../gui/live_workspace.cpp" line="+2292"/>
+        <location line="+2149"/>
+        <location line="+938"/>
         <source>Listening…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3418"/>
-        <location line="+586"/>
-        <location line="+1903"/>
+        <location line="-3738"/>
+        <location line="+651"/>
+        <location line="+2144"/>
         <location line="+5"/>
-        <location line="+925"/>
+        <location line="+939"/>
         <source>MIDI Learn</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4185"/>
-        <source>LIVE / PERFORMANCE</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+2"/>
-        <source>Portable roles and scenes · machine bindings stay on this computer</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+8"/>
-        <location line="+2173"/>
+        <location line="-4543"/>
+        <location line="+2486"/>
         <source>STANDBY</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2171"/>
-        <location line="+1770"/>
-        <source>GO LIVE</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="-1765"/>
+        <location line="-2479"/>
         <source>Edit Project</source>
         <translation type="unfinished"></translation>
     </message>
@@ -931,82 +915,64 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+16"/>
-        <location line="+2164"/>
-        <source>PROGRAM OUTPUT
-Standby</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="-2155"/>
-        <source>Full-screen Output</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <location line="+2153"/>
-        <location line="+20"/>
+        <location line="+9"/>
+        <location line="+2483"/>
+        <location line="+23"/>
         <source>FREEZE</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2169"/>
-        <location line="+2150"/>
-        <location line="+26"/>
-        <location line="+11"/>
+        <location line="-2502"/>
+        <location line="+2480"/>
+        <location line="+29"/>
         <source>BLACKOUT</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2173"/>
+        <location line="-2502"/>
+        <source>Play / Pause · Space</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+11"/>
         <source>AUDIO</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+2"/>
-        <location line="+2732"/>
+        <location line="+3064"/>
         <source>MIDI</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2731"/>
-        <location line="+2128"/>
+        <location line="-3063"/>
+        <location line="+2456"/>
         <source>— fps</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2127"/>
+        <location line="-2455"/>
         <source>Completed frames per second, measured over a quarter-second window. This measures frame delivery to the UI, not the display refresh rate.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+2125"/>
+        <location line="+2453"/>
         <source>No frame</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2124"/>
+        <location line="-2452"/>
         <source>Scene: —</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+11"/>
-        <source>Rig</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
+        <location line="+14"/>
         <source>Control Map</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>Scenes</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+39"/>
+        <location line="+40"/>
         <source>Create Starter Rig</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1016,12 +982,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+3"/>
-        <source>Add Logical Role…</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+7"/>
+        <location line="+10"/>
         <source>INPUT RACK</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1041,7 +1002,39 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+8"/>
+        <location line="+6"/>
+        <source>Each row is an input. Check Analysis to include it in the EQ, calibration and visual analysis mix. Check a speaker/headphone column to send it there. Clock files loop continuously while audio routing is running.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Check where each source goes: Analysis feeds the controls below; each output column has its own mix. Clock audio loops continuously. Audio routing runs independently of video playback.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <location line="+11"/>
+        <source>Start Audio Routing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-1"/>
+        <location line="+2083"/>
+        <source>Stop Audio Routing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-2074"/>
+        <source>Audio routing stopped</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>MIDI, foot controller and OSC</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+9"/>
         <source>MIDI role / source</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1061,7 +1054,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+4"/>
+        <location line="+11"/>
         <source>AUDIO ANALYSIS + CALIBRATION</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1238,22 +1231,22 @@ Standby</source>
     <message>
         <location line="+3"/>
         <location line="+14"/>
-        <location line="+93"/>
+        <location line="+98"/>
         <location line="+9"/>
         <location line="+4"/>
-        <location line="+343"/>
-        <location line="+2258"/>
+        <location line="+355"/>
+        <location line="+2563"/>
         <source> ms</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2720"/>
-        <location line="+1166"/>
+        <location line="-3042"/>
+        <location line="+1247"/>
         <source>Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1164"/>
+        <location line="-1245"/>
         <source>Tap beat to align</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1274,12 +1267,12 @@ Standby</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+1801"/>
+        <location line="+2082"/>
         <source>Waiting for audio…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1800"/>
+        <location line="-2081"/>
         <source>Causal analysis</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1366,12 +1359,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>100% of output size</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>75%</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1386,12 +1374,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>Fits the project to the output window&apos;s pixels, capped at project resolution. Auto reduces resolution when frames miss their deadline. Choose a fixed percentage for performance comparisons and compare the delivered dimensions.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+7"/>
+        <location line="+6"/>
         <source>Display</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1421,7 +1404,17 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+4"/>
+        <location line="+3"/>
+        <source>Advanced output safety</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Output safety</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+5"/>
         <source>Hold last good frame</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1471,7 +1464,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+130"/>
+        <location line="+141"/>
         <source>Change live input calibration</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1517,35 +1510,36 @@ Standby</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+84"/>
+        <location line="+85"/>
+        <location line="+2235"/>
         <source>Remove</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-73"/>
+        <location line="-2309"/>
         <source>On</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+0"/>
-        <location line="+2035"/>
-        <location line="+156"/>
+        <location line="+2304"/>
+        <location line="+193"/>
         <source>Name</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2191"/>
+        <location line="-2497"/>
         <source>Source</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+2216"/>
+        <location line="+2522"/>
         <source>Target</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2216"/>
+        <location line="-2522"/>
         <source>Mode</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1560,12 +1554,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+13"/>
-        <source>Scenes snapshot every currently resolved Live target. Numeric controls crossfade; switches and modes change at the end of the transition.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+12"/>
+        <location line="+26"/>
         <source>Transition</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1585,12 +1574,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>TAKE SCENE</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+4"/>
         <source>Next ▶</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1691,18 +1675,18 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+204"/>
+        <location line="+273"/>
         <source>No logical role</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+41"/>
-        <location line="+1709"/>
+        <location line="+37"/>
+        <location line="+1949"/>
         <source>Unresolved · %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1698"/>
+        <location line="-1939"/>
         <source>Unresolved scene</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1764,32 +1748,40 @@ Standby</source>
     <message>
         <location line="+21"/>
         <location line="+1"/>
-        <location line="+2735"/>
-        <location line="+24"/>
-        <location line="+39"/>
+        <location line="+2990"/>
+        <location line="+27"/>
+        <location line="+43"/>
         <source>System default</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2792"/>
-        <location line="+2733"/>
+        <location line="-3054"/>
+        <location line="+2988"/>
         <source>%1 · default</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2701"/>
-        <location line="+2729"/>
+        <location line="-2979"/>
+        <location line="+108"/>
+        <location line="+2876"/>
+        <location line="+20"/>
+        <source> · looping file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-2977"/>
+        <location line="+2985"/>
         <source>previously selected input</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2727"/>
-        <location line="+2728"/>
+        <location line="-2983"/>
+        <location line="+2984"/>
         <source>Unavailable · %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2712"/>
+        <location line="-2968"/>
         <source>Input discovery failed: %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1814,42 +1806,27 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+139"/>
-        <source>LIVE · ON</source>
+        <location line="+35"/>
+        <source>Unavailable audio input</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+33"/>
+        <location line="+308"/>
         <source>Live performance runtime started.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+46"/>
-        <source>Live performance runtime stopped.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+37"/>
-        <source>Live Preview Output started without performance inputs.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+17"/>
+        <location line="+110"/>
         <source>Live Preview Output stopped.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+29"/>
+        <location line="+37"/>
         <source>Core MIDI routing is active.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+34"/>
-        <source>Add or select an Audio input role.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+11"/>
+        <location line="+39"/>
         <source>Audio input processing could not start: %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1859,12 +1836,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+9"/>
-        <source>Audio input could not start: %1</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+5"/>
+        <location line="+37"/>
         <source>Audio capture started; waiting for callbacks.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1889,7 +1861,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+134"/>
+        <location line="+126"/>
         <source>STARTING</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1904,13 +1876,7 @@ Standby</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>PROGRAM OUTPUT
-Waiting for first frame</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+42"/>
+        <location line="+43"/>
         <source>FROZEN</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1920,13 +1886,7 @@ Waiting for first frame</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+10"/>
-        <source>SAFETY BLACKOUT
-Last-good watchdog</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+25"/>
+        <location line="+29"/>
         <source>An effective audio clock uses a different logical role than the active microphone. The last good frame is being held; choose the same role in Live or edit the advanced route.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1936,7 +1896,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+85"/>
+        <location line="+82"/>
         <source>HOLDING</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1951,12 +1911,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+23"/>
-        <source>%1 × %2 · %3 ms · %4 dropped</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+10"/>
+        <location line="+35"/>
         <source>%1 fps delivered</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1971,7 +1926,12 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+80"/>
+        <location line="+23"/>
+        <source>Audio routing running · %1 buffer underruns/overruns</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+61"/>
         <source>%1 BPM · phase %2 · %3 ms input</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2007,12 +1967,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+2"/>
-        <location line="+172"/>
+        <location line="+178"/>
         <source>Foot controller</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-170"/>
+        <location line="-176"/>
         <source>Layer clock return</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2063,12 +2023,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+6"/>
-        <source>Add Logical Live Role</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+14"/>
         <source>Live control</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2084,12 +2039,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+166"/>
+        <location line="+203"/>
         <source>Input</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-165"/>
+        <location line="-202"/>
         <source>Output</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2114,7 +2069,17 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+31"/>
+        <location line="+41"/>
+        <source>Remove live role</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Rename live role</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+27"/>
         <source>Add portable live role</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2281,7 +2246,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+172"/>
+        <location line="+185"/>
         <source>Capture Live Scene</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2311,12 +2276,17 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+50"/>
+        <location line="+25"/>
+        <source>Start video output to apply a saved look.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+27"/>
         <source>Scene: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+126"/>
+        <location line="+121"/>
         <source>An effective audio clock uses a different logical role than the active microphone. Its deterministic clock is being used instead; choose the same role in Live or edit the advanced route.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2346,27 +2316,170 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+238"/>
+        <location line="+249"/>
         <source>The selected Live role is not an audio input.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+4"/>
+        <location line="-2916"/>
+        <location line="+2920"/>
         <source>Unavailable · </source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <location line="-1630"/>
+        <source>Manage Live Roles</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location line="+4"/>
+        <source>New role</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Role</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+1627"/>
         <source> · default</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1940"/>
+        <location line="-2003"/>
+        <location line="+2081"/>
+        <source>PAUSED</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-2086"/>
         <source>WAITING FOR AUDIO</source>
         <translation>WAITING FOR AUDIO</translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="-2731"/>
+        <source>LIVE CONTROLS</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Choose audio sources, route your mix, and start video output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <location line="+2055"/>
+        <location line="+101"/>
+        <source>Start Video Output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-2143"/>
+        <source>Full Screen / Window</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+46"/>
+        <location filename="../gui/main_window.cpp" line="+20079"/>
+        <source>Audio &amp; Video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <location filename="../gui/main_window.cpp" line="+2"/>
+        <source>Saved Looks</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+43"/>
+        <source>Manage Roles…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+371"/>
+        <source>100% · canvas resolution</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Render at the selected percentage of canvas resolution. Resizing a window does not change render quality. Auto can reduce quality when deadlines are missed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+381"/>
+        <source>Saved looks recall visual control values during video output. First capture a look, edit the project, then capture another. Select one and Apply to Output to see it. Transitions blend numeric controls; switches change at the end. These are control presets, not separate projects.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+33"/>
+        <source>Apply to Output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+876"/>
+        <source> · input</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+51"/>
+        <source>Available source</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Gain %</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Analysis</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <location line="+90"/>
+        <source> · output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-51"/>
+        <source>%1 inputs · %2 outputs found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+53"/>
+        <source>Add roles for available audio devices</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+141"/>
+        <location line="+100"/>
+        <source>Stop Video Output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="-15"/>
+        <source>Video output stopped.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+44"/>
+        <source>Video output started.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+139"/>
+        <source>Audio routing running · %1 sources · %2 output mixes</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+359"/>
+        <source>%1 × %2 · %3 ms · %4 missed deadlines</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+38"/>
         <source>Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission.</source>
         <translation>Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission.</translation>
     </message>
@@ -2374,7 +2487,7 @@ Last-good watchdog</source>
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../gui/main_window.cpp" line="+2497"/>
+        <location filename="../gui/main_window.cpp" line="-17633"/>
         <source>Project Sync &amp; Audio is edited in the persistent Drivers panel above. Expand it to configure the project clock and inherited audio profile alongside the active layer override.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2385,87 +2498,87 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+567"/>
+        <location line="+577"/>
         <location line="+143"/>
-        <location line="+19566"/>
+        <location line="+19666"/>
         <source>Starting Colors</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20275"/>
-        <location line="+567"/>
-        <location line="+19711"/>
+        <location line="-20385"/>
+        <location line="+577"/>
+        <location line="+19811"/>
         <source>Layer Effects</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20277"/>
-        <location line="+565"/>
-        <location line="+19710"/>
+        <location line="-20387"/>
+        <location line="+575"/>
+        <location line="+19810"/>
         <source>Modifiers</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20274"/>
-        <location line="+565"/>
-        <location line="+19710"/>
+        <location line="-20384"/>
+        <location line="+575"/>
+        <location line="+19810"/>
         <source>Movement</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20274"/>
-        <location line="+564"/>
-        <location line="+1636"/>
-        <location line="+18076"/>
+        <location line="-20384"/>
+        <location line="+574"/>
+        <location line="+1637"/>
+        <location line="+18175"/>
         <source>Post Effects</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20275"/>
-        <location line="+605"/>
+        <location line="-20385"/>
+        <location line="+615"/>
         <location line="+3293"/>
         <location line="+948"/>
         <source>Canvas &amp; Loop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4845"/>
-        <location line="+4848"/>
+        <location line="-4855"/>
+        <location line="+4858"/>
         <source>Project Sync &amp; Audio</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4847"/>
-        <location line="+562"/>
+        <location line="-4857"/>
+        <location line="+572"/>
         <location line="+42"/>
-        <location line="+3022"/>
+        <location line="+3023"/>
         <location line="+149"/>
-        <location line="+1076"/>
-        <location line="+15423"/>
+        <location line="+1075"/>
+        <location line="+15523"/>
         <source>Export</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20273"/>
-        <location line="+3626"/>
-        <location line="+1228"/>
+        <location line="-20383"/>
+        <location line="+3637"/>
+        <location line="+1227"/>
         <source>History</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4843"/>
+        <location line="-4853"/>
         <source>Current workflow context</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+7"/>
-        <location line="+1905"/>
-        <location line="+18385"/>
+        <location line="+1916"/>
+        <location line="+18484"/>
         <source>Synchronization</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20288"/>
+        <location line="-20398"/>
         <source>Project and active-layer synchronization</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2485,7 +2598,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+60"/>
+        <location line="+67"/>
         <source>Performance LIVE stopped — editor preview resumed.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2496,23 +2609,23 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3735"/>
+        <location line="+3738"/>
         <source>Start Live Preview Output</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3730"/>
+        <location line="-3733"/>
         <source>Streaming the editor preview; performance inputs remain off.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3723"/>
+        <location line="+3726"/>
         <source>Stopped — start this to present the editor preview without entering LIVE.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3708"/>
+        <location line="-3711"/>
         <source>Ready</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2528,12 +2641,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+5"/>
-        <location line="+16676"/>
+        <location line="+16638"/>
         <source>Preview failed because of an unexpected error.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-16645"/>
+        <location line="-16607"/>
         <source>Preview %1 × %2 · frame %3/%4</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2554,7 +2667,7 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+14"/>
-        <location line="+2"/>
+        <location line="+3"/>
         <source>Export complete</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2569,8 +2682,8 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+2"/>
-        <location line="+2"/>
+        <location line="+3"/>
+        <location line="+3"/>
         <source>Export failed</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2602,15 +2715,15 @@ Last-good watchdog</source>
     <message>
         <location line="+7"/>
         <location line="+6"/>
-        <location line="+17090"/>
+        <location line="+17049"/>
         <location line="+6"/>
         <source>Load failed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-17099"/>
+        <location line="-17058"/>
         <location line="+5"/>
-        <location line="+23743"/>
+        <location line="+23824"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+28"/>
@@ -2620,7 +2733,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-23840"/>
+        <location line="-23921"/>
         <source>The active project was not changed.
 
 %1</source>
@@ -2665,14 +2778,14 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+5"/>
-        <location line="+4936"/>
-        <location line="+3055"/>
-        <location line="+11717"/>
+        <location line="+4899"/>
+        <location line="+3054"/>
+        <location line="+11855"/>
         <source>Project</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-19704"/>
+        <location line="-19804"/>
         <source>Edit project-wide canvas, loop, synchronization, audio, and history settings.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2773,20 +2886,20 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+2"/>
-        <location line="+10347"/>
+        <location line="+10309"/>
         <location line="+3"/>
         <source>enabled</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-10350"/>
-        <location line="+7018"/>
+        <location line="-10312"/>
+        <location line="+6980"/>
         <location line="+23"/>
         <source>off</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-7039"/>
+        <location line="-7001"/>
         <source>%1 categorized layer effects</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2991,7 +3104,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+120"/>
+        <location line="+121"/>
         <source>Drag numbered handles in the preview to place waves. A synchronized wave uses the effective project or per-layer clock; a free wave remains independently periodic.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3024,29 +3137,29 @@ Last-good watchdog</source>
         <location line="+11"/>
         <location line="+689"/>
         <location line="+147"/>
-        <location line="+2834"/>
+        <location line="+2833"/>
         <source>Add</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3669"/>
+        <location line="-3668"/>
         <location line="+689"/>
         <location line="+147"/>
-        <location line="+2834"/>
+        <location line="+2833"/>
         <source>Duplicate</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3669"/>
+        <location line="-3668"/>
         <location line="+689"/>
         <location line="+147"/>
-        <location line="+2834"/>
-        <location line="+1215"/>
+        <location line="+2833"/>
+        <location line="+1177"/>
         <source>Remove</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4884"/>
+        <location line="-4845"/>
         <location line="+689"/>
         <location line="+147"/>
         <source>Up</source>
@@ -3068,30 +3181,30 @@ Last-good watchdog</source>
         <location line="+5"/>
         <location line="+689"/>
         <location line="+150"/>
-        <location line="+4046"/>
+        <location line="+4007"/>
         <location line="+120"/>
         <source>Enabled</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-5004"/>
-        <location line="+19221"/>
+        <location line="-4965"/>
+        <location line="+19320"/>
         <source>Use synchronized clock</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-19206"/>
+        <location line="-19305"/>
         <location line="+701"/>
         <location line="+216"/>
         <location line="+1601"/>
-        <location line="+1171"/>
+        <location line="+1170"/>
         <location line="+17"/>
-        <location line="+1783"/>
+        <location line="+1745"/>
         <source>Name</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-5486"/>
+        <location line="-5447"/>
         <location line="+917"/>
         <source>Audio response</source>
         <translation type="unfinished"></translation>
@@ -3114,25 +3227,25 @@ Last-good watchdog</source>
     <message>
         <location line="+1"/>
         <location line="+2173"/>
-        <location line="+8608"/>
+        <location line="+8568"/>
         <location line="+21"/>
         <source>Spatial frequency</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-10801"/>
+        <location line="-10761"/>
         <location line="+916"/>
         <location line="+391"/>
         <location line="+552"/>
         <location line="+314"/>
-        <location line="+2756"/>
+        <location line="+2717"/>
         <location line="+65"/>
         <location line="+557"/>
         <source>Cycles per loop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-5550"/>
+        <location line="-5511"/>
         <location line="+697"/>
         <location line="+219"/>
         <source>Phase (degrees)</source>
@@ -3750,7 +3863,7 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+10071"/>
+        <location line="+10031"/>
         <location line="+11"/>
         <location line="+21"/>
         <location line="+14"/>
@@ -3763,8 +3876,8 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-10204"/>
-        <location line="+10071"/>
+        <location line="-10164"/>
+        <location line="+10031"/>
         <location line="+11"/>
         <location line="+21"/>
         <location line="+14"/>
@@ -3777,7 +3890,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-10204"/>
+        <location line="-10164"/>
         <source>Local radius (0 = whole layer)</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3894,12 +4007,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+6542"/>
+        <location line="+6503"/>
         <source>Placement</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-6538"/>
+        <location line="-6499"/>
         <source>Blank-space handling</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4293,54 +4406,54 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+6"/>
-        <location line="+11258"/>
+        <location line="+11218"/>
         <source>Channel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11257"/>
+        <location line="-11217"/>
         <location line="+973"/>
-        <location line="+2757"/>
+        <location line="+2718"/>
         <location line="+61"/>
-        <location line="+7467"/>
+        <location line="+7466"/>
         <source>Minimum</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11257"/>
+        <location line="-11217"/>
         <location line="+973"/>
-        <location line="+2757"/>
+        <location line="+2718"/>
         <location line="+63"/>
-        <location line="+7465"/>
+        <location line="+7464"/>
         <source>Maximum</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11248"/>
-        <location line="+11252"/>
+        <location line="-11208"/>
+        <location line="+11212"/>
         <source>Red</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11251"/>
-        <location line="+11251"/>
+        <location line="-11211"/>
+        <location line="+11211"/>
         <source>Green</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11250"/>
-        <location line="+11250"/>
+        <location line="-11210"/>
+        <location line="+11210"/>
         <source>Blue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11249"/>
-        <location line="+11249"/>
+        <location line="-11209"/>
+        <location line="+11209"/>
         <source>Alpha</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11247"/>
+        <location line="-11207"/>
         <source>Used when the authored starting palette is off. Every choice in this box obeys its RGB/alpha Min/Max range. Channel resolution scales automatically with the full-resolution output and block size; ordered patterns walk an automatically sized RGB or RGBA lattice without omitting tuples. Corrected RGBA ordering changes alpha fastest so the RGB gamut remains one broad horizontal, vertical, diagonal, or spiral field. Random is the only shuffled color-static pattern. Generated values remain float32 through effects and compositing; only the chosen output format quantizes them. Preview and export use the same full-resolution coordinates.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4567,12 +4680,12 @@ Last-good watchdog</source>
     <message>
         <location line="+1"/>
         <location line="+485"/>
-        <location line="+3692"/>
+        <location line="+3653"/>
         <source>Starting phase</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4176"/>
+        <location line="-4137"/>
         <location line="+235"/>
         <source>Rotations per loop</source>
         <translation type="unfinished"></translation>
@@ -4594,12 +4707,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+4"/>
-        <location line="+4073"/>
+        <location line="+4034"/>
         <source>Reusable motion paths</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4071"/>
+        <location line="-4032"/>
         <source>Create shared closed cubic paths here, then choose one directly from Closed path above. The editor also provides advanced per-wave and per-effect bindings.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4813,13 +4926,13 @@ Last-good watchdog</source>
         <location line="+16"/>
         <location line="+8"/>
         <location line="+1"/>
-        <location line="+2123"/>
-        <location line="+1233"/>
+        <location line="+2122"/>
+        <location line="+1195"/>
         <source>%</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3336"/>
+        <location line="-3297"/>
         <source>Composite transparent rear surfaces</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4865,18 +4978,18 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3888"/>
+        <location line="+3849"/>
         <source>X</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3887"/>
-        <location line="+3887"/>
+        <location line="-3848"/>
+        <location line="+3848"/>
         <source>Y</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3886"/>
+        <location line="-3847"/>
         <source>Z</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5132,14 +5245,14 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15700"/>
+        <location line="+15799"/>
         <location line="+88"/>
         <location line="+11"/>
         <source>Auto</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-15797"/>
+        <location line="-15896"/>
         <source>Connected components</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5211,18 +5324,18 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+10"/>
-        <location line="+1738"/>
+        <location line="+1737"/>
         <source>Move up</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1736"/>
-        <location line="+1737"/>
+        <location line="-1735"/>
+        <location line="+1736"/>
         <source>Move down</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1724"/>
+        <location line="-1723"/>
         <source>Each row is an independent instance with its own settings. Add or duplicate a type as often as needed; removing deletes only the selected instance. Order is layer-local and runs natively on the GPU.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5428,12 +5541,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+7"/>
-        <location line="+8751"/>
+        <location line="+8711"/>
         <source>Edge threshold</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-8749"/>
+        <location line="-8709"/>
         <source>Passes</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5525,12 +5638,12 @@ Last-good watchdog</source>
     <message>
         <location line="+19"/>
         <location line="+137"/>
-        <location line="+9673"/>
+        <location line="+9633"/>
         <source>Project layer: %1 — %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-9805"/>
+        <location line="-9765"/>
         <source>Load a different OBJ from disk…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5542,13 +5655,13 @@ Last-good watchdog</source>
     <message>
         <location line="+0"/>
         <location line="+139"/>
-        <location line="+12533"/>
+        <location line="+12493"/>
         <location line="+113"/>
         <source>Matching project assets</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-12770"/>
+        <location line="-12730"/>
         <source>Could not reuse OBJ</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5985,12 +6098,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+4"/>
-        <location line="+1745"/>
+        <location line="+1707"/>
         <source>Live Preview Output</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1742"/>
+        <location line="-1704"/>
         <source>Present the editor preview on another window or display without starting microphone, MIDI, OSC, scenes, routed clocks, or the LIVE performance workspace.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6000,12 +6113,7 @@ Last-good watchdog</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>100% of output size</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
+        <location line="+2"/>
         <source>75%</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6017,11 +6125,6 @@ Last-good watchdog</source>
     <message>
         <location line="+1"/>
         <source>25%</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Fits the project to the output window&apos;s pixels, capped at project resolution. Auto reduces resolution when frames miss their deadline. Choose a fixed percentage for performance comparisons and compare the delivered dimensions.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -6056,12 +6159,12 @@ Last-good watchdog</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+1695"/>
+        <location line="+1658"/>
         <source>Export Video…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1685"/>
+        <location line="-1648"/>
         <source>Choose export directory</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6144,12 +6247,12 @@ The change requires an immediate Save.</source>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+1439"/>
+        <location line="+1402"/>
         <source>Create Revision</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-1438"/>
+        <location line="-1401"/>
         <source>Delete Revision</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6281,12 +6384,12 @@ The change requires an immediate Save.</source>
     </message>
     <message>
         <location line="+52"/>
-        <location line="+19345"/>
+        <location line="+19426"/>
         <source>Not saved as a bundle yet</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-19341"/>
+        <location line="-19422"/>
         <source>%1
 Revision history is disabled; only the current saved state is retained.</source>
         <translation type="unfinished"></translation>
@@ -6442,12 +6545,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15549"/>
+        <location line="+15649"/>
         <source>Layers &amp;&amp; Groups</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-15544"/>
+        <location line="-15644"/>
         <source>Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6458,12 +6561,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+19"/>
-        <location line="+4376"/>
+        <location line="+4338"/>
         <source>Add group</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4375"/>
+        <location line="-4337"/>
         <source>Remove group</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6615,13 +6718,13 @@ Project UUID: %2
     </message>
     <message>
         <location line="+3"/>
-        <location line="+98"/>
-        <location line="+18343"/>
+        <location line="+92"/>
+        <location line="+18430"/>
         <source>Play</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18440"/>
+        <location line="-18521"/>
         <source>Previous beat</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6662,23 +6765,17 @@ Project UUID: %2
     </message>
     <message>
         <location line="+36"/>
-        <location line="+6323"/>
+        <location line="+6284"/>
         <source>Editor playback is paused until the export finishes.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-6315"/>
-        <location line="+6313"/>
-        <source>Stop performance LIVE before starting editor playback.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="-6298"/>
+        <location line="-6269"/>
         <source>Pause</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+48"/>
+        <location line="+50"/>
         <source>Preview is playing silently because an audible embedded music source is unavailable or has already finished.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6688,38 +6785,17 @@ Project UUID: %2
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+44"/>
-        <source>Editing the live project — input, rendering, and stage output remain active in the LIVE window.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <location line="+154"/>
+        <location line="+167"/>
         <source>Edit mode — Flow Workbench ready.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-144"/>
-        <source>Finish or cancel the active export, project operation, or music analysis before opening LIVE.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+53"/>
+        <location line="-89"/>
         <source>Finish the active export, project operation, or music analysis before starting Live Preview Output.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+39"/>
-        <source>Procedural Visualizer Tool — LIVE</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+9"/>
-        <source>Live opened in its own window; the editor preview follows the same routed clocks.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+63"/>
+        <location line="+109"/>
         <source>Live project settings are locked until the project file operation finishes.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6734,7 +6810,7 @@ Project UUID: %2
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+13"/>
+        <location line="+14"/>
         <source>&amp;File</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6830,12 +6906,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+5"/>
-        <location line="+13105"/>
+        <location line="+13242"/>
         <source>LFOs…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-13102"/>
+        <location line="-13239"/>
         <source>Animate numeric values between an authored minimum and maximum with a seamless low-frequency oscillator.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6885,18 +6961,14 @@ Project UUID: %2
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
-        <location line="+12006"/>
+        <location line="-226"/>
+        <location line="+227"/>
+        <location line="+12002"/>
         <source>Live Controls</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11992"/>
-        <source>Open the stage-focused Live controls in a separate window immediately. The editor remains available, and freeze, blackout, current scene, and captured input remain ephemeral.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+15"/>
+        <location line="-11974"/>
         <source>Application Settings…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6917,12 +6989,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+3"/>
-        <location line="+14608"/>
+        <location line="+14746"/>
         <source>Restore Layers &amp;&amp; Groups Panel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-14604"/>
+        <location line="-14742"/>
         <source>Show the Layers &amp; Groups panel and dock it on the left side.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6933,12 +7005,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+16"/>
-        <location line="+18628"/>
+        <location line="+18747"/>
         <source>Open unpacked project bundle</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18613"/>
+        <location line="-18732"/>
         <source>Randomize layer values?</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6960,19 +7032,19 @@ Project UUID: %2
     <message>
         <location line="+15"/>
         <location line="+20"/>
-        <location line="+18308"/>
+        <location line="+18427"/>
         <source>Invalid output text</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18323"/>
+        <location line="-18442"/>
         <location line="+20"/>
-        <location line="+11338"/>
+        <location line="+11335"/>
         <source>Invalid setup</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-11329"/>
+        <location line="-11326"/>
         <source> - frame %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8119,13 +8191,13 @@ Project UUID: %2
     </message>
     <message>
         <location line="+2"/>
-        <location line="+13525"/>
+        <location line="+13644"/>
         <location line="+14"/>
         <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-13534"/>
+        <location line="-13653"/>
         <source>%1 invalid setting(s) could not be applied.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8135,7 +8207,7 @@ Project UUID: %2
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1895"/>
+        <location line="+1894"/>
         <source>Kaleidoscope mix</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8210,35 +8282,65 @@ Project UUID: %2
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+10121"/>
+        <location line="+10241"/>
         <source>The recovery notice did not explain the repaired setting.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-13501"/>
+        <location line="-13620"/>
         <source>Unsaved project changes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-9751"/>
+        <location line="-10021"/>
+        <source>Project clock audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>%1 clock audio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+304"/>
         <source>Created revision %1 in %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+909"/>
+        <location line="+910"/>
         <location line="+198"/>
         <source>Detection, Filters, EQ + Frequency Streams…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+2839"/>
+        <location line="+2347"/>
+        <source>100% · canvas resolution</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Render at the selected percentage of the canvas resolution, independently of window size. Auto may reduce resolution to meet the requested frame rate.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+487"/>
         <source>%1
 Project UUID: %2
 %3 saved revision(s). Ordinary Save updates the current working revision; explicit and pinned revisions are immutable.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+3822"/>
+        <location line="+1004"/>
+        <source>Procedural Visualizer Tool — Live Controls</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+250"/>
+        <source>Show or hide Live Controls. Opening this panel does not start output or change playback.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2530"/>
         <source>The selected source project no longer contains that layer.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8770,7 +8872,7 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+19"/>
+        <location line="+20"/>
         <source>Stop LIVE or Live Preview Output before exporting so the realtime display keeps its frame budget.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8785,7 +8887,12 @@ Detected %6 BPM (%7% confidence) · %8 beat(s) · %9
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+348"/>
+        <location line="+31"/>
+        <source>Play or pause the project in the editor or video output. Shortcut: Space.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+315"/>
         <source> 3D surface mapping is currently off; this stage still runs on the flat layer after whole-layer motion.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10509,7 +10616,7 @@ Replace the current palette or append these values?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+105"/>
+        <location line="+104"/>
         <source>Rendering preview…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10526,14 +10633,14 @@ Replace the current palette or append these values?</source>
     <message>
         <location line="+58"/>
         <location line="+8"/>
-        <location line="+17"/>
+        <location line="+16"/>
         <location line="+12"/>
-        <location line="+5281"/>
+        <location line="+5379"/>
         <source>Preview cancelled.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-5288"/>
+        <location line="-5386"/>
         <source>The preview image buffer could not be allocated.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10750,22 +10857,12 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+130"/>
-        <source>Rig</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+1"/>
+        <location line="+131"/>
         <source>Control Map</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>Scenes</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+21"/>
+        <location line="+22"/>
         <source>Input trim</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10810,7 +10907,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+62"/>
+        <location line="+69"/>
         <source>Live Preview Output did not leave the native full-screen desktop before hiding or did not restart windowed.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10835,12 +10932,12 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+18"/>
         <source>Escape from the performance stage incorrectly stopped LIVE.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+151"/>
+        <location line="+156"/>
         <source>The GO LIVE transport did not release editor/export state when stopped and reclaim the realtime render budget when restarted.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10855,12 +10952,12 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+47"/>
+        <location line="+63"/>
         <source>Between pulses could not be edited through an active Mic route without stopping performance LIVE: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+21"/>
+        <location line="+20"/>
         <source>Closing the LIVE window did not stop and restore its workspace cleanly.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10875,7 +10972,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+11"/>
+        <location line="+121"/>
         <source>The Layers &amp; Groups panel could not be restored from a floating or hidden state.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -11205,14 +11302,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+42"/>
-        <location line="+7"/>
-        <location line="+21"/>
-        <source>Output-pixel controls were not scaled consistently for preview rendering.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+44"/>
+        <location line="+71"/>
         <location line="+34"/>
         <source>Artwork (before surface)</source>
         <translation type="unfinished"></translation>
@@ -11639,7 +11729,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+33"/>
+        <location line="+35"/>
         <source>Copied documents could not safely share concurrent attachment materialization: %1 %2</source>
         <translation type="unfinished"></translation>
     </message>
@@ -11689,7 +11779,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+9"/>
+        <location line="+31"/>
         <source>Undo did not remove both Plane displacement metadata and its attachment reference.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12520,19 +12610,19 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18343"/>
+        <location line="-18462"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2232"/>
-        <location line="+8420"/>
-        <location line="+7282"/>
+        <location line="-2193"/>
+        <location line="+8380"/>
+        <location line="+7421"/>
         <source>Add LFO…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-15700"/>
+        <location line="-15799"/>
         <source>Add or edit Block size LFO</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12542,7 +12632,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+2131"/>
+        <location line="+2092"/>
         <source>Canvas</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12557,8 +12647,8 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+6236"/>
-        <location line="+7285"/>
+        <location line="+6235"/>
+        <location line="+7424"/>
         <source>Edit LFO…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12671,7 +12761,13 @@ Run it directly for the default relative output, or pass an output file or direc
 <context>
     <name>PreviewWidget</name>
     <message>
-        <location filename="../gui/preview_widget.cpp" line="+250"/>
+        <location filename="../gui/preview_widget.cpp" line="+213"/>
+        <source>Video output is using the preview renderer.
+Stop video output to preview here.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+46"/>
         <source>UNWRAPPED SOURCE / UV</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12770,7 +12866,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+30"/>
+        <location line="+29"/>
         <source>Playback FPS</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13155,7 +13251,7 @@ Run it directly for the default relative output, or pass an output file or direc
     </message>
     <message>
         <location line="+4"/>
-        <location filename="../gui/main_window.cpp" line="-21738"/>
+        <location filename="../gui/main_window.cpp" line="-21799"/>
         <source>Quantization</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14108,7 +14204,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3082"/>
+        <location filename="../gui/live_workspace.cpp" line="-3422"/>
         <source> · display %1 of %2</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14123,7 +14219,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+175"/>
+        <location line="+170"/>
         <source>Absolute</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14480,12 +14576,12 @@ Notes:</source>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+22162"/>
+        <location line="+22180"/>
         <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-22148"/>
+        <location line="-22166"/>
         <source>Movement placement</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14714,7 +14810,7 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+570"/>
+        <location line="+521"/>
         <source>The reusable asset is unavailable.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14724,7 +14820,7 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+6362"/>
+        <location line="+6334"/>
         <source>Could not open link</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14746,7 +14842,7 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+3896"/>
+        <location line="+3895"/>
         <source>Full filtered signal</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15892,8 +15988,33 @@ Notes:</source>
 <context>
     <name>StageOutputWindow</name>
     <message>
-        <location filename="../gui/stage_output_window.cpp" line="+18"/>
+        <location filename="../gui/stage_output_window.cpp" line="+21"/>
         <source>Live stage output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PVT — Video Output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Output</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Enter / Leave Full Screen</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>Play / Pause</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Stop Video Output</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

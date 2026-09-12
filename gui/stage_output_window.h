@@ -12,6 +12,7 @@ class QEvent;
 class QPaintEvent;
 class QResizeEvent;
 class QScreen;
+class QMenuBar;
 
 class StageOutputWindow final : public QWidget {
     Q_OBJECT
@@ -34,6 +35,7 @@ public:
 
 signals:
     void dismissRequested();
+    void playbackRequested();
     void outputMetricsChanged();
 
 protected:
@@ -44,6 +46,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    QMenuBar* menu_bar_ = nullptr;
     QImage last_good_frame_;
     bool frozen_ = false;
     bool blackout_ = false;

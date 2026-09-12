@@ -13,6 +13,7 @@
 #include "studio_widgets.h"
 #include "../src/live_audio_capture.h"
 
+
 #include <QAbstractItemView>
 #include <QApplication>
 #include <QCheckBox>
@@ -167,12 +168,7 @@ double live_audio_loss_age_seconds(
         : (std::numeric_limits<double>::infinity)();
 }
 
-QSize physical_widget_size(const QWidget* widget) {
-    if (widget == nullptr) return QSize(320, 180);
-    const double ratio = std::max(1.0, widget->devicePixelRatioF());
-    return QSize(std::max(1, static_cast<int>(std::lround(widget->width() * ratio))),
-                 std::max(1, static_cast<int>(std::lround(widget->height() * ratio))));
-}
+
 
 QString uuid_text() {
     return QUuid::createUuid().toString(QUuid::WithoutBraces).toLower();
@@ -506,6 +502,9 @@ struct LiveWorkspace::Impl {
     double scheduled_fps = kDefaultRealtimeFps;
     std::uint64_t render_generation = 1U;
     std::uint64_t frame_schedule_tick = 0U;
+    std::uint64_t delivered_frames = 0U;
+    bool playback_running = true;
+    bool output_starting_enabled = true;
     QVector<qint64> tempo_taps;
 
     pvt::audio::LiveAudioCapture audio;
@@ -517,6 +516,19 @@ struct LiveWorkspace::Impl {
     QTimer render_timer;
     QTimer ui_timer;
     QTimer midi_clock_timer;
+    QTimer device_scan_timer;
+    ClockAudioProvider clock_audio_provider;
+    QTableWidget* audio_routes = nullptr;
+    QPushButton* audio_route_start = nullptr;
+    QLabel* audio_route_status = nullptr;
+    bool audio_routing_enabled = false;
+    bool auto_audio_roles = false;
+    bool adding_audio_roles = false;
+    QString routing_signature;
+    std::vector<pvt::audio::LiveAudioSourceRoute> routing_sources;
+    std::vector<pvt::audio::LiveAudioDevice> routing_outputs;
+    QStringList routing_source_labels;
+
     QElapsedTimer run_clock;
     QElapsedTimer last_good_clock;
     QElapsedTimer audio_dropout_clock;
@@ -541,7 +553,6 @@ struct LiveWorkspace::Impl {
     std::uint64_t project_cache_revision = 0;
     std::vector<QMetaObject::Connection> screen_connections;
 
-    QLabel* monitor = nullptr;
     QLabel* fps_readout = nullptr;
     QLabel* frame_readout = nullptr;
     QLabel* scene_readout = nullptr;
@@ -654,11 +665,20 @@ struct LiveWorkspace::Impl {
                          [this] { runtimeTick(); });
         QObject::connect(&midi_clock_timer, &QTimer::timeout, q,
                          [this] { sendClockOutputs(); });
+        device_scan_timer.setInterval(3000);
+        QObject::connect(&device_scan_timer, &QTimer::timeout, q, [this] {
+            if (q->isVisible() || audio_routing_enabled || active) {
+                refreshDevices();
+            }
+        });
+        device_scan_timer.start();
     }
 
     ~Impl() {
+        audio_routing_enabled = false;
         setPresentationActive(false);
         setActive(false);
+        audio.stop();
     }
 
     void buildUi();
@@ -679,6 +699,9 @@ struct LiveWorkspace::Impl {
     void applyMorph(int position);
     void refreshClockRouting();
     void refreshDevices();
+    void refreshAudioRouting();
+    void saveAudioRouting();
+    void ensureAudioRoles();
     void refreshRuntimeRouting();
     void refreshScreens();
     void setActive(bool value);
@@ -694,10 +717,9 @@ struct LiveWorkspace::Impl {
     void restartAudio();
     void restartOsc();
     void configureClockOutputs();
-    void requestFrame();
+    void requestFrame(bool force = false);
     void runtimeTick();
     void frameFinished(const LiveFrameController::Result& result);
-    void updateMonitor();
     void updateSafety();
     void setFreeze(bool value);
     void setBlackout(bool value);
@@ -764,7 +786,7 @@ struct LiveWorkspace::Impl {
 
 void LiveWorkspace::Impl::buildUi() {
     q->setObjectName(QStringLiteral("liveWorkspace"));
-    q->setMinimumSize(900, 600);
+    q->setMinimumSize(760, 540);
     q->setStyleSheet(QStringLiteral(R"(
         #liveWorkspace { background: #171a1f; color: #e7eaed; }
         #liveHeader { background: #20242a; border: 1px solid #343a42;
@@ -804,10 +826,10 @@ void LiveWorkspace::Impl::buildUi() {
     auto* header_layout = new QHBoxLayout(header);
     header_layout->setContentsMargins(14, 9, 10, 9);
     auto* names = new QVBoxLayout;
-    auto* title = new QLabel(LiveWorkspace::tr("LIVE / PERFORMANCE"));
+    auto* title = new QLabel(LiveWorkspace::tr("LIVE CONTROLS"));
     title->setObjectName(QStringLiteral("liveTitle"));
     auto* subtitle = new QLabel(LiveWorkspace::tr(
-        "Portable roles and scenes · machine bindings stay on this computer"));
+        "Choose audio sources, route your mix, and start video output"));
     subtitle->setObjectName(QStringLiteral("liveSubTitle"));
     names->addWidget(title);
     names->addWidget(subtitle);
@@ -816,7 +838,7 @@ void LiveWorkspace::Impl::buildUi() {
     render_lamp = new StatusLamp;
     render_lamp->setText(LiveWorkspace::tr("STANDBY"));
     header_layout->addWidget(render_lamp);
-    live_button = new QPushButton(LiveWorkspace::tr("GO LIVE"));
+    live_button = new QPushButton(LiveWorkspace::tr("Start Video Output"));
     live_button->setObjectName(QStringLiteral("liveRuntimeButton"));
     live_button->setCheckable(true);
     live_button->setMinimumWidth(105);
@@ -828,27 +850,8 @@ void LiveWorkspace::Impl::buildUi() {
     header_layout->addWidget(edit);
     root->addWidget(header);
 
-    auto* splitter = new QSplitter(Qt::Horizontal);
-    splitter->setChildrenCollapsible(false);
-    auto* program_column = new QWidget;
-    auto* program_layout = new QVBoxLayout(program_column);
-    program_layout->setContentsMargins(0, 0, 0, 0);
-    program_layout->setSpacing(8);
-
-    auto* program_frame = new QFrame;
-    program_frame->setObjectName(QStringLiteral("liveProgramFrame"));
-    auto* program_frame_layout = new QVBoxLayout(program_frame);
-    program_frame_layout->setContentsMargins(6, 6, 6, 6);
-    monitor = new QLabel(LiveWorkspace::tr("PROGRAM OUTPUT\nStandby"));
-    monitor->setObjectName(QStringLiteral("liveProgramLabel"));
-    monitor->setAlignment(Qt::AlignCenter);
-    monitor->setMinimumSize(420, 240);
-    monitor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    program_frame_layout->addWidget(monitor);
-    program_layout->addWidget(program_frame, 1);
-
     auto* transport = new QHBoxLayout;
-    output_button = new QPushButton(LiveWorkspace::tr("Full-screen Output"));
+    output_button = new QPushButton(LiveWorkspace::tr("Full Screen / Window"));
     output_button->setObjectName(QStringLiteral("liveStageOutputButton"));
     output_button->setCheckable(true);
     freeze_button = new QPushButton(LiveWorkspace::tr("FREEZE"));
@@ -862,7 +865,11 @@ void LiveWorkspace::Impl::buildUi() {
     transport->addWidget(output_button, 2);
     transport->addWidget(freeze_button, 1);
     transport->addWidget(blackout_button, 1);
-    program_layout->addLayout(transport);
+    auto* playback = new QPushButton(LiveWorkspace::tr("Play / Pause · Space"));
+    playback->setObjectName(QStringLiteral("livePlaybackButton"));
+    transport->insertWidget(0, playback);
+    QObject::connect(playback, &QPushButton::clicked, q, &LiveWorkspace::requestTogglePlayback);
+    root->addLayout(transport);
 
     auto* telemetry = new QFrame;
     telemetry->setObjectName(QStringLiteral("liveRackPanel"));
@@ -884,22 +891,22 @@ void LiveWorkspace::Impl::buildUi() {
     telemetry_layout->addWidget(fps_readout);
     telemetry_layout->addWidget(frame_readout);
     telemetry_layout->addStretch(1);
+    scene_readout->setMaximumWidth(260);
+    scene_readout->setWordWrap(true);
     telemetry_layout->addWidget(scene_readout);
-    program_layout->addWidget(telemetry);
+    root->addWidget(telemetry);
 
     tabs = new QTabWidget;
-    tabs->addTab(buildRigTab(), LiveWorkspace::tr("Rig"));
+    tabs->addTab(buildRigTab(), LiveWorkspace::tr("Audio & Video"));
     tabs->addTab(buildMappingTab(), LiveWorkspace::tr("Control Map"));
-    tabs->addTab(buildSceneTab(), LiveWorkspace::tr("Scenes"));
-    splitter->addWidget(program_column);
-    splitter->addWidget(tabs);
-    splitter->setStretchFactor(0, 3);
-    splitter->setStretchFactor(1, 2);
-    splitter->setSizes({650, 440});
-    root->addWidget(splitter, 1);
+    tabs->addTab(buildSceneTab(), LiveWorkspace::tr("Saved Looks"));
+    root->addWidget(tabs, 1);
 
     QObject::connect(live_button, &QPushButton::toggled, q,
-                     [this](bool checked) { setActive(checked); });
+                     [this](bool checked) {
+        if (!checked && presentation_active) setPresentationActive(false);
+        else setActive(checked);
+    });
     QObject::connect(edit, &QPushButton::clicked, q,
                      [this] { emit q->requestEditMode(); });
     QObject::connect(output_button, &QPushButton::clicked, q,
@@ -908,6 +915,8 @@ void LiveWorkspace::Impl::buildUi() {
                      [this](bool checked) { setFreeze(checked); });
     QObject::connect(blackout_button, &QPushButton::toggled, q,
                      [this](bool checked) { setBlackout(checked); });
+    QObject::connect(&stage, &StageOutputWindow::playbackRequested, q,
+                     &LiveWorkspace::requestTogglePlayback);
     QObject::connect(&stage, &StageOutputWindow::dismissRequested, q, [this] {
         dismissOutput();
     });
@@ -933,7 +942,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     starter->setToolTip(LiveWorkspace::tr(
         "Adds portable Audio, MIDI, OSC, foot-controller, and MIDI-out roles. "
         "No device identity is saved in the project."));
-    auto* add_role = new QPushButton(LiveWorkspace::tr("Add Logical Role…"));
+    auto* add_role = new QPushButton(LiveWorkspace::tr("Manage Roles…"));
     rig_actions->addWidget(starter);
     rig_actions->addWidget(add_role);
     rig_actions->addStretch(1);
@@ -955,6 +964,44 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     audio_row_layout->addWidget(audio_device, 2);
     audio_row_layout->addWidget(audio_refresh);
     form->addRow(LiveWorkspace::tr("Audio role / device"), audio_row);
+    audio_routes = new QTableWidget;
+    audio_routes->setObjectName(QStringLiteral("liveAudioRoutingMatrix"));
+    audio_routes->setMinimumHeight(180);
+    audio_routes->setAlternatingRowColors(true);
+    audio_routes->setSelectionMode(QAbstractItemView::NoSelection);
+    audio_routes->setToolTip(LiveWorkspace::tr(
+        "Each row is an input. Check Analysis to include it in the EQ, calibration and visual analysis mix. "
+        "Check a speaker/headphone column to send it there. Clock files loop continuously while audio routing is running."));
+    form->addRow(audio_routes);
+    auto* route_help = new QLabel(LiveWorkspace::tr(
+        "Check where each source goes: Analysis feeds the controls below; each output column has its own mix. "
+        "Clock audio loops continuously. Audio routing runs independently of video playback."));
+    route_help->setWordWrap(true);
+    form->addRow(route_help);
+    audio_route_start = new QPushButton(LiveWorkspace::tr("Start Audio Routing"));
+    audio_route_start->setObjectName(QStringLiteral("liveAudioRoutingStart"));
+    audio_route_start->setCheckable(true);
+    audio_route_status = new QLabel;
+    audio_route_status->setWordWrap(true);
+    form->addRow(audio_route_start, audio_route_status);
+    QObject::connect(audio_routes, &QTableWidget::itemChanged, q,
+                     [this] { if (!rebuilding) saveAudioRouting(); });
+    QObject::connect(audio_route_start, &QPushButton::toggled, q, [this](bool checked) {
+        audio_routing_enabled = checked;
+        audio_route_start->setText(checked ? LiveWorkspace::tr("Stop Audio Routing")
+                                          : LiveWorkspace::tr("Start Audio Routing"));
+        if (checked) {
+            restartAudio();
+            ui_timer.start();
+        } else {
+            audio.stop();
+            audio_snapshot = {};
+            if (!active) ui_timer.stop();
+            audio_route_status->setText(LiveWorkspace::tr("Audio routing stopped"));
+        }
+    });
+    auto* show_controllers = new QCheckBox(LiveWorkspace::tr("MIDI, foot controller and OSC"));
+    form->addRow(show_controllers);
     midi_role = new QComboBox;
     midi_device = new QComboBox;
     auto* midi_row = new QWidget;
@@ -984,6 +1031,13 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     osc_row_layout->addWidget(osc_port);
     osc_row_layout->addWidget(osc_local);
     form->addRow(LiveWorkspace::tr("OSC role / UDP port"), osc_row);
+    for (auto* row : {midi_row, foot_row, osc_row}) {
+        auto* label = form->labelForField(row);
+        row->hide();
+        if (label) label->hide();
+        QObject::connect(show_controllers, &QCheckBox::toggled, row, &QWidget::setVisible);
+        if (label) QObject::connect(show_controllers, &QCheckBox::toggled, label, &QWidget::setVisible);
+    }
     layout->addWidget(inputs);
 
     QFormLayout* audio_form = nullptr;
@@ -1259,15 +1313,13 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     quality = new QComboBox;
     quality->setObjectName(QStringLiteral("liveOutputQuality"));
     quality->addItem(LiveWorkspace::tr("Auto · watchdog managed"), 0.0);
-    quality->addItem(LiveWorkspace::tr("100% of output size"), 1.0);
+    quality->addItem(LiveWorkspace::tr("100% · canvas resolution"), 1.0);
     quality->addItem(LiveWorkspace::tr("75%"), 0.75);
     quality->addItem(LiveWorkspace::tr("50%"), 0.5);
     quality->addItem(LiveWorkspace::tr("25%"), 0.25);
     quality->setToolTip(LiveWorkspace::tr(
-        "Fits the project to the output window's pixels, capped at project resolution. "
-        "Auto reduces resolution when frames miss their deadline. Choose a fixed "
-        "percentage for performance comparisons and compare the delivered dimensions."));
-    const double stored_quality = QSettings().value(QStringLiteral("live/resolutionScale"), 0.0).toDouble();
+        "Render at the selected percentage of canvas resolution. Resizing a window does not change render quality. Auto can reduce quality when deadlines are missed."));
+    const double stored_quality = QSettings().value(QStringLiteral("live/resolutionScale"), 1.0).toDouble();
     const int quality_index = quality->findData(stored_quality);
     quality->setCurrentIndex(quality_index < 0 ? 0 : quality_index);
     output_form->addRow(LiveWorkspace::tr("Display"), screen);
@@ -1278,12 +1330,19 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     output_form->addRow(LiveWorkspace::tr("Portable output policy"), portable_fullscreen);
     output_form->addRow({}, prefer_secondary);
     output_form->addRow({}, hide_stage_cursor);
+    auto* advanced_output = new QCheckBox(LiveWorkspace::tr("Advanced output safety"));
+    output_form->addRow(advanced_output);
+    QFormLayout* safety_form = nullptr;
+    QWidget* output_safety = titled_group(LiveWorkspace::tr("Output safety"), safety_form);
+    output_form->addRow(output_safety);
+    output_safety->hide();
+    QObject::connect(advanced_output, &QCheckBox::toggled, output_safety, &QWidget::setVisible);
     dropout_behavior = new QComboBox;
     dropout_behavior->addItem(LiveWorkspace::tr("Hold last good frame"),
         static_cast<int>(pvt::LiveDropoutBehavior::LastGoodFrame));
     dropout_behavior->addItem(LiveWorkspace::tr("Blackout immediately"),
         static_cast<int>(pvt::LiveDropoutBehavior::Blackout));
-    output_form->addRow(LiveWorkspace::tr("On dropout"), dropout_behavior);
+    safety_form->addRow(LiveWorkspace::tr("On dropout"), dropout_behavior);
     watchdog_enabled = new QCheckBox(LiveWorkspace::tr("Enable frame-time watchdog"));
     watchdog_timeout = new QSpinBox;
     watchdog_timeout->setRange(1, kMaximumUiInteger);
@@ -1293,7 +1352,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     watchdog_layout->setContentsMargins(0, 0, 0, 0);
     watchdog_layout->addWidget(watchdog_enabled);
     watchdog_layout->addWidget(watchdog_timeout);
-    output_form->addRow(LiveWorkspace::tr("Frame deadline"), watchdog_row);
+    safety_form->addRow(LiveWorkspace::tr("Frame deadline"), watchdog_row);
     audio_grace = new QSpinBox;
     audio_grace->setRange(0, kMaximumUiInteger);
     audio_grace->setSuffix(LiveWorkspace::tr(" ms"));
@@ -1301,18 +1360,18 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
     last_good_timeout->setObjectName(QStringLiteral("liveLastGoodTimeout"));
     last_good_timeout->setRange(0, kMaximumUiInteger);
     last_good_timeout->setSuffix(LiveWorkspace::tr(" ms"));
-    output_form->addRow(LiveWorkspace::tr("Audio dropout grace"), audio_grace);
-    output_form->addRow(LiveWorkspace::tr("Last-good then black (0 = hold)"),
+    safety_form->addRow(LiveWorkspace::tr("Audio dropout grace"), audio_grace);
+    safety_form->addRow(LiveWorkspace::tr("Last-good then black (0 = hold)"),
                         last_good_timeout);
     prevent_sleep = new QCheckBox(LiveWorkspace::tr(
         "Prevent device sleep while Live is running (supported platforms)"));
-    output_form->addRow(LiveWorkspace::tr("Show continuity"), prevent_sleep);
+    safety_form->addRow(LiveWorkspace::tr("Show continuity"), prevent_sleep);
     auto* safety_label = new QLabel(LiveWorkspace::tr(
         "The renderer keeps only one pending frame. A missed frame holds the last good image; "
         "the project watchdog may switch to black according to its saved safety policy."));
     safety_label->setWordWrap(true);
-    output_form->addRow(safety_label);
-    layout->addWidget(output);
+    safety_form->addRow(safety_label);
+    layout->insertWidget(2, output);
     layout->addStretch(1);
     scroll->setWidget(body);
 
@@ -1346,6 +1405,17 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
                     / 1000,
                 (std::numeric_limits<int>::min)(), kMaximumUiInteger)));
         }
+        const QSignalBlocker routes_block(audio_routes);
+        const QString selected = audio_device->currentData().toString();
+        for (int row = 0; row < audio_routes->rowCount(); ++row) {
+            const auto& source = routing_sources[static_cast<std::size_t>(row)];
+            const bool match = selected.isEmpty()
+                ? std::any_of(audio_devices.begin(), audio_devices.end(), [&](const auto& device) {
+                    return device.is_default && device.runtime_id == source.device_id;
+                }) : selected == qtext(source.id);
+            audio_routes->item(row, 2)->setCheckState(match ? Qt::Checked : Qt::Unchecked);
+        }
+        saveAudioRouting();
         emit q->audioInputsChanged();
         restartAudio();
     });
@@ -1474,7 +1544,7 @@ QWidget* LiveWorkspace::Impl::buildRigTab() {
                           gate_hold->value());
         settings.setValue(QStringLiteral("live/noiseGateReleaseMs"),
                           gate_release->value());
-        if (active) restartAudio();
+        if (active || audio_routing_enabled) restartAudio();
     };
     QObject::connect(gate_enabled, &QCheckBox::toggled, q,
                      [apply_gate_calibration] { apply_gate_calibration(); });
@@ -1629,8 +1699,9 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(10, 10, 10, 10);
     auto* intro = new QLabel(LiveWorkspace::tr(
-        "Scenes snapshot every currently resolved Live target. Numeric controls "
-        "crossfade; switches and modes change at the end of the transition."));
+        "Saved looks recall visual control values during video output. First capture a look, "
+        "edit the project, then capture another. Select one and Apply to Output to see it. "
+        "Transitions blend numeric controls; switches change at the end. These are control presets, not separate projects."));
     intro->setWordWrap(true);
     layout->addWidget(intro);
     scene_list = new QListWidget;
@@ -1660,7 +1731,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     layout->addLayout(capture_row);
     auto* take_row = new QHBoxLayout;
     auto* previous = new QPushButton(LiveWorkspace::tr("◀ Previous"));
-    auto* take = new QPushButton(LiveWorkspace::tr("TAKE SCENE"));
+    auto* take = new QPushButton(LiveWorkspace::tr("Apply to Output"));
     take->setObjectName(QStringLiteral("liveSceneTake"));
     take->setMinimumHeight(38);
     auto* next = new QPushButton(LiveWorkspace::tr("Next ▶"));
@@ -1893,6 +1964,9 @@ void LiveWorkspace::Impl::commitConfig(pvt::LiveConfig next,
         != clock_output_signature(next);
     const bool endpoints_changed = endpoint_structure_signature(config)
         != endpoint_structure_signature(next);
+    const bool window_policy_changed = config.output.fullscreen != next.output.fullscreen
+        || config.output.hide_cursor != next.output.hide_cursor
+        || config.output.prefer_secondary_display != next.output.prefer_secondary_display;
     reconcileMappings(next);
     config = next;
     if (authored_editor) authored_editor(config, reason);
@@ -1906,7 +1980,7 @@ void LiveWorkspace::Impl::commitConfig(pvt::LiveConfig next,
         }
     }
     refreshRuntimeRouting();
-    if (stage.isVisible()) applyVisibleOutputPolicy();
+    if (window_policy_changed && stage.isVisible()) applyVisibleOutputPolicy();
 }
 
 void LiveWorkspace::Impl::refreshConfigUi() {
@@ -2452,6 +2526,10 @@ void LiveWorkspace::Impl::refreshDevices() {
                 audio_device->count() - 1, qtext(device.name),
                 Qt::UserRole + 1);
         }
+        if (clock_audio_provider) for (const auto& file : clock_audio_provider()) {
+            audio_device->addItem(file.label + LiveWorkspace::tr(" · looping file"), file.id);
+            audio_device->setItemData(audio_device->count() - 1, file.label, Qt::UserRole + 1);
+        }
         const std::string role = narrow(audio_role->currentData().toString());
         QSettings settings;
         const QString stored = settings.value(
@@ -2516,8 +2594,169 @@ void LiveWorkspace::Impl::refreshDevices() {
     fill_midi(midi_role, midi_device);
     fill_midi(foot_role, foot_device);
     rebuilding = false;
+    refreshAudioRouting();
     refreshClockRouting();
     emit q->audioInputsChanged();
+}
+
+void LiveWorkspace::Impl::refreshAudioRouting() {
+    if (!audio_routes) return;
+    auto outputs = audio.output_devices();
+    std::vector<pvt::audio::LiveAudioSourceRoute> sources;
+    QStringList labels;
+    QString signature;
+    for (const auto& device : audio_devices) {
+        pvt::audio::LiveAudioSourceRoute source;
+        source.id = device.runtime_id;
+        source.device_id = device.runtime_id;
+        sources.push_back(source);
+        labels.push_back(qtext(device.display_name) + LiveWorkspace::tr(" · input"));
+        signature += qtext(device.runtime_id) + qtext(device.display_name);
+    }
+    QSettings route_settings;
+    const std::string selected_binding = narrow(route_settings.value(endpoint_key(
+        narrow(audio_role->currentData().toString()), QStringLiteral("audioDevice"))).toString());
+    if (!selected_binding.empty() && selected_binding.rfind("clock:", 0) != 0
+        && std::none_of(sources.begin(), sources.end(), [&](const auto& source) {
+            return source.device_id == selected_binding;
+        })) {
+        pvt::audio::LiveAudioSourceRoute missing;
+        missing.id = selected_binding;
+        missing.device_id = selected_binding;
+        sources.push_back(missing);
+        labels.push_back(LiveWorkspace::tr("Unavailable audio input"));
+        signature += qtext(selected_binding);
+    }
+    signature += qtext(selected_binding);
+    if (clock_audio_provider) {
+        for (const auto& file : clock_audio_provider()) {
+            if (file.path.isEmpty()) continue;
+            pvt::audio::LiveAudioSourceRoute source;
+            source.id = narrow(file.id);
+            source.file_path = narrow(file.path);
+            sources.push_back(source);
+            labels.push_back(file.label + LiveWorkspace::tr(" · looping file"));
+            signature += file.id + file.path + file.label;
+        }
+    }
+    for (const auto& previous : routing_outputs) {
+        if (std::none_of(outputs.begin(), outputs.end(), [&](const auto& current) {
+                return current.runtime_id == previous.runtime_id;
+            })) {
+            auto missing = previous;
+            const std::string prefix = narrow(LiveWorkspace::tr("Unavailable · "));
+            if (missing.display_name.rfind(prefix, 0) != 0) missing.display_name = prefix + missing.display_name;
+            outputs.push_back(std::move(missing));
+        }
+    }
+    for (const auto& output : outputs)
+        signature += qtext(output.runtime_id) + qtext(output.display_name);
+    if (signature == routing_signature && audio_routes->columnCount() != 0) return;
+    const bool was_running = audio.is_running();
+    routing_signature = signature;
+    routing_sources = std::move(sources);
+    routing_outputs = std::move(outputs);
+    routing_source_labels = labels;
+    const QSignalBlocker blocker(audio_routes);
+    audio_routes->clear();
+    audio_routes->setRowCount(static_cast<int>(routing_sources.size()));
+    audio_routes->setColumnCount(3 + static_cast<int>(routing_outputs.size()));
+    QStringList headers{LiveWorkspace::tr("Available source"), LiveWorkspace::tr("Gain %"), LiveWorkspace::tr("Analysis")};
+    for (const auto& output : routing_outputs)
+        headers.push_back(qtext(output.display_name) + LiveWorkspace::tr(" · output"));
+    audio_routes->setHorizontalHeaderLabels(headers);
+    audio_routes->verticalHeader()->hide();
+    QSettings settings;
+    for (int row = 0; row < audio_routes->rowCount(); ++row) {
+        const auto& source = routing_sources[static_cast<std::size_t>(row)];
+        const QString key = QStringLiteral("live/audioMatrix/") + qtext(source.id) + '/';
+        auto* name = new QTableWidgetItem(labels[row]);
+        name->setFlags(Qt::ItemIsEnabled);
+        audio_routes->setItem(row, 0, name);
+        auto* source_gain = new QDoubleSpinBox;
+        source_gain->setRange(0, 1000);
+        source_gain->setSuffix(QStringLiteral("%"));
+        source_gain->setKeyboardTracking(false);
+        source_gain->setValue(settings.value(key + QStringLiteral("gain"), 100).toDouble());
+        audio_routes->setCellWidget(row, 1, source_gain);
+        QObject::connect(source_gain, qOverload<double>(&QDoubleSpinBox::valueChanged), q,
+                         [this] { if (!rebuilding) saveAudioRouting(); });
+        for (int column = 2; column < audio_routes->columnCount(); ++column) {
+            const QString destination = column == 2 ? QStringLiteral("analysis")
+                : qtext(routing_outputs[static_cast<std::size_t>(column - 3)].runtime_id);
+            auto* item = new QTableWidgetItem;
+            item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+            // One available/default input is ready for analysis; hardware output
+            // remains an explicit route to avoid unexpected microphone feedback.
+            const bool initial = column == 2 && (!selected_binding.empty()
+                ? source.id == selected_binding
+                : (!audio_devices.empty() && source.device_id == (std::find_if(audio_devices.begin(), audio_devices.end(),
+                    [](const auto& device) { return device.is_default; }) != audio_devices.end()
+                    ? std::find_if(audio_devices.begin(), audio_devices.end(),
+                        [](const auto& device) { return device.is_default; })->runtime_id
+                    : audio_devices.front().runtime_id)));
+            item->setCheckState(settings.value(key + destination, initial).toBool()
+                                    ? Qt::Checked : Qt::Unchecked);
+            audio_routes->setItem(row, column, item);
+        }
+    }
+    audio_routes->resizeColumnsToContents();
+    audio_routes->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+    audio_route_status->setText(LiveWorkspace::tr("%1 inputs · %2 outputs found")
+        .arg(routing_sources.size()).arg(routing_outputs.size()));
+    if (was_running) restartAudio();
+    if (auto_audio_roles && !adding_audio_roles)
+        QTimer::singleShot(0, q, [this] { ensureAudioRoles(); });
+}
+
+void LiveWorkspace::Impl::saveAudioRouting() {
+    QSettings settings;
+    for (int row = 0; row < audio_routes->rowCount(); ++row) {
+        const QString key = QStringLiteral("live/audioMatrix/")
+            + qtext(routing_sources[static_cast<std::size_t>(row)].id) + '/';
+        const auto* source_gain = qobject_cast<QDoubleSpinBox*>(audio_routes->cellWidget(row, 1));
+        settings.setValue(key + QStringLiteral("gain"), source_gain->value());
+        for (int column = 2; column < audio_routes->columnCount(); ++column) {
+            const QString destination = column == 2 ? QStringLiteral("analysis")
+                : qtext(routing_outputs[static_cast<std::size_t>(column - 3)].runtime_id);
+            settings.setValue(key + destination, audio_routes->item(row, column)->checkState() == Qt::Checked);
+        }
+    }
+    if (active || audio_routing_enabled) restartAudio();
+}
+
+void LiveWorkspace::Impl::ensureAudioRoles() {
+    if (adding_audio_roles || !project_editing_enabled) return;
+    adding_audio_roles = true;
+    pvt::LiveConfig next = config;
+    const auto append = [&](const QString& label, const std::string& binding,
+                            pvt::LiveEndpointDirection direction) {
+        QSettings settings;
+        if (settings.value(QStringLiteral("live/ignoredAutoRoles/") + qtext(binding), false).toBool()) return;
+        const auto found = std::find_if(next.endpoints.begin(), next.endpoints.end(),
+            [&](const auto& endpoint) {
+                return endpoint.protocol == pvt::LiveEndpointProtocol::Audio
+                    && endpoint.direction == direction
+                    && (settings.value(endpoint_key(endpoint.uuid, QStringLiteral("audioDevice"))).toString() == qtext(binding)
+                        || endpoint.name == narrow(label));
+            });
+        if (found != next.endpoints.end()) return;
+        pvt::LiveEndpointConfig endpoint;
+        endpoint.uuid = narrow(uuid_text());
+        endpoint.name = narrow(label);
+        endpoint.protocol = pvt::LiveEndpointProtocol::Audio;
+        endpoint.direction = direction;
+        settings.setValue(endpoint_key(endpoint.uuid, QStringLiteral("audioDevice")), qtext(binding));
+        settings.setValue(endpoint_key(endpoint.uuid, QStringLiteral("audioDeviceName")), label);
+        next.endpoints.push_back(std::move(endpoint));
+    };
+    for (std::size_t i = 0; i < routing_sources.size(); ++i)
+        append(routing_source_labels[static_cast<int>(i)], routing_sources[i].id, pvt::LiveEndpointDirection::Input);
+    for (const auto& output : routing_outputs)
+        append(qtext(output.display_name) + LiveWorkspace::tr(" · output"), output.runtime_id, pvt::LiveEndpointDirection::Output);
+    if (next.endpoints.size() != config.endpoints.size())
+        commitConfig(std::move(next), LiveWorkspace::tr("Add roles for available audio devices"));
+    adding_audio_roles = false;
 }
 
 void LiveWorkspace::Impl::refreshRuntimeRouting() {
@@ -2613,6 +2852,7 @@ void LiveWorkspace::Impl::updateScheduledFps(double fps) {
     }
     scheduled_fps = sanitized;
     frame_schedule_tick = 0U;
+    delivered_frames = 0U;
     frame_schedule_clock.restart();
 }
 
@@ -2620,12 +2860,13 @@ void LiveWorkspace::Impl::restartFrameSchedule(double fps) {
     render_timer.stop();
     scheduled_fps = sanitized_realtime_fps(fps);
     frame_schedule_tick = 0U;
+    delivered_frames = 0U;
     frame_schedule_clock.restart();
     scheduleNextFrame();
 }
 
 void LiveWorkspace::Impl::scheduleNextFrame() {
-    if (!realtimeActive()) return;
+    if (!realtimeActive() || !playback_running) return;
     if (!frame_schedule_clock.isValid()) frame_schedule_clock.start();
     const double elapsed = static_cast<double>(frame_schedule_clock.elapsed());
     const std::uint64_t elapsed_tick = static_cast<std::uint64_t>(
@@ -2638,6 +2879,11 @@ void LiveWorkspace::Impl::scheduleNextFrame() {
 }
 
 void LiveWorkspace::Impl::setActive(bool value) {
+    if (value && !active && !output_starting_enabled) {
+        const QSignalBlocker blocker(live_button);
+        live_button->setChecked(false);
+        return;
+    }
     if (active == value) {
         QSignalBlocker block(live_button);
         live_button->setChecked(value);
@@ -2650,7 +2896,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
     {
         QSignalBlocker block(live_button);
         live_button->setChecked(value);
-        live_button->setText(value ? LiveWorkspace::tr("LIVE · ON") : LiveWorkspace::tr("GO LIVE"));
+        live_button->setText(value ? LiveWorkspace::tr("Stop Video Output") : LiveWorkspace::tr("Start Video Output"));
     }
     if (value) {
         // Publish ownership before launching the first realtime render so the
@@ -2662,6 +2908,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         last_image = {};
         stage.clearFrame();
         presented_frame_clock.invalidate();
+        delivered_frames = 0U;
         updateSleepPrevention();
         rebuildTargetCache();
         run_clock.restart();
@@ -2683,6 +2930,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         ui_timer.start();
         midi_clock_timer.start();
         if (!config.startup_scene_uuid.empty()) takeScene(config.startup_scene_uuid);
+        showOutput();
         requestFrame();
         emit q->runtimeStatusChanged(LiveWorkspace::tr("Live performance runtime started."));
     } else {
@@ -2698,6 +2946,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         stage.dismiss();
         renderer.stop();
         stopIo();
+        if (audio_routing_enabled) ui_timer.start();
         scene_transition = {};
         {
             QSignalBlocker slider_block(morph_slider);
@@ -2728,9 +2977,11 @@ void LiveWorkspace::Impl::setActive(bool value) {
         audio_snapshot = {};
         last_image = {};
         presented_frame_clock.invalidate();
+        delivered_frames = 0U;
         output_button->setChecked(false);
         showStandbyState();
-        emit q->runtimeStatusChanged(LiveWorkspace::tr("Live performance runtime stopped."));
+        if (audio_routing_enabled) restartAudio();
+        emit q->runtimeStatusChanged(LiveWorkspace::tr("Video output stopped."));
         // A false transition is published only after the synchronous renderer
         // drain so editor export/preview work cannot overlap teardown.
         emit q->liveActiveChanged(false);
@@ -2738,9 +2989,16 @@ void LiveWorkspace::Impl::setActive(bool value) {
 }
 
 void LiveWorkspace::Impl::setPresentationActive(bool value) {
+    if (value && !presentation_active && !output_starting_enabled) return;
     if (presentation_active == value) return;
     if (value && active) setActive(false);
     presentation_active = value;
+    {
+        const QSignalBlocker blocker(live_button);
+        live_button->setChecked(value);
+        live_button->setText(value ? LiveWorkspace::tr("Stop Video Output")
+                                   : LiveWorkspace::tr("Start Video Output"));
+    }
     if (value) {
         // Give the editor a chance to surrender its preview budget before the
         // presentation controller submits the first frame.
@@ -2767,7 +3025,7 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
         showOutput();
         requestFrame();
         emit q->runtimeStatusChanged(
-            LiveWorkspace::tr("Live Preview Output started without performance inputs."));
+            LiveWorkspace::tr("Video output started."));
     } else {
         render_timer.stop();
         stage.setFrozen(false);
@@ -2810,6 +3068,14 @@ void LiveWorkspace::Impl::updateSleepPrevention() {
 }
 
 void LiveWorkspace::Impl::startIo() {
+    if (!audio_routing_enabled && (!config.clock_inputs.empty()
+        || std::any_of(config.mappings.begin(), config.mappings.end(),
+            [](const auto& mapping) { return is_audio_control_input(mapping.input); }))) {
+        audio_routing_enabled = true;
+        const QSignalBlocker blocker(audio_route_start);
+        audio_route_start->setChecked(true);
+        audio_route_start->setText(LiveWorkspace::tr("Stop Audio Routing"));
+    }
     QString midi_error;
     if (midi.start(&midi_error)) {
         midi_lamp->setState(StatusLamp::State::Ready);
@@ -2831,28 +3097,22 @@ void LiveWorkspace::Impl::stopIo() {
         if (output.send_transport) midi.sendClockStop(output_index);
         ++output_index;
     }
-    audio.stop();
+    if (!audio_routing_enabled) audio.stop();
     osc.stop();
     midi.stop();
     clock_outputs.clear();
 }
 
 void LiveWorkspace::Impl::restartAudio() {
-    if (!active) return;
+    if (!audio_routing_enabled) return;
     audio.stop();
     audio_snapshot = {};
     // A new input must establish its own last-good frame. Holding before the
     // first callback can leave startup permanently waiting for a nonexistent
     // image (missing device, denied permission, or a delayed frequency stream).
     audio_frame_presented = false;
-    if (audio_role->currentData().toString().isEmpty()) {
-        audio_lamp->setState(StatusLamp::State::Off);
-        audio_lamp->setToolTip(LiveWorkspace::tr("Add or select an Audio input role."));
-        return;
-    }
     audio.set_gain(gain_value->value() / 100.0);
     audio.set_sensitivity(sensitivity_value->value() / 100.0);
-    const QString device = audio_device->currentData().toString();
     std::string error;
     if (!audio.set_processing_config(config.audio_processing, &error)) {
         audio_lamp->setState(StatusLamp::State::Fault);
@@ -2876,13 +3136,36 @@ void LiveWorkspace::Impl::restartAudio() {
     const int period = std::clamp(
         QSettings().value(QStringLiteral("live/audioPeriodFrames"), 128).toInt(),
         1, static_cast<int>(pvt::audio::kMaximumLiveAudioPeriodFrames));
-    if (!audio.start(narrow(device), static_cast<std::uint32_t>(period), &error)) {
+    std::vector<pvt::audio::LiveAudioSourceRoute> selected_sources;
+    std::vector<pvt::audio::LiveAudioOutputRoute> selected_outputs;
+    for (std::size_t output = 0; output < routing_outputs.size(); ++output) {
+        pvt::audio::LiveAudioOutputRoute route;
+        route.device_id = routing_outputs[output].runtime_id;
+        for (int row = 0; row < audio_routes->rowCount(); ++row)
+            if (audio_routes->item(row, static_cast<int>(output) + 3)->checkState() == Qt::Checked)
+                route.source_ids.push_back(routing_sources[static_cast<std::size_t>(row)].id);
+        if (!route.source_ids.empty()) selected_outputs.push_back(std::move(route));
+    }
+    for (int row = 0; row < audio_routes->rowCount(); ++row) {
+        auto source = routing_sources[static_cast<std::size_t>(row)];
+        source.analysis = audio_routes->item(row, 2)->checkState() == Qt::Checked;
+        source.gain = static_cast<float>(qobject_cast<QDoubleSpinBox*>(audio_routes->cellWidget(row, 1))->value() / 100.0);
+        const bool routed = std::any_of(selected_outputs.begin(), selected_outputs.end(), [&](const auto& output) {
+            return std::find(output.source_ids.begin(), output.source_ids.end(), source.id) != output.source_ids.end();
+        });
+        if (source.analysis || routed) selected_sources.push_back(std::move(source));
+    }
+    const bool ok = !selected_sources.empty()
+        && audio.start_routing(selected_sources, selected_outputs, static_cast<std::uint32_t>(period), &error);
+    if (!ok) {
+        if (error.empty()) error = "Choose at least one Analysis or output route.";
         audio_lamp->setState(StatusLamp::State::Fault);
         audio_lamp->setToolTip(qtext(error));
-        emit q->runtimeStatusChanged(LiveWorkspace::tr("Audio input could not start: %1")
-                                         .arg(qtext(error)));
+        audio_route_status->setText(qtext(error));
         return;
     }
+    audio_route_status->setText(LiveWorkspace::tr("Audio routing running · %1 sources · %2 output mixes")
+        .arg(selected_sources.size()).arg(selected_outputs.size()));
     audio_lamp->setState(StatusLamp::State::Warning);
     audio_lamp->setToolTip(LiveWorkspace::tr("Audio capture started; waiting for callbacks."));
     audio_dropout_clock.restart();
@@ -3006,7 +3289,7 @@ void LiveWorkspace::Impl::showOutput() {
     // must create/assign the native window to the selected display before it
     // becomes visible or a projector output can flash on the primary display.
     applyVisibleOutputPolicy();
-    output_button->setChecked(active && stage.isVisible());
+    output_button->setChecked(stage.isFullScreen());
 }
 
 void LiveWorkspace::Impl::dismissOutput() {
@@ -3015,15 +3298,7 @@ void LiveWorkspace::Impl::dismissOutput() {
         restoreOutputOwnerFocus();
         return;
     }
-    stage.dismiss();
-    output_button->setChecked(false);
-    if (active) {
-        // Discard any frame sized for the stage and immediately replace it
-        // with one sized for the in-window program monitor.
-        ++render_generation;
-        renderer.cancelCurrent();
-        requestFrame();
-    }
+    setActive(false);
     restoreOutputOwnerFocus();
 }
 
@@ -3046,8 +3321,6 @@ void LiveWorkspace::Impl::showStartingState() {
     render_lamp->setToolTip({});
     fps_readout->setText(LiveWorkspace::tr("0.0 fps delivered"));
     frame_readout->setText(LiveWorkspace::tr("Waiting for first frame"));
-    monitor->setPixmap({});
-    monitor->setText(LiveWorkspace::tr("PROGRAM OUTPUT\nWaiting for first frame"));
 }
 
 void LiveWorkspace::Impl::showStandbyState() {
@@ -3067,19 +3340,20 @@ void LiveWorkspace::Impl::showStandbyState() {
     detected_tempo->setText(LiveWorkspace::tr("Waiting for audio…"));
     fps_readout->setText(LiveWorkspace::tr("— fps"));
     frame_readout->setText(LiveWorkspace::tr("No frame"));
-    monitor->setPixmap({});
-    monitor->setText(LiveWorkspace::tr("PROGRAM OUTPUT\nStandby"));
     freeze_button->setText(LiveWorkspace::tr("FREEZE"));
     blackout_button->setText(LiveWorkspace::tr("BLACKOUT"));
 }
 
 void LiveWorkspace::Impl::toggleOutput() {
-    if (stage.isVisible()) {
-        dismissOutput();
-        return;
+    if (presentation_active) {
+        q->setPresentationFullscreen(!stage.isFullScreen());
+    } else if (active) {
+        portable_fullscreen->setChecked(!stage.isFullScreen());
+    } else {
+        portable_fullscreen->setChecked(true);
+        setActive(true);
     }
-    if (!active) setActive(true);
-    showOutput();
+    output_button->setChecked(stage.isVisible() && stage.isFullScreen());
 }
 
 void LiveWorkspace::Impl::setFreeze(bool value) {
@@ -3103,25 +3377,12 @@ void LiveWorkspace::Impl::setBlackout(bool value) {
 void LiveWorkspace::Impl::updateOutputState() {
     stage.setFrozen(user_freeze);
     stage.setBlackout(user_blackout || safety_blackout);
-    if (user_blackout || safety_blackout) {
-        monitor->setPixmap({});
-        monitor->setText(safety_blackout && !user_blackout
-                             ? LiveWorkspace::tr("SAFETY BLACKOUT\nLast-good watchdog")
-                             : LiveWorkspace::tr("BLACKOUT"));
-    } else {
-        updateMonitor();
-    }
+
 }
 
-void LiveWorkspace::Impl::updateMonitor() {
-    if (last_image.isNull() || user_blackout || safety_blackout) return;
-    monitor->setText({});
-    monitor->setPixmap(QPixmap::fromImage(last_image).scaled(
-        monitor->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-}
-
-void LiveWorkspace::Impl::requestFrame() {
+void LiveWorkspace::Impl::requestFrame(bool force) {
     if (!realtimeActive() || (active && user_freeze)) return;
+    if (!force && !playback_running && !last_image.isNull()) return;
     if (active && document_revision_provider
         && document_revision_provider() != project_cache_revision) {
         // A new authored snapshot supersedes expensive work for the old one.
@@ -3189,16 +3450,13 @@ void LiveWorkspace::Impl::requestFrame() {
             std::string frame_error;
             const int frame_count = std::max(
                 1, pvt::effective_frame_count(project.canvas, &frame_error));
-            synchronized_frame = std::clamp(
-                static_cast<int>(std::floor(
-                    phase * static_cast<double>(frame_count))),
-                0, frame_count - 1);
+            synchronized_frame = presentation_frame_provider
+                ? std::max(0, presentation_frame_provider())
+                : std::clamp(static_cast<int>(std::floor(phase * frame_count)),
+                             0, frame_count - 1);
         }
     }
-    QSize output_size = stage.isVisible()
-        ? stage.outputPixelSize() : physical_widget_size(monitor);
-    output_size.setWidth(std::max(320, output_size.width()));
-    output_size.setHeight(std::max(180, output_size.height()));
+    const QSize output_size(project.canvas.width, project.canvas.height);
     const double selected = q->outputResolutionScale();
     const double resolution_scale = selected > 0.0 ? selected : adaptive_scale;
     pvt::FrameRenderOptions options = render_options_provider
@@ -3255,6 +3513,7 @@ void LiveWorkspace::Impl::frameFinished(
         return;
     }
     last_image = result.image;
+    ++delivered_frames;
     if (active && audio_snapshot.receiving && effectiveAudioClockReceiving()) {
         audio_frame_presented = true;
     }
@@ -3262,11 +3521,12 @@ void LiveWorkspace::Impl::frameFinished(
     render_failed = false;
     last_good_clock.restart();
     if (presentation_active || !user_freeze) stage.setFrame(result.image);
-    if (!user_blackout && !safety_blackout) updateMonitor();
-    frame_readout->setText(LiveWorkspace::tr("%1 × %2 · %3 ms · %4 dropped")
+    const auto missed_frames = pvt::display::missed_frame_deadlines(
+        frame_schedule_clock.nsecsElapsed(), scheduled_fps, delivered_frames);
+    frame_readout->setText(LiveWorkspace::tr("%1 × %2 · %3 ms · %4 missed deadlines")
                                .arg(result.image.width()).arg(result.image.height())
                                .arg(result.render_milliseconds, 0, 'f', 1)
-                               .arg(result.dropped_requests));
+                               .arg(missed_frames));
     if (!presented_frame_clock.isValid()) {
         presented_frame_clock.start();
         delivered_frame_rate.reset();
@@ -3305,11 +3565,15 @@ void LiveWorkspace::Impl::frameFinished(
             "Waiting for live audio; animation is using the project clock. Check the selected audio input and microphone permission."));
     }
     if (active) updateSafety();
+    if (!playback_running) render_lamp->setText(LiveWorkspace::tr("PAUSED"));
 }
 
 void LiveWorkspace::Impl::runtimeTick() {
-    if (!active) return;
+    if (!active && !audio_routing_enabled) return;
     audio_snapshot = audio.snapshot();
+    if (audio.is_running()) audio_route_status->setText(
+        LiveWorkspace::tr("Audio routing running · %1 buffer underruns/overruns")
+            .arg(audio_snapshot.callback_dropouts));
     audio_meter->setLevel(audio_snapshot.pre_gate_peak);
     audio_meter->setPeakWarning(
         audio_snapshot.pre_gate_peak >= kPeakWarningLinear);
@@ -3670,8 +3934,14 @@ void LiveWorkspace::Impl::addAudioStarterMappings() {
 
 void LiveWorkspace::Impl::addLogicalRole() {
     QDialog dialog(q);
-    dialog.setWindowTitle(LiveWorkspace::tr("Add Logical Live Role"));
+    dialog.setWindowTitle(LiveWorkspace::tr("Manage Live Roles"));
     auto* layout = new QFormLayout(&dialog);
+    auto* selection = new QComboBox;
+    selection->setObjectName(QStringLiteral("liveRoleSelection"));
+    selection->addItem(LiveWorkspace::tr("New role"), QString{});
+    for (const auto& endpoint : config.endpoints)
+        selection->addItem(qtext(endpoint.name), qtext(endpoint.uuid));
+    layout->addRow(LiveWorkspace::tr("Role"), selection);
     auto* name = new QLineEdit(LiveWorkspace::tr("Live control"));
     auto* protocol = new QComboBox;
     protocol->addItem(LiveWorkspace::tr("Audio"), static_cast<int>(pvt::LiveEndpointProtocol::Audio));
@@ -3692,15 +3962,52 @@ void LiveWorkspace::Impl::addLogicalRole() {
     layout->addRow(LiveWorkspace::tr("Direction"), direction);
     layout->addRow(note);
     layout->addRow(buttons);
+    auto* remove = buttons->addButton(LiveWorkspace::tr("Remove"), QDialogButtonBox::DestructiveRole);
+    remove->setEnabled(false);
+    bool remove_role = false;
+    QObject::connect(selection, qOverload<int>(&QComboBox::currentIndexChanged), &dialog, [&] {
+        const int row = selection->currentIndex() - 1;
+        const bool existing = row >= 0;
+        remove->setEnabled(existing);
+        protocol->setEnabled(!existing);
+        direction->setEnabled(!existing);
+        if (existing) {
+            const auto& endpoint = config.endpoints[static_cast<std::size_t>(row)];
+            name->setText(qtext(endpoint.name));
+            protocol->setCurrentIndex(protocol->findData(static_cast<int>(endpoint.protocol)));
+            direction->setCurrentIndex(direction->findData(static_cast<int>(endpoint.direction)));
+        }
+    });
+    QObject::connect(remove, &QPushButton::clicked, &dialog, [&] { remove_role = true; dialog.accept(); });
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     if (dialog.exec() != QDialog::Accepted || name->text().trimmed().isEmpty()) return;
+    pvt::LiveConfig next = config;
+    const int existing = selection->currentIndex() - 1;
+    if (existing >= 0) {
+        auto& endpoint = next.endpoints[static_cast<std::size_t>(existing)];
+        if (remove_role) {
+            const std::string uuid = endpoint.uuid;
+            const QString binding = QSettings().value(endpoint_key(uuid, QStringLiteral("audioDevice"))).toString();
+            if (!binding.isEmpty()) QSettings().setValue(QStringLiteral("live/ignoredAutoRoles/") + binding, true);
+            const auto remove_references = [&](auto& items) {
+                items.erase(std::remove_if(items.begin(), items.end(), [&](const auto& item) {
+                    return item.endpoint_uuid == uuid;
+                }), items.end());
+            };
+            remove_references(next.clock_inputs);
+            remove_references(next.midi_clock_outputs);
+            remove_references(next.mappings);
+            next.endpoints.erase(next.endpoints.begin() + existing);
+        } else endpoint.name = narrow(name->text().trimmed());
+        commitConfig(std::move(next), remove_role ? LiveWorkspace::tr("Remove live role") : LiveWorkspace::tr("Rename live role"));
+        return;
+    }
     pvt::LiveEndpointConfig role;
     role.uuid = narrow(uuid_text());
     role.name = narrow(name->text().trimmed());
     role.protocol = static_cast<pvt::LiveEndpointProtocol>(protocol->currentData().toInt());
     role.direction = static_cast<pvt::LiveEndpointDirection>(direction->currentData().toInt());
-    pvt::LiveConfig next = config;
     const std::string role_uuid = role.uuid;
     const bool infer_audio_clock =
         role.protocol == pvt::LiveEndpointProtocol::Audio
@@ -4421,6 +4728,10 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
         config.scenes.begin(), config.scenes.end(),
         [&uuid](const pvt::LiveSceneConfig& scene) { return scene.uuid == uuid; });
     if (found == config.scenes.end()) return;
+    if (!active) {
+        emit q->runtimeStatusChanged(LiveWorkspace::tr("Start video output to apply a saved look."));
+        return;
+    }
     refreshMorph();
     pvt::ProjectConfig current = runtimeProject();
     const auto registry = buildLiveTargetRegistry(current);
@@ -5023,6 +5334,9 @@ LiveWorkspace::LiveWorkspace(ProjectSnapshotProvider projectProvider,
 LiveWorkspace::~LiveWorkspace() = default;
 
 void LiveWorkspace::setProjectLiveConfig(const pvt::LiveConfig& config) {
+    const bool window_policy_changed = impl_->config.output.fullscreen != config.output.fullscreen
+        || impl_->config.output.hide_cursor != config.output.hide_cursor
+        || impl_->config.output.prefer_secondary_display != config.output.prefer_secondary_display;
     const bool outputs_changed = clock_output_signature(impl_->config)
         != clock_output_signature(config);
     const bool endpoints_changed = endpoint_structure_signature(impl_->config)
@@ -5040,7 +5354,7 @@ void LiveWorkspace::setProjectLiveConfig(const pvt::LiveConfig& config) {
         }
     }
     impl_->refreshRuntimeRouting();
-    if (impl_->stage.isVisible()) impl_->applyVisibleOutputPolicy();
+    if (window_policy_changed && impl_->stage.isVisible()) impl_->applyVisibleOutputPolicy();
 }
 
 void LiveWorkspace::refreshProjectSnapshot() {
@@ -5057,7 +5371,7 @@ void LiveWorkspace::refreshProjectSnapshot() {
             : (impl_->project_provider
                    ? impl_->project_provider() : pvt::default_project());
         impl_->restartFrameSchedule(project.canvas.fps);
-        impl_->requestFrame();
+        impl_->requestFrame(true);
     }
 }
 
@@ -5093,7 +5407,7 @@ bool LiveWorkspace::isRealtimeOutputActive() const noexcept {
 }
 
 void LiveWorkspace::requestRealtimeFrame() {
-    if (impl_->realtimeActive()) impl_->requestFrame();
+    if (impl_->realtimeActive()) impl_->requestFrame(true);
 }
 
 void LiveWorkspace::resetRealtimeFrame() {
@@ -5150,13 +5464,13 @@ void LiveWorkspace::setSelectedOutputDisplayId(const QString& id) {
     ++impl_->render_generation;
     impl_->renderer.cancelCurrent();
     if (impl_->stage.isVisible()) impl_->applyVisibleOutputPolicy();
-    if (impl_->realtimeActive()) impl_->requestFrame();
+    if (impl_->realtimeActive()) impl_->requestFrame(true);
     emit runtimeOutputSettingsChanged();
 }
 
 double LiveWorkspace::outputResolutionScale() const {
     const double stored = QSettings().value(
-        QStringLiteral("live/resolutionScale"), 0.0).toDouble();
+        QStringLiteral("live/resolutionScale"), 1.0).toDouble();
     for (const double allowed : {0.0, 0.25, 0.5, 0.75, 1.0}) {
         if (std::abs(stored - allowed) <= 1.0e-9) return allowed;
     }
@@ -5180,7 +5494,7 @@ void LiveWorkspace::setOutputResolutionScale(double scale) {
     impl_->adaptive_scale = 1.0;
     ++impl_->render_generation;
     impl_->renderer.cancelCurrent();
-    if (impl_->realtimeActive()) impl_->requestFrame();
+    if (impl_->realtimeActive()) impl_->requestFrame(true);
     emit runtimeOutputSettingsChanged();
 }
 
@@ -5196,12 +5510,15 @@ LiveWorkspace::availableAudioInputs() const {
                 : qtext(device.display_name),
             qtext(device.runtime_id), device.is_default});
     }
+    if (impl_->clock_audio_provider) for (const auto& source : impl_->clock_audio_provider())
+        choices.push_back({source.label + tr(" · looping file"), source.id, false});
     return choices;
 }
 
 void LiveWorkspace::refreshAudioInputs() {
+    impl_->auto_audio_roles = true;
     impl_->refreshDevices();
-    impl_->restartAudio();
+    impl_->ensureAudioRoles();
 }
 
 QString LiveWorkspace::audioInputBinding(const std::string& roleUuid) const {
@@ -5213,6 +5530,8 @@ QString LiveWorkspace::audioInputBindingLabel(
     const std::string& roleUuid) const {
     const QString binding = audioInputBinding(roleUuid);
     if (binding.isEmpty()) return tr("System default");
+    if (impl_->clock_audio_provider) for (const auto& source : impl_->clock_audio_provider())
+        if (source.id == binding) return source.label + tr(" · looping file");
     const auto match = pvt::audio::find_live_audio_device(
         impl_->audio_devices, narrow(binding));
     if (match.has_value()) {
@@ -5227,6 +5546,8 @@ QString LiveWorkspace::audioInputBindingLabel(
 bool LiveWorkspace::audioInputBindingAvailable(
     const std::string& roleUuid) const {
     const QString binding = audioInputBinding(roleUuid);
+    if (impl_->clock_audio_provider) for (const auto& source : impl_->clock_audio_provider())
+        if (source.id == binding) return true;
     return binding.isEmpty()
         || pvt::audio::find_live_audio_device(
                impl_->audio_devices, narrow(binding)).has_value();
@@ -5314,4 +5635,28 @@ void LiveWorkspace::setPresentationHideCursor(bool hide) {
         impl_->applyVisibleOutputPolicy();
     }
     emit runtimeOutputSettingsChanged();
+}
+
+void LiveWorkspace::setPlaybackRunning(bool running) {
+    impl_->playback_running = running;
+    if (running) {
+        impl_->delivered_frames = 0U;
+        impl_->restartFrameSchedule(impl_->scheduled_fps);
+        impl_->requestFrame(true);
+    } else {
+        impl_->render_timer.stop();
+        impl_->renderer.cancelCurrent();
+        impl_->render_lamp->setText(tr("PAUSED"));
+    }
+}
+
+void LiveWorkspace::setClockAudioProvider(ClockAudioProvider provider) {
+    impl_->clock_audio_provider = std::move(provider);
+    impl_->refreshAudioRouting();
+}
+
+void LiveWorkspace::setOutputStartingEnabled(bool enabled) {
+    impl_->output_starting_enabled = enabled;
+    impl_->live_button->setEnabled(enabled || impl_->active);
+    impl_->output_button->setEnabled(enabled || impl_->realtimeActive());
 }

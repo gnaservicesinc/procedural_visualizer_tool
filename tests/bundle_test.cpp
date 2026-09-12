@@ -2080,6 +2080,59 @@ void test_render_output_codec_backward_compatibility() {
         analysis, analysis_round_trip, &error));
     CHECK(analysis_round_trip.source_sha256 == std::string(64U, 'b'));
     CHECK(analysis_round_trip.feature_samples.size() == 2U);
+
+    // Music-analysis v1 shipped before input processing and named frequency
+    // streams. Their absence is a normal migration, not damage that should
+    // make the compatibility warning return after every no-change Save.
+    std::istringstream current_analysis_input(analysis);
+    std::ostringstream version_one_analysis_output;
+    std::string analysis_line;
+    CHECK(static_cast<bool>(
+        std::getline(current_analysis_input, analysis_line)));
+    version_one_analysis_output << "PVT_MUSIC_ANALYSIS\t1\n";
+    while (std::getline(current_analysis_input, analysis_line)) {
+        const std::string key =
+            analysis_line.substr(0U, analysis_line.find('\t'));
+        if (key.rfind("timing.music.input_processing.", 0U) != 0U
+            && key.rfind("timing.music.frequency_streams.", 0U) != 0U) {
+            version_one_analysis_output << analysis_line << '\n';
+        }
+    }
+    pvt::MusicAnalysis version_one_analysis;
+    CHECK(pvt::detail::deserialize_music_analysis_config(
+        version_one_analysis_output.str(), version_one_analysis, &error));
+    CHECK(version_one_analysis.compatibility.records.empty());
+    CHECK(version_one_analysis.compatibility.repair_notes.empty());
+    CHECK(version_one_analysis.frequency_streams.empty());
+    CHECK(!version_one_analysis.input_processing.high_pass_enabled);
+    CHECK(version_one_analysis.input_processing.equalizer_bands.size()
+          == pvt::AudioInputProcessingConfig{}.equalizer_bands.size());
+    CHECK(version_one_analysis.input_processing.music_onset_detection
+          == pvt::MusicOnsetDetection::Hybrid);
+
+    // The current format does promise those fields. A missing v2 record must
+    // therefore remain visible as a real repair rather than being silently
+    // treated like the v1 migration above.
+    std::string damaged_version_two_analysis = analysis;
+    const std::string stream_count_record =
+        "timing.music.frequency_streams.count\t1\n";
+    const std::size_t stream_count_position =
+        damaged_version_two_analysis.find(stream_count_record);
+    CHECK(stream_count_position != std::string::npos);
+    if (stream_count_position != std::string::npos) {
+        damaged_version_two_analysis.erase(
+            stream_count_position, stream_count_record.size());
+    }
+    pvt::MusicAnalysis damaged_version_two;
+    CHECK(pvt::detail::deserialize_music_analysis_config(
+        damaged_version_two_analysis, damaged_version_two, &error));
+    CHECK(std::any_of(
+        damaged_version_two.compatibility.repair_notes.begin(),
+        damaged_version_two.compatibility.repair_notes.end(),
+        [](const std::string& note) {
+            return note.find("timing.music.frequency_streams.count")
+                   != std::string::npos;
+        }));
     const std::string malformed_analysis =
         analysis + "output.filename_prefix\twrong-block\n";
     analysis_round_trip.source_basename = "unchanged.wav";

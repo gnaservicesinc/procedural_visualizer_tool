@@ -44,6 +44,14 @@ public:
         bool is_default_device = false;
     };
 
+    struct ClockAudioSource {
+        QString id;
+        QString label;
+        QString path;
+    };
+    using ClockAudioProvider = std::function<QVector<ClockAudioSource>()>;
+    void setClockAudioProvider(ClockAudioProvider provider);
+
     explicit LiveWorkspace(ProjectSnapshotProvider projectProvider,
                            ProjectSnapshotProvider presentationProjectProvider,
                            PresentationFrameProvider presentationFrameProvider,
@@ -80,6 +88,8 @@ public:
     bool isRealtimeOutputActive() const noexcept;
     void requestRealtimeFrame();
     void resetRealtimeFrame();
+    void setPlaybackRunning(bool running);
+    void setOutputStartingEnabled(bool enabled);
 
     // Display and resolution quality are machine-local and shared by the
     // presentation and performance output surfaces. They are never serialized
@@ -108,6 +118,7 @@ public:
 
 signals:
     void requestEditMode();
+    void requestTogglePlayback();
     void runtimeStatusChanged(const QString& summary);
     void livePreviewFrame(const QImage& image);
     void runtimeOutputSettingsChanged();
