@@ -8402,7 +8402,14 @@ void MainWindow::showParameterLfoEditor(const QString& requested_target) {
         pvt::ParameterLfo lfo;
         lfo.id = id;
         lfo.target_path = choice.path.toStdString();
-        if (choice.minimum == 0.0 && choice.maximum == 1.0) {
+        if (choice.path == QStringLiteral("block_size")) {
+            // Default animation must not opt into subpixel supersampling or
+            // BLACKOUT. Keep those values available for deliberate editing.
+            const double current = std::clamp(choice.current, 1.0, choice.maximum);
+            const double radius = std::max(1.0, current * 0.5);
+            lfo.minimum = std::clamp(current - radius, 1.0, choice.maximum);
+            lfo.maximum = std::clamp(current + radius, 1.0, choice.maximum);
+        } else if (choice.minimum == 0.0 && choice.maximum == 1.0) {
             lfo.minimum = 0.0;
             lfo.maximum = 1.0;
         } else {
@@ -21878,6 +21885,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
             } else if (operation == 3) {
                 remove->click();
                 inspected = list->count() == 0;
+            } else if (operation == 4) {
+                // Unsafe for defaults, but valid when deliberately authored.
+                minimum->setValue(0.0);
+                maximum->setValue(0.5);
             }
             buttons->button(QDialogButtonBox::Ok)->click();
         });
@@ -21927,6 +21938,42 @@ bool MainWindow::runSmokeChecks(QString* error) {
         block_lfo_valid = block_lfo_valid && config_.parameter_lfos.size() == 1U
             && config_.parameter_lfos.front().id == id;
     }
+    // Exercise the real shortcut at and around supersampling/BLACKOUT, not
+    // only the ordinary eight-pixel case above.
+    const auto check_block_lfo_defaults = [&](double block, int extent,
+                                              double low, double high) {
+        for (auto& project_layer : project_.layers) project_layer.render.parameter_lfos.clear();
+        project_.canvas.width = extent;
+        project_.canvas.height = extent;
+        project_.canvas.block_size = block;
+        loadActiveConfiguration();
+        refreshAll();
+        clearUndoHistory(false);
+        if (!exercise_block_lfo(true, 0) || config_.parameter_lfos.size() != 1U) return false;
+        const auto& lfo = config_.parameter_lfos.front();
+        if (lfo.minimum != low || lfo.maximum != high || config_.block_size != block) return false;
+        undo_stack_->undo();
+        if (!config_.parameter_lfos.empty() || config_.block_size != block) return false;
+        undo_stack_->redo();
+        return config_.parameter_lfos.size() == 1U
+            && config_.parameter_lfos.front().minimum == low
+            && config_.parameter_lfos.front().maximum == high;
+    };
+    for (double block : {0.0, 0.25, 1.0}) {
+        block_lfo_valid = check_block_lfo_defaults(block, 64, 1.0, 2.0) && block_lfo_valid;
+    }
+    block_lfo_valid = check_block_lfo_defaults(1.5, 64, 1.0, 2.5) && block_lfo_valid;
+    block_lfo_valid = check_block_lfo_defaults(2.0, 64, 1.0, 3.0) && block_lfo_valid;
+    block_lfo_valid = check_block_lfo_defaults(64.0, 64, 32.0, 64.0) && block_lfo_valid;
+    block_lfo_valid = check_block_lfo_defaults(1.0, 1, 1.0, 1.0) && block_lfo_valid;
+    block_lfo_valid = check_block_lfo_defaults(1.0, 64, 1.0, 2.0) && block_lfo_valid;
+    block_lfo_valid = exercise_block_lfo(false, 4) && block_lfo_valid;
+    const auto authored_block_lfos = config_.parameter_lfos;
+    block_lfo_valid = exercise_block_lfo(true, 0) && block_lfo_valid
+        && config_.parameter_lfos.size() == 1U && authored_block_lfos.size() == 1U
+        && config_.parameter_lfos.front().minimum == 0.0
+        && config_.parameter_lfos.front().maximum == 0.5
+        && config_.parameter_lfos.front().id == authored_block_lfos.front().id;
     // Older project-wide animation becomes ordinary LFOs on every layer.
     for (auto& project_layer : project_.layers) project_layer.render.parameter_lfos.clear();
     project_.canvas.block_size_modulation.lfo_enabled = true;

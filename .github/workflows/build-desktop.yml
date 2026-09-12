@@ -544,6 +544,8 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 19.1.1 fixes the default range created by Add LFO beside Block size. New LFOs use the current block size with a minimum of one pixel, avoiding unintended subpixel supersampling and BLACKOUT. A one-pixel block starts at 1–2; an eight-pixel block starts at 4–12. Existing LFOs remain unchanged, and zero/subpixel ranges remain available for deliberate editing. Regression checks exercise the button at zero, subpixel, one-pixel, fractional and canvas-limit values, including undo/redo and preservation of custom ranges.
+
           Version 19.1.0 adds Add LFO beside Block size. It creates a normal numeric LFO that appears in the existing LFO editor for editing and removal, with undo support. Existing block-size oscillators migrate into that shared workflow. Block-size modulation works across CPU, Metal, and OpenGL rendering, including BLACKOUT and scaled previews. This release also fixes portable initialization of the migration defaults so macOS and both Windows architectures build successfully.
 
           Version 19.0.1 fixes Live Controls getting stuck at STARTING when an audio input is unavailable before the first frame. Animation now follows the project clock while waiting for input, with a visible WAITING FOR AUDIO status. After input is established, the authored dropout protection still applies; explicit Blackout remains available. Startup, stop, restart, and advancing output are covered by a workspace regression, including the supplied Wood project.

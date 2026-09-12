@@ -6,6 +6,22 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 19.1.1 safe Block size LFO creation defaults
+
+The shared numeric-LFO creation path now seeds Block size ranges at or above one
+pixel, relative to the current size and bounded by the canvas extent. This
+avoids creating an LFO that enters subpixel supersampling or BLACKOUT by default.
+For current sizes zero, subpixel or one, the initial range is 1–2; size eight
+still produces 4–12. A one-pixel canvas uses 1–1. Existing authored LFOs and the
+editor's explicit zero/subpixel range support are preserved.
+
+The GUI smoke regression clicks the actual shortcut at zero, subpixel, one,
+fractional and canvas-limit sizes; it checks authored fallback preservation,
+creation undo/redo, and reopening a deliberately authored 0–0.5 range unchanged.
+The fresh macOS Release build passed 46/46 CTests, including en/de/fr GUI smoke,
+Metal and OpenGL tests. The 19.1.1 distribution verifier passed 50 Mach-O files;
+deep signature verification and the packaged CLI version/self-test passed.
+
 ## 19.1.0 shared block-size LFO authoring
 
 Add LFO beside Block size creates a normal numeric LFO in the existing editor,
