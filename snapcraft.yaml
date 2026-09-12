@@ -1,7 +1,7 @@
 name: procedural-visualizer-tool
 title: Procedural Visualizer Tool
 adopt-info: procedural-visualizer-tool
-base: core24
+base: core26
 summary: Create seamless looping procedural animations
 description: |
   Procedural Visualizer Tool is a layered Qt editor and renderer for seamless
