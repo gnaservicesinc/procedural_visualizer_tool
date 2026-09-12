@@ -241,17 +241,25 @@ jobs:
         shell: pwsh
         run: |
           $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
-          cmake -S . -B build -G "Visual Studio 17 2022" `
-            -A "${{ matrix.cmake-arch }}" -T ClangCL `
-            -DCMAKE_PREFIX_PATH="$env:QT_ROOT" `
-            -DQT_HOST_PATH="$qtHostPath" `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
-            -DVCPKG_TARGET_TRIPLET="${{ matrix.vcpkg-triplet }}" `
-            -DPVT_BUILD_CLI=ON `
-            -DPVT_BUILD_QT_GUI=ON `
-            -DPVT_DEPLOY_QT_RUNTIME=ON `
-            -DPVT_ENABLE_METAL=OFF `
-            -DBUILD_TESTING=ON
+          $cmakeArgs = @(
+            '-S', '.', '-B', 'build', '-G', 'Visual Studio 17 2022',
+            '-A', '${{ matrix.cmake-arch }}',
+            "-DCMAKE_PREFIX_PATH=$env:QT_ROOT",
+            "-DQT_HOST_PATH=$qtHostPath",
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake",
+            '-DVCPKG_TARGET_TRIPLET=${{ matrix.vcpkg-triplet }}',
+            '-DPVT_BUILD_CLI=ON', '-DPVT_BUILD_QT_GUI=ON',
+            '-DPVT_DEPLOY_QT_RUNTIME=ON', '-DPVT_ENABLE_METAL=OFF',
+            '-DBUILD_TESTING=ON'
+          )
+          # Clang 19.1's Windows-ARM64 backend can fail with an empty
+          # assembler-label diagnostic while compiling valid C++. Keep its
+          # stricter coverage on x64, but use the installed MSVC ARM64 toolset
+          # until the hosted Clang toolchain contains the upstream repair.
+          if ('${{ matrix.cmake-arch }}' -ne 'ARM64') {
+            $cmakeArgs += @('-T', 'ClangCL')
+          }
+          cmake @cmakeArgs
 
       - name: Configure macOS arm64 build
         if: runner.os == 'macOS'
