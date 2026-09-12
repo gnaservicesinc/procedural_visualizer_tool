@@ -272,6 +272,7 @@ private:
     bool setPlaneDisplacementSource(const QString& sourcePath);
     bool setEnvironmentMapSource(const QString& sourcePath);
     void exportPlaneDisplacementObj();
+    bool startPlaneDisplacementObjExport(const QString& destination);
     bool setStartingImageSource(const QString& sourcePath);
     QString activeProjectLocation() const;
     void showProjectInFileBrowser();

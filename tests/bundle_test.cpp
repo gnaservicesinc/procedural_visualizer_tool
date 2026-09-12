@@ -10,6 +10,7 @@
 #include "mz_zip_rw.h"
 
 #include <algorithm>
+#include <future>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
@@ -309,6 +310,57 @@ bool write_test_zip(const fs::path& path,
     }
 #endif
     return ok;
+}
+
+void test_attachment_cache_lifetimes(const fs::path& root) {
+    const auto source = root / "cache-lifetime.bin";
+    CHECK(write_bytes(source, "initial asset"));
+    auto document = pvt::default_project_document();
+    std::string error;
+    CHECK(pvt::attach_project_file(document, "test.asset", as_utf8(source), nullptr, &error));
+    const auto original = pvt::project_attachment_path(document, "test.asset");
+    const auto cache_directory = pvt::detail::path_from_utf8(original).parent_path();
+    {
+        auto undo = document;
+        CHECK(pvt::detach_project_file(document, "test.asset", &error));
+        CHECK(fs::exists(pvt::detail::path_from_utf8(original)));
+        CHECK(read_bytes(pvt::detail::path_from_utf8(original)) == "initial asset");
+        // Independent snapshots importing identical bytes share one installed
+        // file even when both writers reach the directory concurrently.
+        CHECK(write_bytes(source, std::string(1024U * 1024U, 'x')));
+        auto first = std::async(std::launch::async, [undo, source]() mutable {
+            std::string message;
+            if (!pvt::attach_project_file(undo, "test.asset", as_utf8(source), nullptr, &message))
+                throw std::runtime_error(message);
+            return undo;
+        });
+        auto second = std::async(std::launch::async, [undo, source]() mutable {
+            std::string message;
+            if (!pvt::attach_project_file(undo, "test.asset", as_utf8(source), nullptr, &message))
+                throw std::runtime_error(message);
+            return undo;
+        });
+        auto one = first.get();
+        auto two = second.get();
+        CHECK(pvt::project_attachment_path(one, "test.asset")
+              == pvt::project_attachment_path(two, "test.asset"));
+        CHECK(pvt::project_attachment_path(undo, "test.asset") == original);
+        document = one;
+    }
+    CHECK(!fs::exists(pvt::detail::path_from_utf8(original)));
+    for (int index = 0; index < 12; ++index) {
+        CHECK(write_bytes(source, "replacement " + std::to_string(index)));
+        CHECK(pvt::attach_project_file(document, "test.asset", as_utf8(source), nullptr, &error));
+        CHECK(std::distance(fs::directory_iterator(cache_directory), fs::directory_iterator{}) == 1);
+    }
+    CHECK(pvt::attach_project_file(document, "test.alias", as_utf8(source), nullptr, &error));
+    const auto alias = pvt::project_attachment_path(document, "test.alias");
+    CHECK(pvt::detach_project_file(document, "test.asset", &error));
+    CHECK(fs::exists(pvt::detail::path_from_utf8(alias)));
+    CHECK(pvt::detach_project_file(document, "test.alias", &error));
+    CHECK(fs::is_empty(cache_directory));
+    document = {};
+    CHECK(!fs::exists(cache_directory));
 }
 
 void test_layer_codec_backward_compatibility() {
@@ -4349,6 +4401,7 @@ int main() {
     TemporaryDirectory temporary;
     test_raw_config_rejects_incomplete_input();
     test_binary_save_preserves_unknown_fields(temporary.path());
+    test_attachment_cache_lifetimes(temporary.path());
     test_layer_codec_backward_compatibility();
     test_particle_workload_canvas_and_project_boundaries();
     test_aggregate_particle_bundle_recovery(temporary.path());

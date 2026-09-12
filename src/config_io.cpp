@@ -116,7 +116,7 @@ static_assert(kSetupFormatVersion == 27U,
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
-using Records = std::map<std::string, std::string>;
+using Records = std::map<std::string, std::string, std::less<>>;
 
 bool starts_with(std::string_view text, std::string_view prefix) {
     return text.size() >= prefix.size()
@@ -521,7 +521,7 @@ bool read_setup_file(const std::string& path, std::string& contents, std::string
 }
 
 bool take_record(Records& records,
-                 const std::string& key,
+                 std::string_view key,
                  std::string& value,
                  std::string* error) {
     const auto found = records.find(key);
@@ -562,11 +562,22 @@ bool parse_double_exact(std::string_view text, double& destination) {
         && numeric_locale->decimal_point[0] == '.'
         && numeric_locale->decimal_point[1] == '\0'
         && !std::isspace(static_cast<unsigned char>(text.front()))) {
-        const std::string terminated(text);
+        // Ordinary serialized doubles fit on the stack. Keep the old fallback
+        // for unusually long accepted spellings without imposing a new limit.
+        std::array<char, 128U> buffer;
+        std::string long_text;
+        const char* terminated = buffer.data();
+        if (text.size() < buffer.size()) {
+            std::copy(text.begin(), text.end(), buffer.begin());
+            buffer[text.size()] = '\0';
+        } else {
+            long_text.assign(text);
+            terminated = long_text.c_str();
+        }
         char* end = nullptr;
         errno = 0;
-        const double fast_parsed = std::strtod(terminated.c_str(), &end);
-        if (errno != ERANGE && end == terminated.c_str() + terminated.size()
+        const double fast_parsed = std::strtod(terminated, &end);
+        if (errno != ERANGE && end == terminated + text.size()
             && std::isfinite(fast_parsed)) {
             destination = fast_parsed;
             return true;
@@ -678,7 +689,7 @@ bool percent_encode(std::string_view decoded, std::string& encoded) {
 
 template <typename Integer>
 bool consume_integer(Records& records,
-                     const std::string& key,
+                     std::string_view key,
                      Integer& destination,
                      std::string* error) {
     std::string value;
@@ -692,7 +703,7 @@ bool consume_integer(Records& records,
 }
 
 bool consume_double(Records& records,
-                    const std::string& key,
+                    std::string_view key,
                     double& destination,
                     std::string* error) {
     std::string value;
@@ -706,7 +717,7 @@ bool consume_double(Records& records,
 }
 
 bool consume_bool(Records& records,
-                  const std::string& key,
+                  std::string_view key,
                   bool& destination,
                   std::string* error) {
     std::string value;
@@ -720,7 +731,7 @@ bool consume_bool(Records& records,
 }
 
 bool consume_string(Records& records,
-                    const std::string& key,
+                    std::string_view key,
                     std::string& destination,
                     std::string* error) {
     std::string value;
@@ -736,7 +747,7 @@ bool consume_string(Records& records,
 }
 
 bool consume_bounded_string(Records& records,
-                            const std::string& key,
+                            std::string_view key,
                             std::size_t maximum,
                             std::string& destination,
                             std::string* error) {
@@ -753,7 +764,7 @@ bool consume_bounded_string(Records& records,
 }
 
 bool consume_float(Records& records,
-                   const std::string& key,
+                   std::string_view key,
                    float& destination,
                    std::string* error) {
     double value = 0.0;
@@ -783,7 +794,7 @@ bool is_lowercase_sha256(std::string_view digest) {
 
 template <typename Enum, std::size_t Count>
 bool consume_enum(Records& records,
-                  const std::string& key,
+                  std::string_view key,
                   Enum& destination,
                   const std::array<std::pair<std::string_view, Enum>, Count>& values,
                   std::string* error) {
@@ -803,7 +814,7 @@ bool consume_enum(Records& records,
 template <typename Enum, std::size_t Count>
 bool consume_optional_enum(
     Records& records,
-    const std::string& key,
+    std::string_view key,
     Enum& destination,
     Enum default_value,
     const std::array<std::pair<std::string_view, Enum>, Count>& values,
@@ -829,7 +840,7 @@ bool consume_optional_enum(
 }
 
 bool consume_optional_bool(Records& records,
-                           const std::string& key,
+                           std::string_view key,
                            bool& destination,
                            bool default_value,
                            std::string* error) {
@@ -854,7 +865,7 @@ bool consume_optional_bool(Records& records,
 }
 
 bool consume_count(Records& records,
-                   const std::string& key,
+                   std::string_view key,
                    std::size_t maximum,
                    std::size_t& destination,
                    std::string* error) {
@@ -3042,7 +3053,7 @@ private:
     bool ok_ = true;
 };
 
-bool consume_flag_bank(Records&, const std::string&, std::uint32_t&,
+bool consume_flag_bank(Records&, std::string_view, std::uint32_t&,
                        std::uint32_t, unsigned, std::string*) {
     return true;
 }
@@ -3051,7 +3062,7 @@ bool consume_flag_bank(Records&, const std::string&, std::uint32_t&,
 // to bool&, so the text compatibility reader commits the parsed value through
 // a tiny setter instead of materializing a bool member in the configuration.
 template <typename Reader, typename Setter>
-bool consume_packed_bool(Reader& source, const std::string& key,
+bool consume_packed_bool(Reader& source, std::string_view key,
                          Setter&& setter, std::string* error) {
     bool value = false;
     if (!consume_bool(source, key, value, error)) return false;
@@ -3060,7 +3071,7 @@ bool consume_packed_bool(Reader& source, const std::string& key,
 }
 
 template <typename Reader, typename Setter>
-bool consume_optional_packed_bool(Reader& source, const std::string& key,
+bool consume_optional_packed_bool(Reader& source, std::string_view key,
                                   Setter&& setter, bool default_value,
                                   std::string* error) {
     bool value = default_value;

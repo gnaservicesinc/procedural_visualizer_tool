@@ -111,11 +111,13 @@ int main() {
         group.enabled = false;
         project.groups.push_back(group);
         project.layers.back().group_uuid = group.uuid;
+        project.canvas.block_size = 0.0;
         pvt::Image disabled;
         require(pvt::render_project_frame(project, 0, disabled, nullptr, &error),
                 error.c_str());
         require(image_lifetime.expired() && height_lifetime.expired()
                     && mesh_lifetime.expired(), "disabled group retained decoded assets");
+        project.canvas.block_size = 1.0;
         require(project.layers.front().render.starting_image.path == path,
                 "pruning changed an authored source path");
 

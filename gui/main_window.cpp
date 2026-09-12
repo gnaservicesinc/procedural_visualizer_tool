@@ -558,11 +558,12 @@ double particle_radius_from_slider(int position) {
 }
 
 int particle_slider_from_radius(double radius) {
+    static const double logarithmic_range = std::log(
+        kParticleSizeSliderMaximum / kParticleSizeSliderMinimum);
     const double clamped = std::clamp(
         radius, kParticleSizeSliderMinimum, kParticleSizeSliderMaximum);
     const double unit = std::log(clamped / kParticleSizeSliderMinimum)
-                        / std::log(kParticleSizeSliderMaximum
-                                   / kParticleSizeSliderMinimum);
+                        / logarithmic_range;
     return static_cast<int>(std::llround(
         unit * static_cast<double>(kParticleSizeSliderSteps)));
 }
@@ -653,19 +654,19 @@ bool write_video_concat_script(const QString& script_path,
         return false;
     }
     const QByteArray bytes = script.toUtf8();
-    if (output.write(bytes) != bytes.size() || !output.commit()) {
+    if (output.write(bytes) != bytes.size()
+        || !output.setPermissions(
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                | QFileDevice::ExeOwner | QFileDevice::ReadGroup
+                | QFileDevice::ExeGroup | QFileDevice::ReadOther
+                | QFileDevice::ExeOther)
+        || !output.commit()) {
         if (error != nullptr) {
             *error = QObject::tr("Could not atomically write concat script %1: %2")
                          .arg(script_path, output.errorString());
         }
         return false;
     }
-    QFile::setPermissions(
-        script_path,
-        QFileDevice::ReadOwner | QFileDevice::WriteOwner
-            | QFileDevice::ExeOwner | QFileDevice::ReadGroup
-            | QFileDevice::ExeGroup | QFileDevice::ReadOther
-            | QFileDevice::ExeOther);
     return true;
 }
 
@@ -761,7 +762,10 @@ bool valid_text(const QString& value, TextRule rule) {
         || (!is_name && !is_optional_path && utf8.isEmpty()) || size > maximum) {
         return false;
     }
-    for (const char32_t code_point : value.toUcs4()) {
+    // All forbidden code points are in the BMP; UTF-16 code units suffice.
+    // Retain the UTF-8 conversion above to enforce the persisted byte limit.
+    for (const QChar character : value) {
+        const auto code_point = character.unicode();
         if ((code_point < 0x20U
              && (!is_name || code_point != static_cast<char32_t>('\t')
                  || is_project_name))
@@ -3063,6 +3067,7 @@ MainWindow::~MainWindow() {
     music_analysis_watcher_->waitForFinished();
     export_watcher_->waitForFinished();
     project_io_watcher_->waitForFinished();
+    version_diff_watcher_->waitForFinished();
 }
 
 QWidget* MainWindow::createWorkflowNavigator() {
@@ -12085,86 +12090,114 @@ void MainWindow::exportPlaneDisplacementObj() {
     }
     rememberDialogLocation(destination);
 
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    std::shared_ptr<const pvt::detail::ObjMesh> mesh;
-    std::string mesh_error;
-    const bool loaded = pvt::detail::load_displacement_plane_mesh(
-        displacement, config_.width, config_.height, mesh, nullptr,
-        &mesh_error);
-    if (!loaded || !mesh) {
-        QApplication::restoreOverrideCursor();
-        QMessageBox::critical(
-            this, tr("Could not build displacement plane"),
-            QString::fromStdString(mesh_error));
-        return;
-    }
+    startPlaneDisplacementObjExport(destination);
+}
 
-    QSaveFile file(destination);
-    file.setDirectWriteFallback(false);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QApplication::restoreOverrideCursor();
-        QMessageBox::critical(
-            this, tr("Could not export OBJ"), file.errorString());
-        return;
+bool MainWindow::startPlaneDisplacementObjExport(const QString& destination) {
+    if (export_active_ || project_io_active_ || music_analysis_active_
+        || (live_workspace_ && live_workspace_->isRealtimeOutputActive())) {
+        return false;
     }
-    QTextStream stream(&file);
-    stream.setLocale(QLocale::c());
-    stream.setRealNumberNotation(QTextStream::SmartNotation);
-    stream.setRealNumberPrecision(17);
-    stream << "# Procedural Visualizer Tool displacement plane\n"
-           << "# render_resolution " << config_.width << ' '
-           << config_.height << "\n"
-           << "# pixels_per_node " << displacement.pixels_per_node << "\n"
-           << "o PVT_Displacement_Plane\n";
-    for (std::size_t index = 0U; index < mesh->positions.size(); ++index) {
-        const auto& position = mesh->positions[index];
-        const double scale = mesh->normalization_scale;
-        stream << "v "
-               << (position.x - mesh->normalization_center.x) * scale << ' '
-               << (position.y - mesh->normalization_center.y) * scale << ' '
-               << (position.z - mesh->normalization_center.z) * scale << '\n';
-        if ((index & 16383U) == 0U) {
-            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        }
+    try {
+        const auto displacement = config_.surface.plane_displacement;
+        const int width = config_.width;
+        const int height = config_.height;
+        const auto attachment_cache = document_ ? document_->attachment_cache : nullptr;
+        cancel_export_.store(false);
+        export_active_ = true;
+        suspendEditorPreviewForExport();
+        updateExportAvailability();
+        if (export_action_) export_action_->setEnabled(false);
+        if (video_export_action_) video_export_action_->setEnabled(false);
+        if (current_frame_export_action_) current_frame_export_action_->setEnabled(false);
+        if (cancel_export_action_) cancel_export_action_->setEnabled(true);
+        export_progress_->setRange(0, 0);
+        export_progress_->show();
+        status_->setText(tr("Exporting displacement plane…"));
+        export_watcher_->setFuture(QtConcurrent::run(
+            [this, displacement, width, height, destination, attachment_cache] {
+                ExportResult result;
+                try {
+                    std::shared_ptr<const pvt::detail::ObjMesh> mesh;
+                    std::string error;
+                    if (!pvt::detail::load_displacement_plane_mesh(
+                            displacement, width, height, mesh, &cancel_export_, &error)
+                        || !mesh) {
+                        result.cancelled = cancel_export_.load();
+                        result.error = QString::fromStdString(error);
+                        return result;
+                    }
+                    QSaveFile file(destination);
+                    file.setDirectWriteFallback(false);
+                    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                        result.error = file.errorString();
+                        return result;
+                    }
+                    QTextStream stream(&file);
+                    stream.setLocale(QLocale::c());
+                    stream.setRealNumberNotation(QTextStream::SmartNotation);
+                    stream.setRealNumberPrecision(17);
+                    stream << "# Procedural Visualizer Tool displacement plane\n"
+                           << "# render_resolution " << width << ' ' << height << "\n"
+                           << "# pixels_per_node " << displacement.pixels_per_node << "\n"
+                           << "o PVT_Displacement_Plane\n";
+                    const auto cancelled = [&] {
+                        result.cancelled = cancel_export_.load();
+                        return result.cancelled;
+                    };
+                    for (const auto& position : mesh->positions) {
+                        if (cancelled()) return result;
+                        const double scale = mesh->normalization_scale;
+                        stream << "v "
+                               << (position.x - mesh->normalization_center.x) * scale << ' '
+                               << (position.y - mesh->normalization_center.y) * scale << ' '
+                               << (position.z - mesh->normalization_center.z) * scale << '\n';
+                    }
+                    for (const auto& uv : mesh->texcoords) {
+                        if (cancelled()) return result;
+                        stream << "vt " << uv.x << ' ' << uv.y << '\n';
+                    }
+                    for (const auto& normal : mesh->normals) {
+                        if (cancelled()) return result;
+                        stream << "vn " << normal.x << ' ' << normal.y << ' '
+                               << normal.z << '\n';
+                    }
+                    for (const auto& triangle : mesh->triangles) {
+                        if (cancelled()) return result;
+                        stream << "f";
+                        for (const auto& corner : triangle.corners) {
+                            stream << ' ' << static_cast<qulonglong>(corner.position) + 1U
+                                   << '/' << static_cast<qulonglong>(corner.texcoord) + 1U
+                                   << '/' << static_cast<qulonglong>(corner.normal) + 1U;
+                        }
+                        stream << '\n';
+                    }
+                    stream.flush();
+                    if (cancelled()) return result;
+                    result.ok = stream.status() == QTextStream::Ok && file.commit();
+                    if (!result.ok) result.error = file.errorString();
+                    else result.success_message =
+                        tr("Exported %1 vertices and %2 triangles to %3.")
+                            .arg(static_cast<qulonglong>(mesh->positions.size()))
+                            .arg(static_cast<qulonglong>(mesh->triangles.size()))
+                            .arg(destination);
+                } catch (const std::exception& exception) {
+                    result.error = QString::fromUtf8(exception.what());
+                } catch (...) {
+                    result.error = tr("OBJ export failed because of an unexpected error.");
+                }
+                return result;
+            }));
+    } catch (const std::exception& exception) {
+        finishExportUiState();
+        status_->setText(QString::fromUtf8(exception.what()));
+        return false;
+    } catch (...) {
+        finishExportUiState();
+        status_->setText(tr("The background OBJ export task could not be created."));
+        return false;
     }
-    for (const auto& uv : mesh->texcoords) {
-        stream << "vt " << uv.x << ' ' << uv.y << '\n';
-    }
-    for (const auto& normal : mesh->normals) {
-        stream << "vn " << normal.x << ' ' << normal.y << ' '
-               << normal.z << '\n';
-    }
-    for (std::size_t index = 0U; index < mesh->triangles.size(); ++index) {
-        stream << "f";
-        for (const auto& corner : mesh->triangles[index].corners) {
-            const qulonglong position =
-                static_cast<qulonglong>(corner.position) + 1U;
-            const qulonglong texcoord =
-                static_cast<qulonglong>(corner.texcoord) + 1U;
-            const qulonglong normal =
-                static_cast<qulonglong>(corner.normal) + 1U;
-            stream << ' ' << position << '/' << texcoord << '/' << normal;
-        }
-        stream << '\n';
-        if ((index & 16383U) == 0U) {
-            QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
-        }
-    }
-    stream.flush();
-    const bool written = stream.status() == QTextStream::Ok
-                         && file.commit();
-    const QString file_error = file.errorString();
-    QApplication::restoreOverrideCursor();
-    if (!written) {
-        QMessageBox::critical(
-            this, tr("Could not export OBJ"), file_error);
-        return;
-    }
-    status_->setText(
-        tr("Exported %1 vertices and %2 triangles to %3.")
-            .arg(static_cast<qulonglong>(mesh->positions.size()))
-            .arg(static_cast<qulonglong>(mesh->triangles.size()))
-            .arg(destination));
+    return true;
 }
 
 bool MainWindow::setStartingImageSource(const QString& source_path) {
@@ -19260,6 +19293,7 @@ void MainWindow::startPreview() {
         preview_watcher_->setFuture(QtConcurrent::run(
             [project = std::move(project), frame, generation, revision,
              test_delay_ms = preview_test_delay_ms_, render_options,
+             attachment_cache = document_ ? document_->attachment_cache : nullptr,
              cancel]() mutable {
                 return generatePreview(std::move(project), frame, generation, revision,
                                        test_delay_ms, render_options, cancel);
@@ -24814,6 +24848,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     concurrent_obj_file.close();
     struct ConcurrentAttachmentResult {
+        std::shared_ptr<pvt::ProjectAttachmentCache> cache;
         bool ok = false;
         std::string path;
         std::string error;
@@ -24827,6 +24862,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
                 candidate, reference, concurrent_obj_path.toStdString(),
                 &attached, &result.error);
             result.path = std::move(attached.local_path);
+            result.cache = candidate.attachment_cache;
             return result;
         };
     auto first_attach = QtConcurrent::run(
@@ -24941,6 +24977,23 @@ bool MainWindow::runSmokeChecks(QString* error) {
         if (error != nullptr) {
             *error = tr("Plane height-map embedding did not update geometry, alpha, and attachment state atomically.");
         }
+        return false;
+    }
+    const QString mesh_export_path = directory.filePath(QStringLiteral("displacement-export.obj"));
+    if (!startPlaneDisplacementObjExport(mesh_export_path)) {
+        if (error) *error = QStringLiteral("The displacement OBJ export worker did not start.");
+        return false;
+    }
+    QElapsedTimer mesh_export_wait;
+    mesh_export_wait.start();
+    while (export_active_ && mesh_export_wait.elapsed() < 10000) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+        QThread::msleep(1);
+    }
+    QFile exported_mesh(mesh_export_path);
+    if (export_active_ || !exported_mesh.open(QIODevice::ReadOnly)
+        || !exported_mesh.readAll().contains("o PVT_Displacement_Plane\n")) {
+        if (error) *error = QStringLiteral("The background displacement OBJ export failed.");
         return false;
     }
     undo_stack_->undo();

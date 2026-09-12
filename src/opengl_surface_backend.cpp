@@ -1738,7 +1738,15 @@ public:
             context_->doneCurrent();
         };
         if (QThread::currentThread() == render_thread_) work();
-        else (void)QMetaObject::invokeMethod(worker_, work, Qt::BlockingQueuedConnection);
+        else {
+            // Never wait for the context thread while owning mutex_. On a
+            // non-threaded driver that is the GUI thread, which can itself be
+            // entering the service. The queued retry reacquires the try-lock
+            // and performs the same checks on the context's own thread.
+            (void)QMetaObject::invokeMethod(
+                worker_, [this, heights] { prune_mesh_cache(heights); },
+                Qt::QueuedConnection);
+        }
     }
 
     bool available(std::string* device_name, std::string* status) {

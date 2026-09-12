@@ -19,6 +19,11 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <locale.h>
+#include <type_traits>
+#if defined(__APPLE__)
+#  include <xlocale.h>
+#endif
 #include <memory>
 #include <sstream>
 #include <string>
@@ -106,7 +111,23 @@ std::string trim(std::string value) {
         return {};
     }
     const auto last = value.find_last_not_of(" \t\r\n");
-    return value.substr(first, last - first + 1);
+    value.erase(last + 1);
+    value.erase(0, first);
+    return value;
+}
+
+template <typename Item>
+void move_item(std::vector<Item>& items, std::size_t from, std::size_t to) {
+    auto begin = items.begin();
+    if (from < to) {
+        std::rotate(begin + static_cast<std::ptrdiff_t>(from),
+                    begin + static_cast<std::ptrdiff_t>(from + 1U),
+                    begin + static_cast<std::ptrdiff_t>(to + 1U));
+    } else if (to < from) {
+        std::rotate(begin + static_cast<std::ptrdiff_t>(to),
+                    begin + static_cast<std::ptrdiff_t>(from),
+                    begin + static_cast<std::ptrdiff_t>(from + 1U));
+    }
 }
 
 bool read_line(const std::string& prompt, std::string& value) {
@@ -153,9 +174,24 @@ bool parse_real(const std::string& text, double minimum, double maximum, double&
     if (text.empty()) {
         return false;
     }
+    // Qt may select the system numeric locale before the interactive menu.
+    // Use an owned C locale without changing any process-global locale state,
+    // preserving strtod's accepted spellings and range-error behavior.
+#if defined(_WIN32)
+    static const std::unique_ptr<std::remove_pointer_t<_locale_t>, decltype(&_free_locale)>
+        numeric_locale(_create_locale(LC_NUMERIC, "C"), &_free_locale);
+#else
+    static const std::unique_ptr<std::remove_pointer_t<locale_t>, decltype(&freelocale)>
+        numeric_locale(newlocale(LC_NUMERIC_MASK, "C", nullptr), &freelocale);
+#endif
+    if (!numeric_locale) return false;
     char* end = nullptr;
     errno = 0;
-    const double parsed = std::strtod(text.c_str(), &end);
+#if defined(_WIN32)
+    const double parsed = _strtod_l(text.c_str(), &end, numeric_locale.get());
+#else
+    const double parsed = strtod_l(text.c_str(), &end, numeric_locale.get());
+#endif
     if (errno != 0 || end == text.c_str() || *end != '\0' || !std::isfinite(parsed)
         || parsed < minimum || parsed > maximum) {
         return false;
@@ -1094,10 +1130,7 @@ void configure_waves(RenderConfig& config) {
         std::size_t from = 0;
         std::size_t to = 0;
         if (parse_move_command(input, config.waves.size(), from, to)) {
-            auto item = std::move(config.waves[from]);
-            config.waves.erase(config.waves.begin() + static_cast<std::ptrdiff_t>(from));
-            config.waves.insert(config.waves.begin() + static_cast<std::ptrdiff_t>(to),
-                                std::move(item));
+            move_item(config.waves, from, to);
             g_prompt_changed = true;
             continue;
         }
@@ -1455,10 +1488,7 @@ void configure_effects(RenderConfig& config) {
         std::size_t from = 0;
         std::size_t to = 0;
         if (parse_move_command(input, config.effects.size(), from, to)) {
-            auto item = std::move(config.effects[from]);
-            config.effects.erase(config.effects.begin() + static_cast<std::ptrdiff_t>(from));
-            config.effects.insert(config.effects.begin() + static_cast<std::ptrdiff_t>(to),
-                                  std::move(item));
+            move_item(config.effects, from, to);
             g_prompt_changed = true;
             continue;
         }
@@ -2981,12 +3011,7 @@ void configure_project_and_layers(CliState& state) {
                     continue;
                 }
                 const std::string active_uuid = project.layers[state.active_layer].uuid;
-                auto layer = std::move(project.layers[first_index]);
-                project.layers.erase(project.layers.begin()
-                                     + static_cast<std::ptrdiff_t>(first_index));
-                project.layers.insert(project.layers.begin()
-                                          + static_cast<std::ptrdiff_t>(second_index),
-                                      std::move(layer));
+                move_item(project.layers, first_index, second_index);
                 const auto active = std::find_if(
                     project.layers.begin(), project.layers.end(),
                     [&](const pvt::LayerConfig& candidate) {

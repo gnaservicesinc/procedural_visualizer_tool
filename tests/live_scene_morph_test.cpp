@@ -16,6 +16,22 @@ int main(int argc, char** argv) {
     };
     auto project = pvt::default_project();
     const auto registry = buildLiveTargetRegistry(project);
+    for (const auto& target : registry) {
+        if (!target.path.startsWith(QStringLiteral("project.audio."))
+            || target.kind != LiveTargetKind::Enumeration) continue;
+        for (double input : {-1.0e100, 1.0e100}) {
+            auto bounded_project = project;
+            check(target.apply(bounded_project, input), "Finite enum input must clamp.");
+            for (const auto& bounded_target : buildLiveTargetRegistry(bounded_project)) {
+                if (bounded_target.path == target.path) {
+                    check(bounded_target.current_value == (input < 0 ? target.minimum : target.maximum),
+                          "Global audio enum escaped its registry bounds.");
+                }
+            }
+        }
+        check(!target.apply(project, std::numeric_limits<double>::infinity()),
+              "Non-finite global enum input must be rejected.");
+    }
     const QString layer_prefix = QStringLiteral("layer/%1/")
         .arg(QString::fromStdString(project.layers.front().uuid));
     const auto displacement_target = std::find_if(

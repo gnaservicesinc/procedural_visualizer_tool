@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <QObject>
 #include <string>
 #include <type_traits>
@@ -179,7 +180,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
            static_cast<double>(project.canvas.audio_reactive_defaults.wave_source),
            [](pvt::ProjectConfig& value, double input) {
                value.canvas.audio_reactive_defaults.wave_source =
-                   static_cast<pvt::MusicFeature>(std::llround(input));
+                   static_cast<pvt::MusicFeature>(bounded<int>(input, 0.0, 9.0));
                return true;
            });
     append(QStringLiteral("project.audio.wave_amount"), QObject::tr("Wave response amount"),
@@ -212,7 +213,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
            static_cast<double>(project.canvas.audio_reactive_defaults.effect_source),
            [](pvt::ProjectConfig& value, double input) {
                value.canvas.audio_reactive_defaults.effect_source =
-                   static_cast<pvt::MusicFeature>(std::llround(input));
+                   static_cast<pvt::MusicFeature>(bounded<int>(input, 0.0, 9.0));
                return true;
            });
     append(QStringLiteral("project.audio.color_amount"), QObject::tr("Color response degrees"),
@@ -236,7 +237,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
            static_cast<double>(project.canvas.audio_reactive_defaults.color_source),
            [](pvt::ProjectConfig& value, double input) {
                value.canvas.audio_reactive_defaults.color_source =
-                   static_cast<pvt::MusicFeature>(std::llround(input));
+                   static_cast<pvt::MusicFeature>(bounded<int>(input, 0.0, 9.0));
                return true;
            });
 
@@ -259,6 +260,7 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
 
     for (const pvt::LayerConfig& authored_layer : project.layers) {
         const std::string uuid = authored_layer.uuid;
+        const auto shared_uuid = std::make_shared<const std::string>(uuid);
         const QString prefix = QStringLiteral("layer/%1/")
                                    .arg(QString::fromStdString(uuid));
         const auto add_layer = [&](const QString& key, const QString& label,
@@ -267,9 +269,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                                    auto setter) {
             append(prefix + key, label, layer_section(authored_layer, section),
                    kind, minimum, maximum, current,
-                   [uuid, minimum, maximum, setter](pvt::ProjectConfig& value,
+                   [shared_uuid, minimum, maximum, setter](pvt::ProjectConfig& value,
                                                      double input) {
-                       pvt::LayerConfig* layer = find_layer(value, uuid);
+                       pvt::LayerConfig* layer = find_layer(value, *shared_uuid);
                        if (layer == nullptr) return false;
                        setter(*layer, std::clamp(input, minimum, maximum));
                        return true;
@@ -1097,9 +1099,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                 double current, auto setter) {
                 append(item_prefix + key, label, section, kind, minimum,
                        maximum, current,
-                       [uuid, id, setter, minimum, maximum](
+                       [shared_uuid, id, setter, minimum, maximum](
                            pvt::ProjectConfig& value, double input) {
-                           pvt::LayerConfig* layer = find_layer(value, uuid);
+                           pvt::LayerConfig* layer = find_layer(value, *shared_uuid);
                            if (layer == nullptr) return false;
                            pvt::PostProcessEffectConfig* item =
                                find_post_effect(*layer, id);
@@ -1210,9 +1212,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                                       LiveTargetKind kind, double minimum,
                                       double maximum, double current, auto setter) {
                 append(item_prefix + key, label, section, kind, minimum, maximum,
-                       current, [uuid, id, setter, minimum, maximum](
+                       current, [shared_uuid, id, setter, minimum, maximum](
                                     pvt::ProjectConfig& value, double input) {
-                           pvt::LayerConfig* layer = find_layer(value, uuid);
+                           pvt::LayerConfig* layer = find_layer(value, *shared_uuid);
                            if (layer == nullptr) return false;
                            pvt::WaveConfig* item = find_wave(*layer, id);
                            if (item == nullptr) return false;
@@ -1241,9 +1243,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                                        LiveTargetKind kind, double minimum,
                                        double maximum, double current, auto setter) {
                 append(item_prefix + key, label, section, kind, minimum, maximum,
-                       current, [uuid, id, setter, minimum, maximum](
+                       current, [shared_uuid, id, setter, minimum, maximum](
                                     pvt::ProjectConfig& value, double input) {
-                           pvt::LayerConfig* layer = find_layer(value, uuid);
+                           pvt::LayerConfig* layer = find_layer(value, *shared_uuid);
                            if (layer == nullptr) return false;
                            pvt::SwingConfig* item = find_swing(*layer, id);
                            if (item == nullptr) return false;
@@ -1283,9 +1285,9 @@ std::vector<LiveTargetDescriptor> buildLiveTargetRegistry(
                     || key == QStringLiteral("radius")
                     || key == QStringLiteral("threshold");
                 append(item_prefix + key, label, section, kind, minimum, maximum,
-                       current, [uuid, id, setter, minimum, maximum, dynamic_domain](
+                       current, [shared_uuid, id, setter, minimum, maximum, dynamic_domain](
                                     pvt::ProjectConfig& value, double input) {
-                           pvt::LayerConfig* layer = find_layer(value, uuid);
+                           pvt::LayerConfig* layer = find_layer(value, *shared_uuid);
                            if (layer == nullptr) return false;
                            pvt::EffectConfig* item = find_effect(*layer, id);
                            if (item == nullptr) return false;

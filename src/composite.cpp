@@ -71,6 +71,7 @@ bool render_project_blackout_if_requested(
                > (std::numeric_limits<std::size_t>::max)() / 4U) {
         return fail(error, "Project blackout dimensions overflow the pixel buffer.");
     }
+    detail::prune_render_asset_caches(project);
     Image blackout;
     blackout.width = project.canvas.width;
     blackout.height = project.canvas.height;
@@ -759,20 +760,19 @@ bool valid_alpha_mode(AlphaMode mode) {
     return false;
 }
 
-const LayerGroup* find_group(const ProjectConfig& project,
-                             std::string_view uuid) {
-    if (uuid.empty()) return nullptr;
-    const auto found = std::find_if(
-        project.groups.begin(), project.groups.end(),
-        [uuid](const LayerGroup& group) { return group.uuid == uuid; });
-    return found == project.groups.end() ? nullptr : &*found;
+using DisabledGroups = std::unordered_set<std::string_view>;
+
+DisabledGroups disabled_groups(const ProjectConfig& project) {
+    DisabledGroups result;
+    for (const auto& group : project.groups) {
+        if (!group.enabled) result.insert(group.uuid);
+    }
+    return result;
 }
 
-bool layer_effectively_enabled(const ProjectConfig& project,
+bool layer_effectively_enabled(const DisabledGroups& disabled,
                                const LayerConfig& layer) {
-    if (!layer.enabled) return false;
-    const LayerGroup* group = find_group(project, layer.group_uuid);
-    return group == nullptr || group->enabled;
+    return layer.enabled && disabled.count(layer.group_uuid) == 0U;
 }
 
 bool cancelled(const std::atomic_bool* cancel) {
@@ -1054,9 +1054,10 @@ bool render_project_at_phase_validated(const ProjectConfig& project,
     ExportConfig layer_output = project.output;
     layer_output.write_alpha = true;
 
+    const auto disabled = disabled_groups(project);
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
         const LayerConfig& layer = project.layers[index];
-        if (!layer_effectively_enabled(project, layer)
+        if (!layer_effectively_enabled(disabled, layer)
             || layer.opacity <= 0.0) {
             continue;
         }
@@ -1155,8 +1156,9 @@ bool render_project_with_backend_validated(
     layer_output.write_alpha = true;
     std::vector<std::size_t> contributing;
     contributing.reserve(project.layers.size());
+    const auto disabled = disabled_groups(project);
     for (std::size_t index = 0U; index < project.layers.size(); ++index) {
-        if (layer_effectively_enabled(project, project.layers[index])
+        if (layer_effectively_enabled(disabled, project.layers[index])
             && project.layers[index].opacity > 0.0) {
             contributing.push_back(index);
         }
@@ -1836,7 +1838,8 @@ ValidationResult detail::validate_project_render_memory(
         std::unordered_set<std::uint64_t> file_ids;
         uuids.reserve(project.layers.size() + project.groups.size() + 1U);
         uuids.insert(project.uuid);
-        std::unordered_map<std::string, std::size_t> group_members;
+        struct GroupMembers { std::size_t count = 0U; bool enabled = true; };
+        std::unordered_map<std::string, GroupMembers> group_members;
         group_members.reserve(project.groups.size());
         for (std::size_t index = 0U; index < project.groups.size(); ++index) {
             const LayerGroup& group = project.groups[index];
@@ -1854,7 +1857,7 @@ ValidationResult detail::validate_project_render_memory(
                                       + std::to_string(index + 1U)
                                       + " has an invalid name.");
             }
-            group_members.emplace(group.uuid, 0U);
+            group_members.emplace(group.uuid, GroupMembers{0U, group.enabled});
         }
         file_ids.reserve(project.layers.size());
         std::size_t worst_layer_peak = 0U;
@@ -1915,6 +1918,7 @@ ValidationResult detail::validate_project_render_memory(
                 }
                 open_group = layer.group_uuid;
             }
+            bool group_enabled = true;
             if (!layer.group_uuid.empty()) {
                 const auto group = group_members.find(layer.group_uuid);
                 if (group == group_members.end()) {
@@ -1922,7 +1926,8 @@ ValidationResult detail::validate_project_render_memory(
                         "Layer " + std::to_string(index + 1U)
                         + " references a missing layer group.");
                 }
-                ++group->second;
+                ++group->second.count;
+                group_enabled = group->second.enabled;
             }
             if (!std::isfinite(layer.opacity) || layer.opacity < 0.0
                 || layer.opacity > 1.0) {
@@ -1931,7 +1936,7 @@ ValidationResult detail::validate_project_render_memory(
             }
 
             const RenderData& render = layer.render;
-            const bool contributing = layer_effectively_enabled(project, layer)
+            const bool contributing = (layer.enabled && group_enabled)
                 && layer.opacity > 0.0;
             const ValidationResult layer_validation =
                 validator.validate_layer(render, contributing, &memory.shared);
@@ -2006,7 +2011,7 @@ ValidationResult detail::validate_project_render_memory(
         }
 
         for (const auto& group : group_members) {
-            if (group.second == 0U) {
+            if (group.second.count == 0U) {
                 return invalid_result(
                     "Every layer group must contain at least one layer.");
             }

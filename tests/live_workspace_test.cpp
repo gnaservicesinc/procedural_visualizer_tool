@@ -1,4 +1,6 @@
 #include "live_workspace.h"
+#include "live_frame_controller.h"
+#include "studio_widgets.h"
 #include "project_bundle.h"
 
 #include <QApplication>
@@ -12,6 +14,71 @@
 
 #include <iostream>
 
+bool test_live_mapping_controls();
+
+pvt::ProjectConfig blank_project() {
+    // Keep the installed application's blank canvas aligned with the supplied
+    // Untitled.zip concept without changing the richer public API defaults
+    // used by existing library clients and tests.
+    auto project = pvt::default_project();
+    project.name = "Untitled";
+    project.canvas.width = 1920;
+    project.canvas.height = 1080;
+    project.canvas.block_size = 1;
+    project.canvas.total_frames = 300;
+    project.canvas.fps = 60.0;
+    project.canvas.clock = {};
+    project.canvas.motion_paths.clear();
+    project.canvas.audio_reactive_defaults = {};
+    project.output = {};
+    project.output.write_alpha = true;
+
+    auto& layer = project.layers.front();
+    layer.name = "Layer 1";
+    layer.enabled = true;
+    layer.opacity = 1.0;
+    layer.blend_mode = pvt::BlendMode::Normal;
+    layer.alpha_mode = pvt::AlphaMode::AlphaOver;
+    auto& render = layer.render;
+    render.waves.clear();
+    render.swings.clear();
+    auto swing = pvt::default_swing(0U);
+    swing.id = 4U;
+    render.swings.push_back(std::move(swing));
+    render.swings_enabled = false;
+    render.effects.clear();
+    auto zoom = pvt::default_effect(pvt::EffectType::EndlessZoom);
+    zoom.id = 5U;
+    zoom.enabled = false;
+    render.effects.push_back(std::move(zoom));
+    render.layer_clock = {};
+    render.audio_reactive = {};
+    render.audio_reactive_override_enabled = false;
+    render.phrase_warp = 0.0;
+    render.ghost_mix = 0.0;
+    render.ghost_lag_degrees = 0.0;
+    render.displacement_enabled = false;
+    render.lighting_enabled = false;
+    render.spiral_enabled = false;
+    render.wall_reflection_enabled = false;
+    render.hue_cycles = 1;
+    render.saturation = 1.0;
+    render.starting_image = {};
+    render.palette = {};
+    render.surface = {};
+    render.transform = {};
+    render.motion = {};
+    render.quantization = {};
+    render.alpha = {};
+    render.alpha.minimum = 0.0;
+    render.alpha.maximum = 1.0;
+    render.alpha.spatial_frequency = 1.99;
+    render.alpha.cycles_per_loop = 6;
+    render.alpha.use_source_alpha = true;
+    render.starting_colors = {};
+    return project;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QTemporaryDir settings_directory;
@@ -23,6 +90,49 @@ int main(int argc, char** argv) {
     QCoreApplication::setApplicationName(QStringLiteral("Live startup"));
     QSettings().setValue(QStringLiteral("live/resolutionScale"), 0.25);
 
+    if (argc > 1 && std::string(argv[1]) == "--blank-probe") {
+        QSettings().setValue(QStringLiteral("live/resolutionScale"), 0.0);
+        auto project = blank_project();
+        pvt::ParameterLfo lfo;
+        lfo.id = 12;
+        lfo.target_path = "block_size";
+        lfo.minimum = 1;
+        lfo.maximum = 2;
+        project.layers.front().render.parameter_lfos.push_back(lfo);
+        QSettings().setValue(QStringLiteral("live/resolutionScale"), 0.25);
+        LiveWorkspace workspace([&] { return project; }, [&] { return project; },
+            [] { return 0; }, [] {
+                pvt::FrameRenderOptions options;
+                options.backend = pvt::RenderBackend::CpuAndGpu;
+                return options;
+            }, [] { return 1U; }, [&] { return project.layers.front().uuid; }, {});
+        workspace.setProjectLiveConfig(project.canvas.live);
+        workspace.resize(1600, 960);
+        workspace.show();
+        QElapsedTimer elapsed;
+        elapsed.start();
+        double previous = 0;
+        int delivered = 0;
+        auto* renderer = workspace.findChild<LiveFrameController*>();
+        QObject::connect(renderer, &LiveFrameController::frameFinished,
+            [&](const LiveFrameController::Result& r) {
+                const double now = elapsed.nsecsElapsed() / 1e6;
+                if (r.cancelled || !r.error.isEmpty() || now - previous > 50 || delivered % 60 == 0)
+                    std::cout << "t=" << now << " ms=" << r.render_milliseconds
+                              << " gap=" << now-previous << " size=" << r.image.width() << "x" << r.image.height()
+                              << " cancelled=" << r.cancelled << " watchdog=" << r.watchdog_expired
+                              << " error=" << r.error.toStdString() << std::endl;
+                previous=now; ++delivered;
+            });
+        workspace.setLiveActive(true);
+        while (elapsed.elapsed() < 16000) {
+            QCoreApplication::processEvents(); QThread::msleep(1);
+        }
+        workspace.setLiveActive(false);
+        std::cout << "Delivered: " << delivered << std::endl;
+        return 0;
+    }
+    if (!test_live_mapping_controls()) return 1;
     pvt::ProjectDocument document;
     auto project = pvt::default_project();
     project.canvas.width = 64;

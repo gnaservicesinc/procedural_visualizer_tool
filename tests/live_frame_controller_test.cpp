@@ -11,6 +11,69 @@
 #include <utility>
 #include <vector>
 
+pvt::ProjectConfig blank_project() {
+    // Keep the installed application's blank canvas aligned with the supplied
+    // Untitled.zip concept without changing the richer public API defaults
+    // used by existing library clients and tests.
+    auto project = pvt::default_project();
+    project.name = "Untitled";
+    project.canvas.width = 1920;
+    project.canvas.height = 1080;
+    project.canvas.block_size = 1;
+    project.canvas.total_frames = 300;
+    project.canvas.fps = 60.0;
+    project.canvas.clock = {};
+    project.canvas.motion_paths.clear();
+    project.canvas.audio_reactive_defaults = {};
+    project.output = {};
+    project.output.write_alpha = true;
+
+    auto& layer = project.layers.front();
+    layer.name = "Layer 1";
+    layer.enabled = true;
+    layer.opacity = 1.0;
+    layer.blend_mode = pvt::BlendMode::Normal;
+    layer.alpha_mode = pvt::AlphaMode::AlphaOver;
+    auto& render = layer.render;
+    render.waves.clear();
+    render.swings.clear();
+    auto swing = pvt::default_swing(0U);
+    swing.id = 4U;
+    render.swings.push_back(std::move(swing));
+    render.swings_enabled = false;
+    render.effects.clear();
+    auto zoom = pvt::default_effect(pvt::EffectType::EndlessZoom);
+    zoom.id = 5U;
+    zoom.enabled = false;
+    render.effects.push_back(std::move(zoom));
+    render.layer_clock = {};
+    render.audio_reactive = {};
+    render.audio_reactive_override_enabled = false;
+    render.phrase_warp = 0.0;
+    render.ghost_mix = 0.0;
+    render.ghost_lag_degrees = 0.0;
+    render.displacement_enabled = false;
+    render.lighting_enabled = false;
+    render.spiral_enabled = false;
+    render.wall_reflection_enabled = false;
+    render.hue_cycles = 1;
+    render.saturation = 1.0;
+    render.starting_image = {};
+    render.palette = {};
+    render.surface = {};
+    render.transform = {};
+    render.motion = {};
+    render.quantization = {};
+    render.alpha = {};
+    render.alpha.minimum = 0.0;
+    render.alpha.maximum = 1.0;
+    render.alpha.spatial_frequency = 1.99;
+    render.alpha.cycles_per_loop = 6;
+    render.alpha.use_source_alpha = true;
+    render.starting_colors = {};
+    return project;
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     LiveFrameController controller;
@@ -26,6 +89,30 @@ int main(int argc, char** argv) {
     project.canvas.block_size_modulation.maximum = 64.0;
     pvt::FrameRenderOptions options;
     options.backend = pvt::RenderBackend::Cpu;
+    if (argc > 1) {
+        project = blank_project();
+        if (std::string(argv[1]) == "gpu") options.backend = pvt::RenderBackend::Gpu;
+        for (const double scale : {0.25, 0.5, 1.0}) {
+            for (int frame = 0; frame < 600; ++frame) {
+                results.clear();
+                controller.request(project, 0.0, frame % 300, QSize(640, 360), scale,
+                    1000.0 / 60.0, 100, options, 3U, 3U);
+                QElapsedTimer wait;
+                wait.start();
+                while (results.empty() && wait.elapsed() < 10000) {
+                    QCoreApplication::processEvents();
+                    QThread::msleep(1);
+                }
+                if (results.empty()) return 2;
+                const auto& r = results.back();
+                if (r.cancelled || !r.error.isEmpty() || r.render_milliseconds > 25 || frame % 100 == 0)
+                    std::cout << "scale=" << scale << " frame=" << frame << " ms=" << r.render_milliseconds
+                              << " cancelled=" << r.cancelled << " watchdog=" << r.watchdog_expired
+                              << " error=" << r.error.toStdString() << std::endl;
+            }
+        }
+        return 0;
+    }
     const auto request = [&] {
         controller.request(project, 0.25, {}, QSize(32, 32), 1.0,
                            1000.0, 5000, options, 1U, 1U);

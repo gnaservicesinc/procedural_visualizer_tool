@@ -1059,6 +1059,7 @@ if(BUILD_TESTING)
         add_test(NAME pvt_live_frame_controller COMMAND pvt_live_frame_controller_tests)
         add_executable(pvt_live_workspace_tests
             tests/live_workspace_test.cpp
+            tests/live_mapping_controls_test.cpp
             gui/live_workspace.cpp gui/live_frame_controller.cpp
             gui/live_midi.h ${PVT_GUI_MIDI_SOURCES}
             gui/live_osc.cpp gui/live_scene_morph.cpp gui/live_target_registry.cpp

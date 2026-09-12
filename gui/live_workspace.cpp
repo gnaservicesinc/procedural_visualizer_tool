@@ -447,6 +447,7 @@ struct LiveWorkspace::Impl {
         double target = 0.0;
         int smoothing_ms = 0;
         qint64 changed_ms = 0;
+        double start = 0.0;
     };
 
     struct MappingRuntime {
@@ -1923,6 +1924,17 @@ void LiveWorkspace::Impl::rebuildTargetCache() {
     target_index.reserve(static_cast<qsizetype>(target_cache.size()));
     for (int index = 0; index < static_cast<int>(target_cache.size()); ++index) {
         target_index.insert(target_cache[static_cast<std::size_t>(index)].path, index);
+    }
+    for (auto it = overrides.begin(); it != overrides.end();) {
+        if (!target_index.contains(it.key())) it = overrides.erase(it);
+        else ++it;
+    }
+    for (auto it = scene_transition.to.begin(); it != scene_transition.to.end();) {
+        if (!target_index.contains(it.key())) {
+            scene_transition.from.remove(it.key());
+            scene_transition.discrete.remove(it.key());
+            it = scene_transition.to.erase(it);
+        } else ++it;
     }
 }
 
@@ -4145,9 +4157,9 @@ double LiveWorkspace::Impl::transformedValue(
             if (mapping.target != pvt::LiveMappingTarget::Setting) fire = rising;
             break;
         case pvt::LiveMappingMode::Relative: {
-            // Support the common centered relative encoding without assuming
-            // a particular controller's two's-complement convention.
-            const double direction = raw > 0.5 ? raw - 1.0 : raw;
+            // MIDI is normalized from seven-bit two's-complement values:
+            // 1 is +1, 127 is -1, and 0 is stationary.
+            const double direction = raw > 0.5 ? raw - 128.0 / 127.0 : raw;
             const QString path = qtext(mapping.target_path);
             const double current = overrides.contains(path)
                 ? overrides[path].target : mapping.output_minimum;
@@ -4185,9 +4197,11 @@ void LiveWorkspace::Impl::performMapping(
     if (!fire) return;
     if (mapping.target == pvt::LiveMappingTarget::Setting) {
         const QString path = qtext(mapping.target_path);
+        if (!target_index.contains(path)) return;
         const bool existed = overrides.contains(path);
         OverrideValue& target = overrides[path];
         if (!existed) target.current = value;
+        target.start = target.current;
         target.target = value;
         target.smoothing_ms = mapping.smoothing_milliseconds;
         target.changed_ms = run_clock.elapsed();
@@ -4392,11 +4406,8 @@ void LiveWorkspace::Impl::applyOverrides(pvt::ProjectConfig& project) {
             const qint64 elapsed = std::max<qint64>(0, now - value.changed_ms);
             const double amount = std::clamp(
                 static_cast<double>(elapsed) / value.smoothing_ms, 0.0, 1.0);
-            value.current += (value.target - value.current) * amount;
-            value.changed_ms = now;
-            if (std::fabs(value.target - value.current) < 1.0e-9) {
-                value.current = value.target;
-            }
+            value.current = amount >= 1.0 ? value.target
+                : value.start * (1.0 - amount) + value.target * amount;
         } else {
             value.current = value.target;
         }

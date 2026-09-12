@@ -5,6 +5,7 @@
 #include "config_codec.h"
 #include "frame_renderer_internal.h"
 #include "path_utf8.h"
+#include "scope_exit.h"
 
 #include <algorithm>
 #include <array>
@@ -42,20 +43,37 @@
 
 namespace pvt {
 
-struct ProjectAttachmentCache {
+struct ProjectAttachmentFile;
+
+struct ProjectAttachmentDirectory {
     std::string directory;
-    std::map<std::string, std::string> materialized_by_identity;
-    // ProjectDocument snapshots deliberately share this immutable-byte cache.
-    // Attachment vectors remain copy-on-write at the document level, while
-    // materialization may happen on a worker during a GUI import transaction.
-    mutable std::mutex mutex;
-    ~ProjectAttachmentCache();
+    std::map<std::string, std::weak_ptr<ProjectAttachmentFile>> files;
+    std::mutex mutex;
+    ~ProjectAttachmentDirectory();
+};
+
+struct ProjectAttachmentFile {
+    std::shared_ptr<ProjectAttachmentDirectory> directory;
+    std::string key;
+    std::string path;
+    ~ProjectAttachmentFile();
+};
+
+struct ProjectAttachmentCache {
+    std::shared_ptr<ProjectAttachmentDirectory> directory;
+    // Each document/undo snapshot pins only its materialized files. Mutations
+    // copy this small map; immutable files and their directory remain shared.
+    std::map<std::string, std::shared_ptr<ProjectAttachmentFile>> files;
+    // load_project_version returns a bare ProjectConfig whose paths borrow
+    // this document's lifetime. Those explicitly borrowed versions stay pinned.
+    std::set<std::string> borrowed_version_paths;
+    mutable std::mutex snapshot_mutex;
 };
 
 namespace {
 
 namespace fs = std::filesystem;
-using Records = std::map<std::string, std::string>;
+using Records = std::map<std::string, std::string, std::less<>>;
 
 constexpr std::size_t kMaximumMetadataBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMetadataRecords = kMaximumUiItems;
@@ -377,27 +395,27 @@ bool append_bounded_metadata_line(std::string& destination,
     return true;
 }
 
-bool take(Records& records, const std::string& key,
+bool take(Records& records, std::string_view key,
           std::string& value, std::string* error) {
     const auto found = records.find(key);
     if (found == records.end()) {
-        return fail(error, "Missing metadata key '" + key + "'.");
+        return fail(error, "Missing metadata key '" + std::string(key) + "'.");
     }
     value = std::move(found->second);
     records.erase(found);
     return true;
 }
 
-bool take_string(Records& records, const std::string& key,
+bool take_string(Records& records, std::string_view key,
                  std::string& value, std::string* error) {
     std::string encoded;
     return take(records, key, encoded, error)
            && (percent_decode(encoded, value)
-               || fail(error, "Invalid encoded metadata string '" + key + "'."));
+               || fail(error, "Invalid encoded metadata string '" + std::string(key) + "'."));
 }
 
 template <typename Integer>
-bool take_integer(Records& records, const std::string& key,
+bool take_integer(Records& records, std::string_view key,
                   Integer& value, std::string* error) {
     std::string text;
     if (!take(records, key, text, error) || text.empty()) return false;
@@ -405,24 +423,24 @@ bool take_integer(Records& records, const std::string& key,
     const auto result = std::from_chars(text.data(), text.data() + text.size(),
                                         candidate, 10);
     if (result.ec != std::errc{} || result.ptr != text.data() + text.size()) {
-        return fail(error, "Invalid integer metadata key '" + key + "'.");
+        return fail(error, "Invalid integer metadata key '" + std::string(key) + "'.");
     }
     value = candidate;
     return true;
 }
 
-bool take_bool(Records& records, const std::string& key,
+bool take_bool(Records& records, std::string_view key,
                bool& value, std::string* error) {
     std::string text;
     if (!take(records, key, text, error)) return false;
     if (text == "0") value = false;
     else if (text == "1") value = true;
-    else return fail(error, "Invalid Boolean metadata key '" + key + "'.");
+    else return fail(error, "Invalid Boolean metadata key '" + std::string(key) + "'.");
     return true;
 }
 
 template <typename Setter>
-bool take_packed_bool(Records& records, const std::string& key,
+bool take_packed_bool(Records& records, std::string_view key,
                       Setter&& setter, std::string* error) {
     bool value = false;
     if (!take_bool(records, key, value, error)) return false;
@@ -430,7 +448,7 @@ bool take_packed_bool(Records& records, const std::string& key,
     return true;
 }
 
-bool take_real(Records& records, const std::string& key,
+bool take_real(Records& records, std::string_view key,
                double& value, std::string* error) {
     std::string text;
     if (!take(records, key, text, error) || text.empty()) return false;
@@ -440,7 +458,7 @@ bool take_real(Records& records, const std::string& key,
     stream >> std::noskipws >> candidate;
     if (!stream || stream.peek() != std::char_traits<char>::eof()
         || !std::isfinite(candidate)) {
-        return fail(error, "Invalid real metadata key '" + key + "'.");
+        return fail(error, "Invalid real metadata key '" + std::string(key) + "'.");
     }
     value = candidate;
     return true;
@@ -784,15 +802,33 @@ bool read_attachment_source(const std::string& path,
     return detail::sha256_hex(bytes, digest, error);
 }
 
+void make_attachment_cache_writable(std::shared_ptr<ProjectAttachmentCache>& cache) {
+    if (!cache) return;
+    const auto original = cache;
+    // The lock also orders a previous snapshot copy's reads before writes by
+    // the final owner. shared_ptr::use_count alone supplies no such ordering.
+    const std::lock_guard<std::mutex> lock(original->snapshot_mutex);
+    if (original.use_count() == 2) return; // caller plus this local owner
+    auto candidate = std::make_shared<ProjectAttachmentCache>();
+    candidate->directory = original->directory;
+    candidate->files = original->files;
+    candidate->borrowed_version_paths = original->borrowed_version_paths;
+    cache = std::move(candidate);
+}
+
 bool ensure_attachment_cache(std::shared_ptr<ProjectAttachmentCache>& cache,
                              std::string* error) {
-    if (cache != nullptr && !cache->directory.empty()) return true;
+    if (cache != nullptr) {
+        make_attachment_cache_writable(cache);
+        return true;
+    }
     std::error_code filesystem_error;
     const fs::path temporary_root = fs::temp_directory_path(filesystem_error);
     if (filesystem_error) {
         return fail(error, "Could not locate the temporary directory for attachments.");
     }
     auto candidate = std::make_shared<ProjectAttachmentCache>();
+    candidate->directory = std::make_shared<ProjectAttachmentDirectory>();
     for (int attempt = 0; attempt < 128; ++attempt) {
         const fs::path directory = temporary_root
                                    / detail::path_from_utf8(
@@ -808,7 +844,7 @@ bool ensure_attachment_cache(std::shared_ptr<ProjectAttachmentCache>& cache,
                 return fail(error,
                             "Could not secure the temporary attachment directory.");
             }
-            candidate->directory = detail::path_to_utf8(directory);
+            candidate->directory->directory = detail::path_to_utf8(directory);
             cache = std::move(candidate);
             return true;
         }
@@ -832,56 +868,90 @@ bool materialize_attachment_bytes(
         return fail(error, "Embedded attachment bytes do not match their SHA-256 identity.");
     }
     if (!ensure_attachment_cache(cache, error)) return false;
-    // Keep lookup, validation, installation, and registration one transaction.
-    // In particular, two copied ProjectDocuments may otherwise race while
-    // materializing the same digest into their shared cache directory.
-    const std::unique_lock<std::mutex> cache_lock(cache->mutex);
-    const std::string extension = safe_cache_extension(basename);
-    const std::string cache_key = digest + extension;
-    const auto existing = cache->materialized_by_identity.find(cache_key);
-    if (existing != cache->materialized_by_identity.end()) {
-        std::error_code filesystem_error;
-        const fs::file_status status = fs::symlink_status(
-            detail::path_from_utf8(existing->second), filesystem_error);
-        if (!filesystem_error && fs::is_regular_file(status)
-            && !fs::is_symlink(status)) {
-            local_path = existing->second;
-            return true;
-        }
-        cache->materialized_by_identity.erase(existing);
-    }
-    const fs::path directory = detail::path_from_utf8(cache->directory);
-    const fs::path destination = directory / detail::path_from_utf8(
-        cache_key);
-    const fs::path temporary = directory / detail::path_from_utf8(
-        ".attachment-" + generate_uuid() + ".tmp");
+    const auto directory = cache->directory;
+    const std::string cache_key = digest + safe_cache_extension(basename);
+    const auto lookup = [&]() -> std::shared_ptr<ProjectAttachmentFile> {
+        const auto found = directory->files.find(cache_key);
+        return found == directory->files.end() ? nullptr : found->second.lock();
+    };
+    const auto usable = [](const std::shared_ptr<ProjectAttachmentFile>& file) {
+        if (!file) return false;
+        std::error_code ec;
+        const auto status = fs::symlink_status(detail::path_from_utf8(file->path), ec);
+        return !ec && fs::is_regular_file(status) && !fs::is_symlink(status);
+    };
+    // Hold file leases outside the directory lock: releasing the last lease
+    // also locks the directory to unlink it and remove its weak registry entry.
+    std::shared_ptr<ProjectAttachmentFile> file;
     {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
-        if (!output) return fail(error, "Could not create temporary attachment cache file.");
-        output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-        output.flush();
-        if (!output) {
+        const std::lock_guard<std::mutex> lock(directory->mutex);
+        file = lookup();
+    }
+    if (!usable(file)) {
+        file.reset();
+        const fs::path root = detail::path_from_utf8(directory->directory);
+        const fs::path temporary = root / detail::path_from_utf8(
+            ".attachment-" + generate_uuid() + ".tmp");
+        const auto remove_temporary = [&]() noexcept {
             std::error_code ignored;
             fs::remove(temporary, ignored);
-            return fail(error, "Could not write temporary attachment cache file.");
+        };
+        const detail::ScopeExit cleanup(remove_temporary);
+        // Large writes never hold the shared directory mutex. Racing imports
+        // recheck the identity before publishing their private temporary file.
+        {
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            if (!output) return fail(error, "Could not create temporary attachment cache file.");
+            output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+            output.close();
+            if (!output) return fail(error, "Could not write temporary attachment cache file.");
         }
+        std::error_code ec;
+        fs::permissions(temporary, fs::perms::owner_read | fs::perms::owner_write,
+                        fs::perm_options::replace, ec);
+        if (ec) return fail(error, "Could not secure materialized attachment file.");
+        auto candidate = std::make_shared<ProjectAttachmentFile>();
+        candidate->directory = directory;
+        candidate->key = cache_key;
+        // A unique installed path lets an older invalidated lease expire
+        // without ever unlinking a replacement with the same byte identity.
+        const fs::path destination = root / detail::path_from_utf8(
+            cache_key + "-" + generate_uuid() + safe_cache_extension(basename));
+        candidate->path = detail::path_to_utf8(destination);
+        bool installed = false;
+        {
+            const std::lock_guard<std::mutex> lock(directory->mutex);
+            file = lookup();
+            if (!usable(file)) {
+                fs::rename(temporary, destination, ec);
+                if (ec) return fail(error, "Could not install temporary attachment cache file.");
+                directory->files[cache_key] = candidate;
+                installed = true;
+            }
+        }
+        if (installed) file = std::move(candidate);
     }
-    std::error_code filesystem_error;
-    fs::rename(temporary, destination, filesystem_error);
-    if (filesystem_error) {
-        fs::remove(temporary, filesystem_error);
-        return fail(error, "Could not install temporary attachment cache file.");
-    }
-    fs::permissions(destination,
-                    fs::perms::owner_read | fs::perms::owner_write,
-                    fs::perm_options::replace, filesystem_error);
-    if (filesystem_error) {
-        fs::remove(destination, filesystem_error);
-        return fail(error, "Could not secure materialized attachment file.");
-    }
-    local_path = detail::path_to_utf8(destination);
-    cache->materialized_by_identity[cache_key] = local_path;
+    local_path = file->path;
+    cache->files[cache_key] = std::move(file);
     return true;
+}
+
+void prune_attachment_cache(std::shared_ptr<ProjectAttachmentCache>& cache,
+                            const std::vector<ProjectAttachment>& attachments) noexcept try {
+    if (!cache) return;
+    std::unordered_set<std::string> retained;
+    retained.reserve(attachments.size());
+    for (const auto& attachment : attachments) retained.insert(attachment.local_path);
+    make_attachment_cache_writable(cache);
+    for (auto it = cache->files.begin(); it != cache->files.end();) {
+        if (retained.count(it->second->path) == 0U
+            && cache->borrowed_version_paths.count(it->second->path) == 0U)
+            it = cache->files.erase(it);
+        else ++it;
+    }
+} catch (...) {
+    // Maintenance must not break an already committed attachment edit under
+    // allocation pressure. The next edit/save retries unused-file pruning.
 }
 
 bool valid_portable_root_name(const std::string& name) {
@@ -3463,7 +3533,7 @@ bool materialize_snapshot_attachments(
     ProjectConfig& project,
     std::vector<ProjectAttachment>& attachments,
     std::shared_ptr<ProjectAttachmentCache>& cache,
-    std::string* error) {
+    std::string* error, bool borrow_version_paths = false) {
     for (ProjectAttachment& attachment : attachments) {
         const auto bytes = files.files.find(attachment.bundle_path);
         if (bytes == files.files.end()
@@ -3588,6 +3658,13 @@ bool materialize_snapshot_attachments(
             }
             layer.render.starting_image.path = found->local_path;
         }
+    }
+    if (borrow_version_paths && cache) {
+        // Do not prune the current document or earlier borrowed versions.
+        for (const auto& attachment : attachments)
+            cache->borrowed_version_paths.insert(attachment.local_path);
+    } else {
+        prune_attachment_cache(cache, attachments);
     }
     const ValidationResult validation = validate(project);
     return validation.ok
@@ -4546,13 +4623,14 @@ bool use_relative_current_symlink(
 
 } // namespace
 
-ProjectAttachmentCache::~ProjectAttachmentCache() {
+ProjectAttachmentDirectory::~ProjectAttachmentDirectory() try {
     if (directory.empty()) return;
     std::error_code filesystem_error;
     const std::filesystem::path native = detail::path_from_utf8(directory);
     const std::filesystem::path temporary_root =
         std::filesystem::temp_directory_path(filesystem_error);
-    if (filesystem_error || native.parent_path() != temporary_root
+    if (filesystem_error
+        || !std::filesystem::equivalent(native.parent_path(), temporary_root, filesystem_error)
         || detail::path_to_utf8(native.filename()).rfind("pvt-asset-cache-", 0U)
                != 0U) {
         return;
@@ -4564,7 +4642,7 @@ ProjectAttachmentCache::~ProjectAttachmentCache() {
         return;
     }
     for (std::filesystem::directory_iterator iterator(native, filesystem_error), end;
-         !filesystem_error && iterator != end; ++iterator) {
+         !filesystem_error && iterator != end; iterator.increment(filesystem_error)) {
         const std::filesystem::file_status entry_status =
             std::filesystem::symlink_status(iterator->path(), filesystem_error);
         if (filesystem_error || !std::filesystem::is_regular_file(entry_status)
@@ -4575,6 +4653,22 @@ ProjectAttachmentCache::~ProjectAttachmentCache() {
     if (!filesystem_error) {
         std::filesystem::remove_all(native, filesystem_error);
     }
+}
+ catch (...) {
+    // Destruction is best-effort, including path conversion/allocation errors.
+}
+
+ProjectAttachmentFile::~ProjectAttachmentFile() try {
+    if (!directory || path.empty()) return;
+    const std::lock_guard<std::mutex> lock(directory->mutex);
+    std::error_code ignored;
+    std::filesystem::remove(detail::path_from_utf8(path), ignored);
+    const auto found = directory->files.find(key);
+    if (found != directory->files.end() && found->second.expired()) {
+        directory->files.erase(found);
+    }
+} catch (...) {
+    // The directory owner retries cleanup when the last snapshot is released.
 }
 
 ProjectDocument default_project_document() {
@@ -4699,6 +4793,7 @@ bool attach_project_file(ProjectDocument& document,
         } else {
             *existing = candidate;
         }
+        prune_attachment_cache(cache, document.attachments);
         document.attachment_cache = std::move(cache);
         document.dirty = document.dirty || changed;
         if (attached != nullptr) *attached = std::move(candidate);
@@ -4728,6 +4823,7 @@ bool detach_project_file(ProjectDocument& document,
                 }),
             document.attachments.end());
         if (document.attachments.size() != before) document.dirty = true;
+        prune_attachment_cache(document.attachment_cache, document.attachments);
         return true;
     } catch (const std::bad_alloc&) {
         return fail(error, "Not enough memory to detach project file.");
@@ -5245,7 +5341,7 @@ bool load_project_version(const ProjectDocument& document,
                            &snapshot_attachments)
             || !materialize_snapshot_attachments(
                 files, candidate, snapshot_attachments,
-                document.attachment_cache, error)) {
+                document.attachment_cache, error, true)) {
             return false;
         }
         destination = std::move(candidate);
@@ -5795,6 +5891,7 @@ bool sync_project_attachment_references(ProjectDocument& document,
                  const ProjectAttachment& right) {
                   return left.reference_id < right.reference_id;
               });
+    prune_attachment_cache(document.attachment_cache, document.attachments);
     return true;
 }
 
