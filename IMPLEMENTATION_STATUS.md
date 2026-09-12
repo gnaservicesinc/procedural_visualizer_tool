@@ -1,10 +1,30 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-10
+Last updated: 2026-09-12
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
+
+## 19.1.0 shared block-size LFO authoring
+
+Add LFO beside Block size creates a normal numeric LFO in the existing editor,
+with editing, removal and undo. Legacy block oscillators migrate into that
+shared workflow. CPU, Metal, OpenGL, BLACKOUT and preview scaling have regression
+coverage. Explicit value initialization fixes the migration-default declaration
+rejected by Clang on macOS and Windows. The code passed 46/46 local tests before
+the metadata-only release update.
+
+Release `v19.1.0` is published as the latest stable release at commit
+`0c041d1fda7bf82f35f57290f632ef3bcd62e99c`. Main desktop run `34662973664`
+and tagged run `34663468984` passed all five native platforms, including Linux
+shared-library packaging and installed-package checks. Main CodeQL run
+`34662973462` passed. All five published archives and `SHA256SUMS.txt` were
+downloaded; every checksum, extraction, archive root, native architecture and
+required Qt payload check passed. The published macOS app also passed deep
+strict signing verification, reported 19.1.0 and passed its CLI self-test.
+Verification artifacts are in `/private/tmp/pvt-release-19.1.0` (temporary).
+Release: https://github.com/gnaservicesinc/procedural_visualizer_tool/releases/tag/v19.1.0
 
 ## 19.0.1 Live startup recovery
 
