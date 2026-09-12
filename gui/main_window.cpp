@@ -2825,6 +2825,7 @@ MainWindow::MainWindow(QWidget* parent)
         }
         if (result.ok) {
             status_->setText(tr("Export complete"));
+            status_->setToolTip({});
             if (!automated_smoke) {
                 QMessageBox::information(this, tr("Export complete"),
                                          result.success_message.isEmpty()
@@ -2833,8 +2834,10 @@ MainWindow::MainWindow(QWidget* parent)
             }
         } else if (result.cancelled) {
             status_->setText(tr("Export cancelled"));
+            status_->setToolTip({});
         } else {
             status_->setText(tr("Export failed"));
+            status_->setToolTip(result.error);
             if (!automated_smoke) {
                 QMessageBox::critical(this, tr("Export failed"), result.error);
             }
@@ -25113,7 +25116,12 @@ bool MainWindow::runSmokeChecks(QString* error) {
     QFile exported_mesh(mesh_export_path);
     if (export_active_ || !exported_mesh.open(QIODevice::ReadOnly)
         || !exported_mesh.readAll().contains("o PVT_Displacement_Plane\n")) {
-        if (error) *error = QStringLiteral("The background displacement OBJ export failed.");
+        if (error) {
+            *error = QStringLiteral("The background displacement OBJ export failed: %1")
+                         .arg(status_->toolTip().isEmpty()
+                                  ? QStringLiteral("no worker diagnostic")
+                                  : status_->toolTip());
+        }
         return false;
     }
     undo_stack_->undo();
