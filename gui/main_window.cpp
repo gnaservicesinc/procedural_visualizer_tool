@@ -12135,7 +12135,7 @@ bool MainWindow::startPlaneDisplacementObjExport(const QString& destination) {
                     }
                     QSaveFile file(destination);
                     file.setDirectWriteFallback(false);
-                    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                    if (!file.open(QIODevice::WriteOnly)) {
                         result.error = file.errorString();
                         return result;
                     }
