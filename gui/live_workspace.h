@@ -4,6 +4,7 @@
 #include "procedural_visualizer_tool.h"
 
 #include <QImage>
+#include "live_target_registry.h"
 #include <QString>
 #include <QVector>
 #include <QWidget>
@@ -86,7 +87,9 @@ public:
     void setPresentationActive(bool active);
     bool isPresentationActive() const noexcept;
     bool isRealtimeOutputActive() const noexcept;
-    void requestRealtimeFrame();
+    // Routine playing refreshes coalesce into the next timer frame. Explicit
+    // authored edits and paused refreshes remain immediate, even below 1 FPS.
+    void requestRealtimeFrame(bool immediate = false);
     void resetRealtimeFrame();
     void setPlaybackRunning(bool running);
     void setOutputStartingEnabled(bool enabled);
@@ -116,11 +119,18 @@ public:
                               const QString& displayLabel);
     void revealAudioInputSetup(const std::string& roleUuid);
 
+    void setBackgroundOutput(bool background);
+    void setRemoteControlTargets(const QStringList& names, int current);
+    void enableRemoteAudio(bool enabled);
+    bool readRemoteAudio(std::uint8_t* pcm);
+
 signals:
+    void remoteControlSelected(int slot);
     void requestEditMode();
     void requestTogglePlayback();
     void runtimeStatusChanged(const QString& summary);
     void livePreviewFrame(const QImage& image);
+    void remotePresentationFrame(const QImage& image);
     void runtimeOutputSettingsChanged();
     void liveActiveChanged(bool active);
     void presentationActiveChanged(bool active);

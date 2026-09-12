@@ -47,6 +47,8 @@ class QWidget;
 class PreviewWidget;
 class PaletteRemixDialog;
 class LiveWorkspace;
+class RemoteBridge;
+class QSystemTrayIcon;
 
 namespace pvt::audio {
 class AudioPlayback;
@@ -61,6 +63,7 @@ public:
     void openProject(const QString& path);
     void openLiveMode();
     bool runSmokeChecks(QString* error = nullptr);
+    bool runRemoteSmokeChecks(QString* error = nullptr);
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -495,6 +498,12 @@ private:
     QStackedWidget* workspace_stack_ = nullptr;
     QWidget* editor_workspace_ = nullptr;
     LiveWorkspace* live_workspace_ = nullptr;
+    RemoteBridge* remote_bridge_ = nullptr;
+    QSystemTrayIcon* remote_tray_ = nullptr;
+    bool remote_quit_ = false;
+    bool remote_started_presentation_ = false;
+    void initializeRemotes();
+    bool setRemoteBackground(bool background);
     QMainWindow* live_popout_window_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QWidget* wave_page_ = nullptr;

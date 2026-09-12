@@ -1,3 +1,4 @@
+#include "audio_stream_tap.h"
 #include "audio_playback.h"
 
 #include "miniaudio.h"
@@ -130,6 +131,7 @@ bool prepare_rate_adjusted_decoder(const PlaybackTrack& track,
 } // namespace
 
 struct AudioPlayback::Impl {
+    AudioStreamTap remote_tap;
     struct Voice {
         ma_decoder decoder{};
         bool initialized = false;
@@ -221,6 +223,7 @@ struct AudioPlayback::Impl {
         for (std::size_t index = 0U; index < sample_count; ++index) {
             samples[index] = std::clamp(samples[index] * gain, -1.0F, 1.0F);
         }
+        self->remote_tap.write(samples, requested_frames);
         if (!any_active) self->started.store(false, std::memory_order_relaxed);
     }
 
@@ -579,5 +582,11 @@ bool write_mix_wav(const std::vector<PlaybackTrack>& tracks,
     }
     return true;
 }
+
+void AudioPlayback::enable_remote_audio(bool enabled) noexcept {
+    if (!enabled) impl_->remote_tap.discard();
+    impl_->remote_tap.enable(enabled);
+}
+bool AudioPlayback::read_remote_audio(std::uint8_t* pcm) noexcept { return impl_->remote_tap.read(pcm); }
 
 } // namespace pvt::audio

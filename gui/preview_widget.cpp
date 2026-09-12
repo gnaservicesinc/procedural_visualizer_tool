@@ -27,6 +27,7 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
 
 void PreviewWidget::setPreview(const QImage& image, Qt::TransformationMode scaling) {
     preview_ = image;
+    emit imagePresented(image);
     preview_scaling_ = scaling;
     update();
 }

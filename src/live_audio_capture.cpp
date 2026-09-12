@@ -1,3 +1,4 @@
+#include "audio_stream_tap.h"
 #include "live_audio_capture.h"
 
 #include "audio_input_processing.h"
@@ -248,6 +249,7 @@ double live_audio_adaptive_peak_decay(
 }
 
 struct LiveAudioCapture::Impl {
+    AudioStreamTap remote_tap;
     struct FrequencyStreamState {
         std::string uuid;
         AudioFrequencyRangeProcessor filter;
@@ -933,6 +935,8 @@ bool LiveAudioCapture::start_routing(
                             output->samples[i] += samples[i];
                     }
                     for (auto& sample : output->samples) sample = std::clamp(sample, -1.0F, 1.0F);
+                    if (output.get() == self->routed_outputs.front().get())
+                        self->remote_tap.write(output->samples.data(), period_frames);
                     if (Impl::RoutedDevice::transfer(output->ring, output->samples.data(), period_frames, true) < period_frames)
                         ++output->underruns;
                 }
@@ -1290,5 +1294,11 @@ void LiveAudioCapture::set_sensitivity(double requested) noexcept {
             static_cast<double>((std::numeric_limits<float>::max)()))),
         std::memory_order_relaxed);
 }
+
+void LiveAudioCapture::enable_remote_audio(bool enabled) noexcept {
+    if (!enabled) impl_->remote_tap.discard();
+    impl_->remote_tap.enable(enabled);
+}
+bool LiveAudioCapture::read_remote_audio(std::uint8_t* pcm) noexcept { return impl_->remote_tap.read(pcm); }
 
 } // namespace pvt::audio

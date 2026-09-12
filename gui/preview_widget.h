@@ -31,6 +31,7 @@ public:
     void setSelectedEffect(std::optional<std::size_t> index);
 
 signals:
+    void imagePresented(const QImage& image);
     void waveDragStarted(std::size_t index);
     void waveMoved(std::size_t index, double xPercent, double yPercent);
     void waveDragFinished(std::size_t index);

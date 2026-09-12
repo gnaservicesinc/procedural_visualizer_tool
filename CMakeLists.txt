@@ -574,6 +574,9 @@ if(PVT_BUILD_QT_GUI)
         gui/flexible_spin_box.cpp
         gui/flexible_spin_box.h
         gui/main_window.cpp
+        gui/main_window_remote.cpp
+        gui/remote_bridge.cpp
+        gui/remote_bridge.h
         gui/main_window.h
         gui/live_midi.h
         ${PVT_GUI_MIDI_SOURCES}
@@ -723,6 +726,11 @@ if(PVT_BUILD_QT_GUI)
 endif()
 
 if(BUILD_TESTING)
+    add_executable(pvt_audio_stream_tap_tests tests/audio_stream_tap_test.cpp)
+    target_compile_features(pvt_audio_stream_tap_tests PRIVATE cxx_std_17)
+    target_include_directories(pvt_audio_stream_tap_tests PRIVATE src)
+    add_test(NAME pvt_audio_stream_tap COMMAND pvt_audio_stream_tap_tests)
+
     add_executable(pvt_beat_tracker_tests third_party/btt/tests/tracker_test.c)
     target_compile_features(pvt_beat_tracker_tests PRIVATE c_std_11)
     target_link_libraries(pvt_beat_tracker_tests PRIVATE pvt_btt)

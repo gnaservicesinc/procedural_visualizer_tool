@@ -164,7 +164,8 @@ int main(int argc, char** argv) {
     const QStringList arguments = application.arguments();
     // Smoke tests must not overwrite a user's device bindings or output choices.
     QTemporaryDir smoke_settings;
-    if (arguments.contains(QStringLiteral("--smoke-test"))) {
+    if (arguments.contains(QStringLiteral("--smoke-test"))
+        || arguments.contains(QStringLiteral("--remote-smoke-test"))) {
         if (!smoke_settings.isValid()) return 1;
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, smoke_settings.path());
@@ -196,6 +197,12 @@ int main(int argc, char** argv) {
     apply_studio_theme(application);
 
     MainWindow window;
+    if (arguments.contains(QStringLiteral("--remote-smoke-test"))) {
+        QString error;
+        const bool passed = window.runRemoteSmokeChecks(&error);
+        std::fprintf(stderr, "%s\n", passed ? "Remote desktop smoke passed" : error.toUtf8().constData());
+        return passed ? 0 : 1;
+    }
     if (arguments.contains(QStringLiteral("--smoke-test"))) {
         QString smoke_error;
         if (!window.runSmokeChecks(&smoke_error)) {

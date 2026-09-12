@@ -1,3 +1,4 @@
+#include "remote_bridge.h"
 #include "main_window.h"
 #include "../src/render_asset_cache.h"
 #include "live_audio_capture.h"
@@ -2981,7 +2982,8 @@ MainWindow::MainWindow(QWidget* parent)
     updateWindowTitle();
     updateCompatibilityWarning();
     restoreUserSettings();
-    if (QCoreApplication::arguments().contains(QStringLiteral("--smoke-test"))) {
+    if (QCoreApplication::arguments().contains(QStringLiteral("--smoke-test"))
+        || QCoreApplication::arguments().contains(QStringLiteral("--remote-smoke-test"))) {
         // CI package validation must not enter a display-driver capability
         // probe or start a GPU preview. Headless OpenGL context creation can
         // block inside a vendor driver and cannot be bounded by Qt. The normal
@@ -2998,6 +3000,7 @@ MainWindow::MainWindow(QWidget* parent)
     }
     configure_readable_layouts(this);
     qApp->installEventFilter(this);
+    initializeRemotes();
     QTimer::singleShot(0, this, [this] {
         configure_readable_layouts(this);
         if (document_revision_ == 1U && current_project_path_.isEmpty()
@@ -3010,6 +3013,7 @@ MainWindow::MainWindow(QWidget* parent)
 }
 
 MainWindow::~MainWindow() {
+    if (remote_bridge_) remote_bridge_->stop();
     qApp->removeEventFilter(this);
     suppress_realtime_preview_resume_ = true;
     stopPlayback();
@@ -3392,6 +3396,8 @@ void MainWindow::updateWorkflowSummaries() {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    if (!remote_quit_ && remote_bridge_ && remote_bridge_->minimizeOnClose()
+        && setRemoteBackground(true)) { event->ignore(); return; }
     if (export_watcher_ != nullptr && export_watcher_->isRunning()) {
         close_after_export_ = true;
         cancel_export_.store(true);
@@ -8096,6 +8102,11 @@ void MainWindow::createToolbar() {
     settings_action_->setIcon(
         style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     settings_menu->addAction(settings_action_);
+    auto* remotes_action = settings_menu->addAction(tr("Networking & Remotes…"));
+    remotes_action->setObjectName(QStringLiteral("remoteManagerAction"));
+    connect(remotes_action, &QAction::triggered, this, [this] {
+        if (remote_bridge_) remote_bridge_->showManager(this);
+    });
     toolbar->addSeparator();
     toolbar->addAction(settings_action_);
     connect(settings_action_, &QAction::triggered,
@@ -12982,6 +12993,16 @@ void MainWindow::showApplicationSettings() {
     ApplicationSettingsDialog dialog(current_undo_limit, current_performance,
                                      current_recent_limit,
                                      hasCustomNewProjectDefaults(), this);
+    if (auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("applicationSettingsTabs"))) {
+        auto* page = new QWidget;
+        auto* layout = new QVBoxLayout(page);
+        auto* manager = new QPushButton(tr("Open Networking & Remotes…"));
+        layout->addWidget(manager); layout->addStretch();
+        tabs->addTab(page, tr("Remotes"));
+        connect(manager, &QPushButton::clicked, &dialog, [this, &dialog] {
+            if (remote_bridge_) remote_bridge_->showManager(&dialog);
+        });
+    }
     configure_readable_layouts(&dialog);
     if (dialog.exec() != QDialog::Accepted) return;
 
@@ -19132,8 +19153,9 @@ void MainWindow::schedulePreview() {
     // for the same CPU/GPU and could overwrite a newer delivered frame.
     if (live_workspace_ != nullptr
         && live_workspace_->isRealtimeOutputActive()) {
-        // Authoring must be visible immediately even with a slow Live clock.
-        live_workspace_->requestRealtimeFrame();
+        // The output timer already samples the playback timeline at project FPS.
+        // Only an explicit edit/scrub needs an immediate out-of-band refresh.
+        if (!advancing_playback_timeline_) live_workspace_->requestRealtimeFrame(true);
         preview_deferred_ = false;
         if (preview_watcher_ != nullptr && preview_watcher_->isRunning()
             && preview_cancel_ != nullptr) {

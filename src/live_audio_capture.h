@@ -186,6 +186,9 @@ public:
     void set_gain(double gain) noexcept;
     void set_sensitivity(double sensitivity) noexcept;
 
+    void enable_remote_audio(bool enabled) noexcept;
+    bool read_remote_audio(std::uint8_t* pcm) noexcept;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

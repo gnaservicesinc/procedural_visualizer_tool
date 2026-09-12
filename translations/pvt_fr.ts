@@ -883,29 +883,39 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2292"/>
-        <location line="+2149"/>
-        <location line="+938"/>
+        <location filename="../gui/live_workspace.cpp" line="+2309"/>
+        <location line="+2168"/>
+        <location line="+945"/>
         <source>Listening…</source>
         <translation>En attente d’un signal…</translation>
     </message>
     <message>
-        <location line="-3738"/>
-        <location line="+651"/>
-        <location line="+2144"/>
+        <location line="-3768"/>
+        <location line="+655"/>
+        <location line="+2163"/>
         <location line="+5"/>
-        <location line="+939"/>
+        <location line="+946"/>
         <source>MIDI Learn</source>
         <translation>Apprentissage MIDI</translation>
     </message>
     <message>
-        <location line="-4543"/>
-        <location line="+2486"/>
+        <location line="-4905"/>
+        <source>Active Control Remote: %1</source>
+        <translation>Télécommande active : %1</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Networking &amp; Remotes</source>
+        <translation>Réseau et télécommandes</translation>
+    </message>
+    <message>
+        <location line="+331"/>
+        <location line="+2499"/>
         <source>STANDBY</source>
         <translation>EN ATTENTE</translation>
     </message>
     <message>
-        <location line="-2479"/>
+        <location line="-2492"/>
         <source>Edit Project</source>
         <translation>Modifier le projet</translation>
     </message>
@@ -916,20 +926,20 @@
     </message>
     <message>
         <location line="+9"/>
-        <location line="+2483"/>
+        <location line="+2496"/>
         <location line="+23"/>
         <source>FREEZE</source>
         <translation>FIGER</translation>
     </message>
     <message>
-        <location line="-2502"/>
-        <location line="+2480"/>
+        <location line="-2515"/>
+        <location line="+2493"/>
         <location line="+29"/>
         <source>BLACKOUT</source>
         <translation>ÉCRAN NOIR</translation>
     </message>
     <message>
-        <location line="-2502"/>
+        <location line="-2515"/>
         <source>Play / Pause · Space</source>
         <translation>Lecture / Pause · Espace</translation>
     </message>
@@ -940,29 +950,29 @@
     </message>
     <message>
         <location line="+2"/>
-        <location line="+3064"/>
+        <location line="+3086"/>
         <source>MIDI</source>
         <translation>MIDI</translation>
     </message>
     <message>
-        <location line="-3063"/>
-        <location line="+2456"/>
+        <location line="-3085"/>
+        <location line="+2469"/>
         <source>— fps</source>
         <translation>— images/s</translation>
     </message>
     <message>
-        <location line="-2455"/>
+        <location line="-2468"/>
         <source>Completed frames per second, measured over a quarter-second window. This measures frame delivery to the UI, not the display refresh rate.</source>
         <translation>Nombre d’images terminées par seconde, mesuré sur un quart de seconde. Il s’agit du débit d’images fournies à l’interface, et non de la fréquence de rafraîchissement de l’écran.</translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+2453"/>
+        <location line="+2466"/>
         <source>No frame</source>
         <translation>Aucune image</translation>
     </message>
     <message>
-        <location line="-2452"/>
+        <location line="-2465"/>
         <source>Scene: —</source>
         <translation>Scène : —</translation>
     </message>
@@ -1019,12 +1029,12 @@
     </message>
     <message>
         <location line="-1"/>
-        <location line="+2083"/>
+        <location line="+2095"/>
         <source>Stop Audio Routing</source>
         <translation>Arrêter le routage audio</translation>
     </message>
     <message>
-        <location line="-2074"/>
+        <location line="-2086"/>
         <source>Audio routing stopped</source>
         <translation>Routage audio arrêté</translation>
     </message>
@@ -1235,18 +1245,18 @@
         <location line="+9"/>
         <location line="+4"/>
         <location line="+355"/>
-        <location line="+2563"/>
+        <location line="+2586"/>
         <source> ms</source>
         <translation> ms</translation>
     </message>
     <message>
-        <location line="-3042"/>
-        <location line="+1247"/>
+        <location line="-3065"/>
+        <location line="+1251"/>
         <source>Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source.</source>
         <translation>Décalage portable de la configuration. Une valeur positive avance un battement reçu en retard par l’analyseur ; une valeur négative retarde une source en avance.</translation>
     </message>
     <message>
-        <location line="-1245"/>
+        <location line="-1249"/>
         <source>Tap beat to align</source>
         <translation>Taper le rythme pour aligner</translation>
     </message>
@@ -1267,12 +1277,12 @@
     </message>
     <message>
         <location line="+1"/>
-        <location line="+2082"/>
+        <location line="+2095"/>
         <source>Waiting for audio…</source>
         <translation>En attente d’audio…</translation>
     </message>
     <message>
-        <location line="-2081"/>
+        <location line="-2094"/>
         <source>Causal analysis</source>
         <translation>Analyse causale</translation>
     </message>
@@ -1511,35 +1521,35 @@
     <message>
         <location line="+1"/>
         <location line="+85"/>
-        <location line="+2235"/>
+        <location line="+2257"/>
         <source>Remove</source>
         <translation>Supprimer</translation>
     </message>
     <message>
-        <location line="-2309"/>
+        <location line="-2331"/>
         <source>On</source>
         <translation>Actif</translation>
     </message>
     <message>
         <location line="+0"/>
-        <location line="+2304"/>
+        <location line="+2326"/>
         <location line="+193"/>
         <source>Name</source>
         <translation>Nom</translation>
     </message>
     <message>
-        <location line="-2497"/>
+        <location line="-2519"/>
         <source>Source</source>
         <translation>Source</translation>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+2522"/>
+        <location line="+2544"/>
         <source>Target</source>
         <translation>Cible</translation>
     </message>
     <message>
-        <location line="-2522"/>
+        <location line="-2544"/>
         <source>Mode</source>
         <translation>Mode</translation>
     </message>
@@ -1676,18 +1686,18 @@
 %1</translation>
     </message>
     <message>
-        <location line="+273"/>
+        <location line="+277"/>
         <source>No logical role</source>
         <translation>Aucun rôle logique</translation>
     </message>
     <message>
         <location line="+37"/>
-        <location line="+1949"/>
+        <location line="+1968"/>
         <source>Unresolved · %1</source>
         <translation>Non résolu · %1</translation>
     </message>
     <message>
-        <location line="-1939"/>
+        <location line="-1958"/>
         <source>Unresolved scene</source>
         <translation>Scène non résolue</translation>
     </message>
@@ -1749,40 +1759,40 @@
     <message>
         <location line="+21"/>
         <location line="+1"/>
-        <location line="+2990"/>
+        <location line="+3016"/>
         <location line="+27"/>
         <location line="+43"/>
         <source>System default</source>
         <translation>Valeur par défaut du système</translation>
     </message>
     <message>
-        <location line="-3054"/>
-        <location line="+2988"/>
+        <location line="-3080"/>
+        <location line="+3014"/>
         <source>%1 · default</source>
         <translation>%1 · par défaut</translation>
     </message>
     <message>
-        <location line="-2979"/>
+        <location line="-3005"/>
         <location line="+108"/>
-        <location line="+2876"/>
+        <location line="+2902"/>
         <location line="+20"/>
         <source> · looping file</source>
         <translation> · fichier en boucle</translation>
     </message>
     <message>
-        <location line="-2977"/>
-        <location line="+2985"/>
+        <location line="-3003"/>
+        <location line="+3011"/>
         <source>previously selected input</source>
         <translation>entrée sélectionnée précédemment</translation>
     </message>
     <message>
-        <location line="-2983"/>
-        <location line="+2984"/>
+        <location line="-3009"/>
+        <location line="+3010"/>
         <source>Unavailable · %1</source>
         <translation>Indisponible · %1</translation>
     </message>
     <message>
-        <location line="-2968"/>
+        <location line="-2994"/>
         <source>Input discovery failed: %1</source>
         <translation>Échec de la détection des entrées : %1</translation>
     </message>
@@ -1812,12 +1822,12 @@
         <translation>Entrée audio indisponible</translation>
     </message>
     <message>
-        <location line="+308"/>
+        <location line="+311"/>
         <source>Live performance runtime started.</source>
         <translation>La performance Live a démarré.</translation>
     </message>
     <message>
-        <location line="+110"/>
+        <location line="+115"/>
         <source>Live Preview Output stopped.</source>
         <translation>La sortie d’aperçu Live est arrêtée.</translation>
     </message>
@@ -1862,7 +1872,7 @@
         <translation> · Projet</translation>
     </message>
     <message>
-        <location line="+126"/>
+        <location line="+127"/>
         <source>STARTING</source>
         <translation>DÉMARRAGE</translation>
     </message>
@@ -1887,7 +1897,7 @@
         <translation>NOIR</translation>
     </message>
     <message>
-        <location line="+29"/>
+        <location line="+37"/>
         <source>An effective audio clock uses a different logical role than the active microphone. The last good frame is being held; choose the same role in Live or edit the advanced route.</source>
         <translation>Une horloge audio effective utilise un rôle logique différent de celui du microphone actif. La dernière image valide est conservée ; choisissez le même rôle dans Live ou modifiez le routage avancé.</translation>
     </message>
@@ -1897,7 +1907,7 @@
         <translation>Le flux fréquentiel nommé d’une horloge audio effective est indisponible. La dernière image valide est conservée ; choisissez un flux défini dans le projet ou modifiez le routage avancé.</translation>
     </message>
     <message>
-        <location line="+82"/>
+        <location line="+83"/>
         <source>HOLDING</source>
         <translation>IMAGE CONSERVÉE</translation>
     </message>
@@ -2175,7 +2185,7 @@
         <translation>Actuel</translation>
     </message>
     <message>
-        <location line="+114"/>
+        <location line="+115"/>
         <source>Input range</source>
         <translation>Plage d’entrée</translation>
     </message>
@@ -2247,7 +2257,7 @@
         <translation>Apprendre une commande MIDI Live</translation>
     </message>
     <message>
-        <location line="+185"/>
+        <location line="+190"/>
         <source>Capture Live Scene</source>
         <translation>Capturer une scène Live</translation>
     </message>
@@ -2317,18 +2327,18 @@
         <translation>Modifier la sortie d’horloge MIDI du projet</translation>
     </message>
     <message>
-        <location line="+249"/>
+        <location line="+251"/>
         <source>The selected Live role is not an audio input.</source>
         <translation>Le rôle Live sélectionné n’est pas une entrée audio.</translation>
     </message>
     <message>
-        <location line="-2916"/>
-        <location line="+2920"/>
+        <location line="-2942"/>
+        <location line="+2946"/>
         <source>Unavailable · </source>
         <translation>Indisponible · </translation>
     </message>
     <message>
-        <location line="-1630"/>
+        <location line="-1638"/>
         <source>Manage Live Roles</source>
         <translation>Gérer les rôles Live</translation>
     </message>
@@ -2343,23 +2353,23 @@
         <translation>Rôle</translation>
     </message>
     <message>
-        <location line="+1627"/>
+        <location line="+1635"/>
         <source> · default</source>
         <translation> · par défaut</translation>
     </message>
     <message>
-        <location line="-2003"/>
-        <location line="+2081"/>
+        <location line="-2011"/>
+        <location line="+2089"/>
         <source>PAUSED</source>
         <translation>EN PAUSE</translation>
     </message>
     <message>
-        <location line="-2086"/>
+        <location line="-2094"/>
         <source>WAITING FOR AUDIO</source>
         <translation>EN ATTENTE DU SIGNAL AUDIO</translation>
     </message>
     <message>
-        <location line="-2731"/>
+        <location line="-2753"/>
         <source>LIVE CONTROLS</source>
         <translation>COMMANDES LIVE</translation>
     </message>
@@ -2370,19 +2380,19 @@
     </message>
     <message>
         <location line="+10"/>
-        <location line="+2055"/>
-        <location line="+101"/>
+        <location line="+2059"/>
+        <location line="+105"/>
         <source>Start Video Output</source>
         <translation>Démarrer la sortie vidéo</translation>
     </message>
     <message>
-        <location line="-2143"/>
+        <location line="-2151"/>
         <source>Full Screen / Window</source>
         <translation>Plein écran / Fenêtre</translation>
     </message>
     <message>
         <location line="+46"/>
-        <location filename="../gui/main_window.cpp" line="+20079"/>
+        <location filename="../gui/main_window.cpp" line="+20116"/>
         <source>Audio &amp; Video</source>
         <translation>Audio et vidéo</translation>
     </message>
@@ -2418,7 +2428,7 @@
         <translation>Appliquer à la sortie</translation>
     </message>
     <message>
-        <location line="+876"/>
+        <location line="+880"/>
         <source> · input</source>
         <translation> · entrée</translation>
     </message>
@@ -2455,7 +2465,7 @@
     </message>
     <message>
         <location line="+141"/>
-        <location line="+100"/>
+        <location line="+104"/>
         <source>Stop Video Output</source>
         <translation>Arrêter la sortie vidéo</translation>
     </message>
@@ -2465,17 +2475,17 @@
         <translation>Sortie vidéo arrêtée.</translation>
     </message>
     <message>
-        <location line="+44"/>
+        <location line="+47"/>
         <source>Video output started.</source>
         <translation>Sortie vidéo démarrée.</translation>
     </message>
     <message>
-        <location line="+139"/>
+        <location line="+140"/>
         <source>Audio routing running · %1 sources · %2 output mixes</source>
         <translation>Routage audio actif · %1 sources · %2 mix de sortie</translation>
     </message>
     <message>
-        <location line="+359"/>
+        <location line="+369"/>
         <source>%1 × %2 · %3 ms · %4 missed deadlines</source>
         <translation>%1 × %2 · %3 ms · %4 échéances manquées</translation>
     </message>
@@ -2488,7 +2498,7 @@
 <context>
     <name>MainWindow</name>
     <message>
-        <location filename="../gui/main_window.cpp" line="-17633"/>
+        <location filename="../gui/main_window.cpp" line="-17669"/>
         <source>Project Sync &amp; Audio is edited in the persistent Drivers panel above. Expand it to configure the project clock and inherited audio profile alongside the active layer override.</source>
         <translation>La synchronisation et l’audio du projet se règlent dans le panneau permanent de pilotage ci-dessus. Développez-le pour configurer l’horloge du projet et le profil audio hérité, à côté des réglages propres au calque actif.</translation>
     </message>
@@ -2499,87 +2509,87 @@
     </message>
     <message>
         <location line="+1"/>
-        <location line="+577"/>
+        <location line="+587"/>
         <location line="+143"/>
-        <location line="+19666"/>
+        <location line="+19692"/>
         <source>Starting Colors</source>
         <translation>Couleurs initiales</translation>
     </message>
     <message>
-        <location line="-20385"/>
-        <location line="+577"/>
-        <location line="+19811"/>
+        <location line="-20421"/>
+        <location line="+587"/>
+        <location line="+19837"/>
         <source>Layer Effects</source>
         <translation>Effets du calque</translation>
     </message>
     <message>
-        <location line="-20387"/>
-        <location line="+575"/>
-        <location line="+19810"/>
+        <location line="-20423"/>
+        <location line="+585"/>
+        <location line="+19836"/>
         <source>Modifiers</source>
         <translation>Modificateurs</translation>
     </message>
     <message>
-        <location line="-20384"/>
-        <location line="+575"/>
-        <location line="+19810"/>
+        <location line="-20420"/>
+        <location line="+585"/>
+        <location line="+19836"/>
         <source>Movement</source>
         <translation>Mouvement</translation>
     </message>
     <message>
-        <location line="-20384"/>
-        <location line="+574"/>
-        <location line="+1637"/>
-        <location line="+18175"/>
+        <location line="-20420"/>
+        <location line="+584"/>
+        <location line="+1639"/>
+        <location line="+18199"/>
         <source>Post Effects</source>
         <translation>Effets de finition</translation>
     </message>
     <message>
-        <location line="-20385"/>
-        <location line="+615"/>
-        <location line="+3293"/>
+        <location line="-20421"/>
+        <location line="+625"/>
+        <location line="+3295"/>
         <location line="+948"/>
         <source>Canvas &amp; Loop</source>
         <translation>Canevas et boucle</translation>
     </message>
     <message>
-        <location line="-4855"/>
-        <location line="+4858"/>
+        <location line="-4867"/>
+        <location line="+4870"/>
         <source>Project Sync &amp; Audio</source>
         <translation>Synchronisation et audio du projet</translation>
     </message>
     <message>
-        <location line="-4857"/>
-        <location line="+572"/>
+        <location line="-4869"/>
+        <location line="+582"/>
         <location line="+42"/>
-        <location line="+3023"/>
+        <location line="+3025"/>
         <location line="+149"/>
         <location line="+1075"/>
-        <location line="+15523"/>
+        <location line="+15547"/>
         <source>Export</source>
         <translation>Exporter</translation>
     </message>
     <message>
-        <location line="-20383"/>
-        <location line="+3637"/>
+        <location line="-20419"/>
+        <location line="+3649"/>
         <location line="+1227"/>
         <source>History</source>
         <translation>Historique</translation>
     </message>
     <message>
-        <location line="-4853"/>
+        <location line="-4865"/>
         <source>Current workflow context</source>
         <translation>Contexte de travail actuel</translation>
     </message>
     <message>
         <location line="+7"/>
-        <location line="+1916"/>
-        <location line="+18484"/>
+        <location line="+1928"/>
+        <location line="+18508"/>
         <source>Synchronization</source>
         <translation>Synchronisation</translation>
     </message>
     <message>
-        <location line="-20398"/>
+        <location line="-20434"/>
         <source>Project and active-layer synchronization</source>
         <translation>Synchronisation du projet et du calque actif</translation>
     </message>
@@ -2610,23 +2620,23 @@
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3738"/>
+        <location line="+3750"/>
         <source>Start Live Preview Output</source>
         <translation>Démarrer la sortie d’aperçu Live</translation>
     </message>
     <message>
-        <location line="-3733"/>
+        <location line="-3745"/>
         <source>Streaming the editor preview; performance inputs remain off.</source>
         <translation>Diffusion de l’aperçu de l’éditeur ; les entrées de performance restent désactivées.</translation>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3726"/>
+        <location line="+3738"/>
         <source>Stopped — start this to present the editor preview without entering LIVE.</source>
         <translation>Arrêtée — démarrez pour présenter l’aperçu de l’éditeur sans passer en LIVE.</translation>
     </message>
     <message>
-        <location line="-3711"/>
+        <location line="-3723"/>
         <source>Ready</source>
         <translation>Prêt</translation>
     </message>
@@ -2642,12 +2652,12 @@
     </message>
     <message>
         <location line="+5"/>
-        <location line="+16638"/>
+        <location line="+16674"/>
         <source>Preview failed because of an unexpected error.</source>
         <translation>L’aperçu a échoué à cause d’une erreur inattendue.</translation>
     </message>
     <message>
-        <location line="-16607"/>
+        <location line="-16643"/>
         <source>Preview %1 × %2 · frame %3/%4</source>
         <translation>Aperçu %1 × %2 · image %3/%4</translation>
     </message>
@@ -2716,15 +2726,15 @@
     <message>
         <location line="+7"/>
         <location line="+6"/>
-        <location line="+17049"/>
+        <location line="+17085"/>
         <location line="+6"/>
         <source>Load failed</source>
         <translation>Échec du chargement</translation>
     </message>
     <message>
-        <location line="-17058"/>
+        <location line="-17094"/>
         <location line="+5"/>
-        <location line="+23824"/>
+        <location line="+23860"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+28"/>
@@ -2734,7 +2744,7 @@
         <translation>Échec de l’enregistrement</translation>
     </message>
     <message>
-        <location line="-23921"/>
+        <location line="-23957"/>
         <source>The active project was not changed.
 
 %1</source>
@@ -2744,31 +2754,31 @@
     </message>
     <message>
         <location line="+25"/>
-        <location line="+3993"/>
+        <location line="+4005"/>
         <source>Unexpected version-comparison error: %1</source>
         <translation>Erreur inattendue lors de la comparaison des versions : %1</translation>
     </message>
     <message>
-        <location line="-3986"/>
-        <location line="+3989"/>
+        <location line="-3998"/>
+        <location line="+4001"/>
         <source>Version comparison failed because of an unexpected error.</source>
         <translation>La comparaison des versions a échoué à cause d’une erreur inattendue.</translation>
     </message>
     <message>
-        <location line="-3964"/>
-        <location line="+3906"/>
+        <location line="-3976"/>
+        <location line="+3918"/>
         <source>Could not compare versions: %1</source>
         <translation>Impossible de comparer les versions : %1</translation>
     </message>
     <message>
-        <location line="-3902"/>
-        <location line="+3907"/>
+        <location line="-3914"/>
+        <location line="+3919"/>
         <source>No semantic project differences.</source>
         <translation>Aucune différence sémantique entre les projets.</translation>
     </message>
     <message>
-        <location line="-3901"/>
-        <location line="+3907"/>
+        <location line="-3913"/>
+        <location line="+3919"/>
         <source>%1
   %2
 → %3</source>
@@ -2777,20 +2787,20 @@
 → %3</translation>
     </message>
     <message>
-        <location line="-3834"/>
+        <location line="-3836"/>
         <source>Project and layer workspace categories</source>
         <translation>Catégories de l’espace de travail du projet et des calques</translation>
     </message>
     <message>
         <location line="+5"/>
-        <location line="+4899"/>
-        <location line="+3054"/>
-        <location line="+11855"/>
+        <location line="+4901"/>
+        <location line="+3059"/>
+        <location line="+11874"/>
         <source>Project</source>
         <translation>Projet</translation>
     </message>
     <message>
-        <location line="-19804"/>
+        <location line="-19830"/>
         <source>Edit project-wide canvas, loop, synchronization, audio, and history settings.</source>
         <translation>Modifier le canevas, la boucle, la synchronisation, l’audio et l’historique de l’ensemble du projet.</translation>
     </message>
@@ -2891,20 +2901,20 @@
     </message>
     <message>
         <location line="+2"/>
-        <location line="+10309"/>
+        <location line="+10326"/>
         <location line="+3"/>
         <source>enabled</source>
         <translation>activé</translation>
     </message>
     <message>
-        <location line="-10312"/>
-        <location line="+6980"/>
+        <location line="-10329"/>
+        <location line="+6987"/>
         <location line="+23"/>
         <source>off</source>
         <translation>désactivé</translation>
     </message>
     <message>
-        <location line="-7001"/>
+        <location line="-7008"/>
         <source>%1 categorized layer effects</source>
         <translation>Effets de calque classés par catégorie : %1</translation>
     </message>
@@ -3099,7 +3109,7 @@
         <translation>Cette catégorie regroupe une partie précise du calque actif ; utilisez la navigation supérieure pour changer de section sans parcourir des commandes sans rapport.</translation>
     </message>
     <message>
-        <location line="+10"/>
+        <location line="+12"/>
         <source>Cancelling export before closing…</source>
         <translation>Annulation de l’exportation avant fermeture…</translation>
     </message>
@@ -3159,12 +3169,12 @@
         <location line="+689"/>
         <location line="+147"/>
         <location line="+2833"/>
-        <location line="+1177"/>
+        <location line="+1182"/>
         <source>Remove</source>
         <translation>Supprimer</translation>
     </message>
     <message>
-        <location line="-4845"/>
+        <location line="-4850"/>
         <location line="+689"/>
         <location line="+147"/>
         <source>Up</source>
@@ -3186,30 +3196,30 @@
         <location line="+5"/>
         <location line="+689"/>
         <location line="+150"/>
-        <location line="+4007"/>
+        <location line="+4012"/>
         <location line="+120"/>
         <source>Enabled</source>
         <translation>Activé</translation>
     </message>
     <message>
-        <location line="-4965"/>
-        <location line="+19320"/>
+        <location line="-4970"/>
+        <location line="+19344"/>
         <source>Use synchronized clock</source>
         <translation>Utiliser l’horloge synchronisée</translation>
     </message>
     <message>
-        <location line="-19305"/>
+        <location line="-19329"/>
         <location line="+701"/>
         <location line="+216"/>
         <location line="+1601"/>
         <location line="+1170"/>
         <location line="+17"/>
-        <location line="+1745"/>
+        <location line="+1750"/>
         <source>Name</source>
         <translation>Nom</translation>
     </message>
     <message>
-        <location line="-5447"/>
+        <location line="-5452"/>
         <location line="+917"/>
         <source>Audio response</source>
         <translation>Réponse audio</translation>
@@ -3232,25 +3242,25 @@
     <message>
         <location line="+1"/>
         <location line="+2173"/>
-        <location line="+8568"/>
+        <location line="+8583"/>
         <location line="+21"/>
         <source>Spatial frequency</source>
         <translation>Fréquence spatiale</translation>
     </message>
     <message>
-        <location line="-10761"/>
+        <location line="-10776"/>
         <location line="+916"/>
         <location line="+391"/>
         <location line="+552"/>
         <location line="+314"/>
-        <location line="+2717"/>
+        <location line="+2722"/>
         <location line="+65"/>
         <location line="+557"/>
         <source>Cycles per loop</source>
         <translation>Cycles par boucle</translation>
     </message>
     <message>
-        <location line="-5511"/>
+        <location line="-5516"/>
         <location line="+697"/>
         <location line="+219"/>
         <source>Phase (degrees)</source>
@@ -3868,7 +3878,7 @@
     </message>
     <message>
         <location line="+1"/>
-        <location line="+10031"/>
+        <location line="+10046"/>
         <location line="+11"/>
         <location line="+21"/>
         <location line="+14"/>
@@ -3881,8 +3891,8 @@
         <translation>Centre X (0–1)</translation>
     </message>
     <message>
-        <location line="-10164"/>
-        <location line="+10031"/>
+        <location line="-10179"/>
+        <location line="+10046"/>
         <location line="+11"/>
         <location line="+21"/>
         <location line="+14"/>
@@ -3895,7 +3905,7 @@
         <translation>Centre Y (0–1)</translation>
     </message>
     <message>
-        <location line="-10164"/>
+        <location line="-10179"/>
         <source>Local radius (0 = whole layer)</source>
         <translation>Rayon local (0 = calque entier)</translation>
     </message>
@@ -4012,12 +4022,12 @@
     </message>
     <message>
         <location line="+1"/>
-        <location line="+6503"/>
+        <location line="+6508"/>
         <source>Placement</source>
         <translation>Placement</translation>
     </message>
     <message>
-        <location line="-6499"/>
+        <location line="-6504"/>
         <source>Blank-space handling</source>
         <translation>Gestion des espaces vides</translation>
     </message>
@@ -4411,54 +4421,54 @@
     </message>
     <message>
         <location line="+6"/>
-        <location line="+11218"/>
+        <location line="+11233"/>
         <source>Channel</source>
         <translation>Canal</translation>
     </message>
     <message>
-        <location line="-11217"/>
+        <location line="-11232"/>
         <location line="+973"/>
-        <location line="+2718"/>
+        <location line="+2723"/>
         <location line="+61"/>
-        <location line="+7466"/>
+        <location line="+7476"/>
         <source>Minimum</source>
         <translation>Minimum</translation>
     </message>
     <message>
-        <location line="-11217"/>
+        <location line="-11232"/>
         <location line="+973"/>
-        <location line="+2718"/>
+        <location line="+2723"/>
         <location line="+63"/>
-        <location line="+7464"/>
+        <location line="+7474"/>
         <source>Maximum</source>
         <translation>Maximum</translation>
     </message>
     <message>
-        <location line="-11208"/>
-        <location line="+11212"/>
+        <location line="-11223"/>
+        <location line="+11227"/>
         <source>Red</source>
         <translation>Rouge</translation>
     </message>
     <message>
-        <location line="-11211"/>
-        <location line="+11211"/>
+        <location line="-11226"/>
+        <location line="+11226"/>
         <source>Green</source>
         <translation>Vert</translation>
     </message>
     <message>
-        <location line="-11210"/>
-        <location line="+11210"/>
+        <location line="-11225"/>
+        <location line="+11225"/>
         <source>Blue</source>
         <translation>Bleu</translation>
     </message>
     <message>
-        <location line="-11209"/>
-        <location line="+11209"/>
+        <location line="-11224"/>
+        <location line="+11224"/>
         <source>Alpha</source>
         <translation>Alpha</translation>
     </message>
     <message>
-        <location line="-11207"/>
+        <location line="-11222"/>
         <source>Used when the authored starting palette is off. Every choice in this box obeys its RGB/alpha Min/Max range. Channel resolution scales automatically with the full-resolution output and block size; ordered patterns walk an automatically sized RGB or RGBA lattice without omitting tuples. Corrected RGBA ordering changes alpha fastest so the RGB gamut remains one broad horizontal, vertical, diagonal, or spiral field. Random is the only shuffled color-static pattern. Generated values remain float32 through effects and compositing; only the chosen output format quantizes them. Preview and export use the same full-resolution coordinates.</source>
         <translation>Utilisé lorsque la palette initiale définie est désactivée. Chaque choix respecte sa plage Min/Max RVB/alpha. La résolution des canaux s’adapte automatiquement à la sortie pleine résolution et à la taille des blocs ; les motifs ordonnés parcourent une grille RVB ou RVBA dimensionnée automatiquement sans omettre de tuples. L’ordre RVBA corrigé fait varier l’alpha le plus vite pour que la gamme RVB forme un seul grand champ horizontal, vertical, diagonal ou spiralé. Aléatoire est le seul motif de couleurs statiques mélangées. Les valeurs générées restent en float32 pendant les effets et la composition ; seul le format de sortie choisi les quantifie. Aperçu et exportation utilisent les mêmes coordonnées à pleine résolution.</translation>
     </message>
@@ -4685,12 +4695,12 @@
     <message>
         <location line="+1"/>
         <location line="+485"/>
-        <location line="+3653"/>
+        <location line="+3658"/>
         <source>Starting phase</source>
         <translation>Phase initiale</translation>
     </message>
     <message>
-        <location line="-4137"/>
+        <location line="-4142"/>
         <location line="+235"/>
         <source>Rotations per loop</source>
         <translation>Rotations par boucle</translation>
@@ -4712,12 +4722,12 @@
     </message>
     <message>
         <location line="+4"/>
-        <location line="+4034"/>
+        <location line="+4039"/>
         <source>Reusable motion paths</source>
         <translation>Trajectoires de mouvement réutilisables</translation>
     </message>
     <message>
-        <location line="-4032"/>
+        <location line="-4037"/>
         <source>Create shared closed cubic paths here, then choose one directly from Closed path above. The editor also provides advanced per-wave and per-effect bindings.</source>
         <translation>Créez ici des trajectoires cubiques fermées partagées, puis choisissez-en une directement dans Trajectoire fermée ci-dessus. L’éditeur propose aussi des liaisons avancées par onde et par effet.</translation>
     </message>
@@ -4932,12 +4942,12 @@
         <location line="+8"/>
         <location line="+1"/>
         <location line="+2122"/>
-        <location line="+1195"/>
+        <location line="+1200"/>
         <source>%</source>
         <translation>%</translation>
     </message>
     <message>
-        <location line="-3297"/>
+        <location line="-3302"/>
         <source>Composite transparent rear surfaces</source>
         <translation>Composer les faces arrière transparentes</translation>
     </message>
@@ -4983,18 +4993,18 @@
     </message>
     <message>
         <location line="+1"/>
-        <location line="+3849"/>
+        <location line="+3854"/>
         <source>X</source>
         <translation>X</translation>
     </message>
     <message>
-        <location line="-3848"/>
-        <location line="+3848"/>
+        <location line="-3853"/>
+        <location line="+3853"/>
         <source>Y</source>
         <translation>Y</translation>
     </message>
     <message>
-        <location line="-3847"/>
+        <location line="-3852"/>
         <source>Z</source>
         <translation>Z</translation>
     </message>
@@ -5250,14 +5260,14 @@
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15799"/>
+        <location line="+15823"/>
         <location line="+88"/>
         <location line="+11"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
-        <location line="-15896"/>
+        <location line="-15920"/>
         <source>Connected components</source>
         <translation>Composantes connexes</translation>
     </message>
@@ -5546,12 +5556,12 @@
     </message>
     <message>
         <location line="+7"/>
-        <location line="+8711"/>
+        <location line="+8726"/>
         <source>Edge threshold</source>
         <translation>Seuil des contours</translation>
     </message>
     <message>
-        <location line="-8709"/>
+        <location line="-8724"/>
         <source>Passes</source>
         <translation>Passes</translation>
     </message>
@@ -5643,12 +5653,12 @@
     <message>
         <location line="+19"/>
         <location line="+137"/>
-        <location line="+9633"/>
+        <location line="+9648"/>
         <source>Project layer: %1 — %2</source>
         <translation>Calque du projet : %1 — %2</translation>
     </message>
     <message>
-        <location line="-9765"/>
+        <location line="-9780"/>
         <source>Load a different OBJ from disk…</source>
         <translation>Charger un autre OBJ depuis le disque…</translation>
     </message>
@@ -5660,13 +5670,13 @@
     <message>
         <location line="+0"/>
         <location line="+139"/>
-        <location line="+12493"/>
+        <location line="+12516"/>
         <location line="+113"/>
         <source>Matching project assets</source>
         <translation>Ressources correspondantes du projet</translation>
     </message>
     <message>
-        <location line="-12730"/>
+        <location line="-12753"/>
         <source>Could not reuse OBJ</source>
         <translation>Impossible de réutiliser l’OBJ</translation>
     </message>
@@ -6391,12 +6401,12 @@ La modification nécessite un enregistrement immédiat.</translation>
     </message>
     <message>
         <location line="+52"/>
-        <location line="+19426"/>
+        <location line="+19450"/>
         <source>Not saved as a bundle yet</source>
         <translation>Pas encore enregistré comme archive de projet</translation>
     </message>
     <message>
-        <location line="-19422"/>
+        <location line="-19446"/>
         <source>%1
 Revision history is disabled; only the current saved state is retained.</source>
         <translation>%1
@@ -6458,9 +6468,9 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <translation>Création d’une révision explicite dans %1…</translation>
     </message>
     <message>
-        <location line="-4161"/>
+        <location line="-4173"/>
         <location line="+5"/>
-        <location line="+4174"/>
+        <location line="+4186"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+30"/>
@@ -6555,12 +6565,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15649"/>
+        <location line="+15673"/>
         <source>Layers &amp;&amp; Groups</source>
         <translation>Calques &amp;&amp; groupes</translation>
     </message>
     <message>
-        <location line="-15644"/>
+        <location line="-15668"/>
         <source>Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked.</source>
         <translation>Faites glisser la barre de titre pour déplacer ou ancrer ce panneau. Double-cliquez dessus pour basculer entre flottant et ancré.</translation>
     </message>
@@ -6571,12 +6581,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+19"/>
-        <location line="+4338"/>
+        <location line="+4343"/>
         <source>Add group</source>
         <translation>Ajouter un groupe</translation>
     </message>
     <message>
-        <location line="-4337"/>
+        <location line="-4342"/>
         <source>Remove group</source>
         <translation>Supprimer le groupe</translation>
     </message>
@@ -6729,12 +6739,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     <message>
         <location line="+3"/>
         <location line="+92"/>
-        <location line="+18430"/>
+        <location line="+18454"/>
         <source>Play</source>
         <translation>Lire</translation>
     </message>
     <message>
-        <location line="-18521"/>
+        <location line="-18545"/>
         <source>Previous beat</source>
         <translation>Battement précédent</translation>
     </message>
@@ -6775,12 +6785,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+36"/>
-        <location line="+6284"/>
+        <location line="+6299"/>
         <source>Editor playback is paused until the export finishes.</source>
         <translation>La lecture de l’éditeur est suspendue jusqu’à la fin de l’exportation.</translation>
     </message>
     <message>
-        <location line="-6269"/>
+        <location line="-6284"/>
         <source>Pause</source>
         <translation>Pause</translation>
     </message>
@@ -6916,12 +6926,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+5"/>
-        <location line="+13242"/>
+        <location line="+13266"/>
         <source>LFOs…</source>
         <translation>LFO…</translation>
     </message>
     <message>
-        <location line="-13239"/>
+        <location line="-13263"/>
         <source>Animate numeric values between an authored minimum and maximum with a seamless low-frequency oscillator.</source>
         <translation>Animer des valeurs numériques entre un minimum et un maximum définis avec un oscillateur basse fréquence en boucle continue.</translation>
     </message>
@@ -6973,12 +6983,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     <message>
         <location line="-226"/>
         <location line="+227"/>
-        <location line="+12002"/>
+        <location line="+12026"/>
         <source>Live Controls</source>
         <translation>Commandes Live</translation>
     </message>
     <message>
-        <location line="-11974"/>
+        <location line="-11998"/>
         <source>Application Settings…</source>
         <translation>Réglages de l’application…</translation>
     </message>
@@ -6988,7 +6998,7 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <translation>Configurer les préférences communes à tous les projets et conservées au redémarrage.</translation>
     </message>
     <message>
-        <location line="+9"/>
+        <location line="+14"/>
         <source>Layers &amp;&amp; Groups Panel</source>
         <translation>Panneau Calques &amp;&amp; groupes</translation>
     </message>
@@ -6999,12 +7009,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+3"/>
-        <location line="+14746"/>
+        <location line="+14765"/>
         <source>Restore Layers &amp;&amp; Groups Panel</source>
         <translation>Restaurer le panneau Calques &amp;&amp; groupes</translation>
     </message>
     <message>
-        <location line="-14742"/>
+        <location line="-14761"/>
         <source>Show the Layers &amp; Groups panel and dock it on the left side.</source>
         <translation>Afficher le panneau Calques et groupes et l’ancrer à gauche.</translation>
     </message>
@@ -7015,12 +7025,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+16"/>
-        <location line="+18747"/>
+        <location line="+18766"/>
         <source>Open unpacked project bundle</source>
         <translation>Ouvrir une archive de projet décompressée</translation>
     </message>
     <message>
-        <location line="-18732"/>
+        <location line="-18751"/>
         <source>Randomize layer values?</source>
         <translation>Tirer au hasard les valeurs du calque ?</translation>
     </message>
@@ -7042,19 +7052,19 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     <message>
         <location line="+15"/>
         <location line="+20"/>
-        <location line="+18427"/>
+        <location line="+18446"/>
         <source>Invalid output text</source>
         <translation>Texte de sortie invalide</translation>
     </message>
     <message>
-        <location line="-18442"/>
+        <location line="-18461"/>
         <location line="+20"/>
-        <location line="+11335"/>
+        <location line="+11354"/>
         <source>Invalid setup</source>
         <translation>Configuration invalide</translation>
     </message>
     <message>
-        <location line="-11326"/>
+        <location line="-11345"/>
         <source> - frame %1</source>
         <translation> - image %1</translation>
     </message>
@@ -8201,13 +8211,13 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+2"/>
-        <location line="+13644"/>
+        <location line="+13663"/>
         <location line="+14"/>
         <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
         <translation>Les valeurs d’origine de %1 réglage(s) sont conservées, y compris lors de l’enregistrement.</translation>
     </message>
     <message>
-        <location line="-13653"/>
+        <location line="-13672"/>
         <source>%1 invalid setting(s) could not be applied.</source>
         <translation>%1 réglage(s) non valide(s) n’ont pas pu être appliqués.</translation>
     </message>
@@ -8217,7 +8227,7 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <translation>%1 détail(s) supplémentaire(s) ; survolez cet avis pour lire tous les détails.</translation>
     </message>
     <message>
-        <location line="+1894"/>
+        <location line="+1904"/>
         <source>Kaleidoscope mix</source>
         <translation>Mélange du kaléidoscope</translation>
     </message>
@@ -8292,17 +8302,17 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <translation>Remixer la palette</translation>
     </message>
     <message>
-        <location line="+10241"/>
+        <location line="+10250"/>
         <source>The recovery notice did not explain the repaired setting.</source>
         <translation>L’avis de récupération n’expliquait pas le réglage réparé.</translation>
     </message>
     <message>
-        <location line="-13620"/>
+        <location line="-13639"/>
         <source>Unsaved project changes</source>
         <translation>Modifications du projet non enregistrées</translation>
     </message>
     <message>
-        <location line="-10021"/>
+        <location line="-10038"/>
         <source>Project clock audio</source>
         <translation>Audio de l’horloge du projet</translation>
     </message>
@@ -8317,7 +8327,7 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <translation>Révision %1 créée dans %2</translation>
     </message>
     <message>
-        <location line="+910"/>
+        <location line="+922"/>
         <location line="+198"/>
         <source>Detection, Filters, EQ + Frequency Streams…</source>
         <translation>Détection, filtres, EQ + flux de fréquences…</translation>
@@ -8352,7 +8362,13 @@ UUID du projet : %2
         <translation>Afficher ou masquer les commandes Live. Ouvrir ce panneau ne démarre pas la sortie et ne modifie pas la lecture.</translation>
     </message>
     <message>
-        <location line="+2530"/>
+        <location line="+22"/>
+        <location filename="../gui/main_window_remote.cpp" line="+118"/>
+        <source>Networking &amp; Remotes…</source>
+        <translation>Réseau et télécommandes…</translation>
+    </message>
+    <message>
+        <location line="+2513"/>
         <source>The selected source project no longer contains that layer.</source>
         <translation>Le projet source sélectionné ne contient plus ce calque.</translation>
     </message>
@@ -8684,7 +8700,17 @@ Il sera retiré de la liste des projets récents.</translation>
         <translation>Ce nouveau projet en mode CPU uniquement a été réglé sur %1 × %2 après mesure d’un délai par image dépassé.</translation>
     </message>
     <message>
-        <location line="+106"/>
+        <location line="+71"/>
+        <source>Open Networking &amp; Remotes…</source>
+        <translation>Ouvrir Réseau et télécommandes…</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Remotes</source>
+        <translation>Télécommandes</translation>
+    </message>
+    <message>
+        <location line="+43"/>
         <source>Clear undo history?</source>
         <translation>Effacer l’historique d’annulation ?</translation>
     </message>
@@ -10216,7 +10242,7 @@ Remplacer la palette actuelle ou ajouter ces valeurs ?</translation>
         <translation>Modifier l’effet</translation>
     </message>
     <message>
-        <location line="+117"/>
+        <location line="+121"/>
         <source>Domain-warp seed must be an unsigned 64-bit integer.</source>
         <translation>La graine de déformation du domaine doit être un entier non signé sur 64 bits.</translation>
     </message>
@@ -10261,7 +10287,7 @@ Remplacer la palette actuelle ou ajouter ces valeurs ?</translation>
         <translation>La graine de construction du maillage doit être un entier non signé sur 64 bits.</translation>
     </message>
     <message>
-        <location line="+329"/>
+        <location line="+333"/>
         <source>Edit project setting</source>
         <translation>Modifier un réglage du projet</translation>
     </message>
@@ -10639,7 +10665,7 @@ Remplacer la palette actuelle ou ajouter ces valeurs ?</translation>
         <translation>Source musicale du calque actif retirée ; les réglages de son horloge ont été conservés.</translation>
     </message>
     <message>
-        <location line="+104"/>
+        <location line="+105"/>
         <source>Rendering preview…</source>
         <translation>Rendu de l’aperçu…</translation>
     </message>
@@ -12643,19 +12669,19 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>Projets PVT (*.zip *.pvt);;Archives de projet (*.zip);;Anciennes configurations (*.pvt);;Tous les fichiers (*)</translation>
     </message>
     <message>
-        <location line="-18462"/>
+        <location line="-18481"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation>Filtre les destinations disponibles. La destination actuelle reste sélectionnée jusqu’à ce que vous en choisissiez une autre.</translation>
     </message>
     <message>
-        <location line="-2193"/>
-        <location line="+8380"/>
-        <location line="+7421"/>
+        <location line="-2198"/>
+        <location line="+8395"/>
+        <location line="+7430"/>
         <source>Add LFO…</source>
         <translation>Ajouter un LFO…</translation>
     </message>
     <message>
-        <location line="-15799"/>
+        <location line="-15823"/>
         <source>Add or edit Block size LFO</source>
         <translation>Ajouter ou modifier le LFO de taille des blocs</translation>
     </message>
@@ -12665,7 +12691,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>Anime la taille des blocs du calque sélectionné dans l’éditeur de LFO. La valeur du projet reste la valeur de repli.</translation>
     </message>
     <message>
-        <location line="+2092"/>
+        <location line="+2097"/>
         <source>Canvas</source>
         <translation>Canevas</translation>
     </message>
@@ -12680,10 +12706,76 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>Ajouter un LFO numérique</translation>
     </message>
     <message>
-        <location line="+6235"/>
-        <location line="+7424"/>
+        <location line="+6245"/>
+        <location line="+7433"/>
         <source>Edit LFO…</source>
         <translation>Modifier le LFO…</translation>
+    </message>
+    <message>
+        <location filename="../gui/main_window_remote.cpp" line="-52"/>
+        <source>Remote is no longer authorized.</source>
+        <translation>Cette télécommande n’est plus autorisée.</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Background mode requires an available system tray or menu bar.</source>
+        <translation>Le mode arrière-plan nécessite une zone de notification ou une barre de menus disponible.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PVT is busy loading, saving or exporting.</source>
+        <translation>PVT est occupé par un chargement, un enregistrement ou une exportation.</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>Project changed; refresh before editing.</source>
+        <translation>Le projet a changé ; actualisez avant de modifier.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Unknown target or invalid value.</source>
+        <translation>Cible inconnue ou valeur non valide.</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Value is outside the target range.</source>
+        <translation>La valeur est hors de la plage de la cible.</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Target could not be changed.</source>
+        <translation>Impossible de modifier la cible.</translation>
+    </message>
+    <message>
+        <location line="+8"/>
+        <source>Remote: %1</source>
+        <translation>Télécommande : %1</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <location line="+3"/>
+        <source>Expected an on/off value.</source>
+        <translation>Une valeur activé/désactivé est attendue.</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Unsupported remote command.</source>
+        <translation>Commande distante non prise en charge.</translation>
+    </message>
+    <message>
+        <location line="+11"/>
+        <source>Procedural Visualizer Tool</source>
+        <translation>Procedural Visualizer Tool</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Show PVT</source>
+        <translation>Afficher PVT</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Quit PVT…</source>
+        <translation>Quitter PVT…</translation>
     </message>
 </context>
 <context>
@@ -12794,7 +12886,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
 <context>
     <name>PreviewWidget</name>
     <message>
-        <location filename="../gui/preview_widget.cpp" line="+213"/>
+        <location filename="../gui/preview_widget.cpp" line="+214"/>
         <source>Video output is using the preview renderer.
 Stop video output to preview here.</source>
         <translation>La sortie vidéo utilise le moteur de rendu de l’aperçu.
@@ -13285,7 +13377,7 @@ Arrêtez la sortie vidéo pour afficher l’aperçu ici.</translation>
     </message>
     <message>
         <location line="+4"/>
-        <location filename="../gui/main_window.cpp" line="-21799"/>
+        <location filename="../gui/main_window.cpp" line="-21835"/>
         <source>Quantization</source>
         <translation>Quantification</translation>
     </message>
@@ -14238,7 +14330,7 @@ Arrêtez la sortie vidéo pour afficher l’aperçu ici.</translation>
         <translation>Flou maximal</translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3422"/>
+        <location filename="../gui/live_workspace.cpp" line="-3457"/>
         <source> · display %1 of %2</source>
         <translation> · écran %1 sur %2</translation>
     </message>
@@ -14622,12 +14714,12 @@ Notes :</translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+22180"/>
+        <location line="+22216"/>
         <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
         <translation>Les particules sont générées après le placage de surface et le mouvement du calque entier. Elles se superposent au canevas du calque au lieu d’être découpées ou plaquées sur l’objet.</translation>
     </message>
     <message>
-        <location line="-22166"/>
+        <location line="-22202"/>
         <source>Movement placement</source>
         <translation>Placement du mouvement</translation>
     </message>
@@ -14866,7 +14958,7 @@ Notes :</translation>
         <translation>La limite de références de pièces jointes du projet a été atteinte.</translation>
     </message>
     <message>
-        <location line="+6334"/>
+        <location line="+6351"/>
         <source>Could not open link</source>
         <translation>Impossible d’ouvrir le lien</translation>
     </message>
@@ -14890,7 +14982,7 @@ Notes :</translation>
         <translation>Une ressource gérée requise par le calque sélectionné n’est pas disponible.</translation>
     </message>
     <message>
-        <location line="+3895"/>
+        <location line="+3905"/>
         <source>Full filtered signal</source>
         <translation>Signal filtré complet</translation>
     </message>
@@ -14928,6 +15020,175 @@ Notes :</translation>
         <location line="+1"/>
         <source>Even alpha cadence from the allowed minimum to maximum</source>
         <translation>Progression régulière de l’alpha du minimum au maximum autorisé</translation>
+    </message>
+</context>
+<context>
+    <name>RemoteBridge</name>
+    <message>
+        <location filename="../gui/remote_bridge.cpp" line="+36"/>
+        <source>Remote worker could not run: %1</source>
+        <translation>Impossible de lancer le processus distant : %1</translation>
+    </message>
+    <message>
+        <location line="+55"/>
+        <source>Remote worker exceeded the message limit.</source>
+        <translation>Le processus distant a dépassé la limite des messages.</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>Networking &amp; Remotes enabled</source>
+        <translation>Réseau et télécommandes activés</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Networking &amp; Remotes disabled</source>
+        <translation>Réseau et télécommandes désactivés</translation>
+    </message>
+    <message>
+        <location line="+48"/>
+        <location line="+86"/>
+        <source>None</source>
+        <translation>Aucune</translation>
+    </message>
+    <message>
+        <location line="-56"/>
+        <source>Networking &amp; Remotes</source>
+        <translation>Réseau et télécommandes</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Start / restart worker</source>
+        <translation>Démarrer / redémarrer le processus</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Python with pvt-remote installed</source>
+        <translation>Python avec pvt-remote installé</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Enable Networking &amp; Remotes</source>
+        <translation>Activer le réseau et les télécommandes</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Allow paired remotes on the local network (mDNS)</source>
+        <translation>Autoriser les télécommandes associées sur le réseau local (mDNS)</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Close window to system tray / menu bar</source>
+        <translation>Fermer la fenêtre dans la zone de notification / barre de menus</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>Optional wss:// signaling server</source>
+        <translation>Serveur de signalisation wss:// facultatif</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>ICE servers as JSON; [] keeps LAN connections offline</source>
+        <translation>Serveurs ICE au format JSON ; [] garde les connexions locales hors ligne</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Host name</source>
+        <translation>Nom de l’hôte</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Local signaling port</source>
+        <translation>Port de signalisation local</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Remote signaling URL</source>
+        <translation>URL de signalisation distante</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>STUN / TURN servers</source>
+        <translation>Serveurs STUN / TURN</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Paired remotes — public identities only</source>
+        <translation>Télécommandes associées — identités publiques uniquement</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Active Control Remote</source>
+        <translation>Télécommande active</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Import .pvtremote…</source>
+        <translation>Importer un fichier .pvtremote…</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Remove remote</source>
+        <translation>Supprimer la télécommande</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Export .pvthost…</source>
+        <translation>Exporter un fichier .pvthost…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Toggle background mode</source>
+        <translation>Basculer le mode arrière-plan</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Install the optional transport: python3 -m pip install /path/to/PVT/remote</source>
+        <translation>Installer le transport facultatif : python3 -m pip install /path/to/PVT/remote</translation>
+    </message>
+    <message>
+        <location line="+31"/>
+        <source>Import remote</source>
+        <translation>Importer une télécommande</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>PVT remote (*.pvtremote)</source>
+        <translation>Télécommande PVT (*.pvtremote)</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Cannot read pairing file (16 KiB maximum).</source>
+        <translation>Impossible de lire le fichier d’association (16 Kio maximum).</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Invalid pairing file or remote limit reached.</source>
+        <translation>Fichier d’association non valide ou limite des télécommandes atteinte.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Remove the existing identity before replacing its keys.</source>
+        <translation>Supprimez l’identité existante avant de remplacer ses clés.</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>Export host</source>
+        <translation>Exporter l’hôte</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>PVT host (*.pvthost)</source>
+        <translation>Hôte PVT (*.pvthost)</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>Host profile exported. Apply networking changes before exporting a new profile.</source>
+        <translation>Profil de l’hôte exporté. Appliquez les modifications réseau avant d’exporter un nouveau profil.</translation>
+    </message>
+    <message>
+        <location line="+8"/>
+        <source>ICE servers must be a JSON array.</source>
+        <translation>Les serveurs ICE doivent être un tableau JSON.</translation>
     </message>
 </context>
 <context>

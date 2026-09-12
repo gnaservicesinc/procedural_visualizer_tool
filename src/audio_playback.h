@@ -47,6 +47,9 @@ public:
     double position_seconds() const noexcept;
     void set_volume(double volume) noexcept;
 
+    void enable_remote_audio(bool enabled) noexcept;
+    bool read_remote_audio(std::uint8_t* pcm) noexcept;
+
 private:
     bool prepare_mix(const std::vector<PlaybackTrack>& tracks,
                      double timeline_position_seconds, bool open_device,

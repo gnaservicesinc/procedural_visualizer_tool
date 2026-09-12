@@ -82,6 +82,7 @@ void StageOutputWindow::dismiss() {
 void StageOutputWindow::setFrame(const QImage& frame) {
     if (frozen_ || frame.isNull()) return;
     last_good_frame_ = frame;
+    emitPresentedImage();
     update();
 }
 
@@ -94,6 +95,7 @@ void StageOutputWindow::setFrozen(bool frozen) {
 void StageOutputWindow::setBlackout(bool blackout) {
     if (blackout_ == blackout) return;
     blackout_ = blackout;
+    emitPresentedImage();
     update();
 }
 
@@ -117,6 +119,7 @@ QSize StageOutputWindow::outputPixelSize() const {
 
 void StageOutputWindow::clearFrame() {
     last_good_frame_ = {};
+    emitPresentedImage();
     update();
 }
 
@@ -179,4 +182,12 @@ void StageOutputWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     if (menu_bar_) menu_bar_->setGeometry(0, 0, width(), menu_bar_->sizeHint().height());
     emit outputMetricsChanged();
+}
+
+void StageOutputWindow::emitPresentedImage() {
+    if (blackout_ || last_good_frame_.isNull()) {
+        QImage black(last_good_frame_.isNull() ? QSize(640, 360) : last_good_frame_.size(), QImage::Format_RGB32);
+        black.fill(Qt::black);
+        emit imagePresented(black);
+    } else emit imagePresented(last_good_frame_);
 }

@@ -504,10 +504,21 @@ struct LiveWorkspace::Impl {
     std::uint64_t frame_schedule_tick = 0U;
     std::uint64_t delivered_frames = 0U;
     bool playback_running = true;
+    bool frame_submitted = false;
     bool output_starting_enabled = true;
     QVector<qint64> tempo_taps;
 
     pvt::audio::LiveAudioCapture audio;
+    bool background_output = false;
+    QStringList remote_names;
+    int remote_control = 0;
+    void appendRemoteTarget(std::vector<LiveTargetDescriptor>& targets) const {
+        if (remote_names.isEmpty()) return;
+        targets.push_back({QStringLiteral("runtime.active_control_remote"),
+            LiveWorkspace::tr("Active Control Remote: %1").arg(remote_names.join(QStringLiteral(" / "))),
+            LiveWorkspace::tr("Networking & Remotes"), LiveTargetKind::Integer, 0.0,
+            static_cast<double>(remote_names.size() - 1), static_cast<double>(remote_control), [](pvt::ProjectConfig&, double) { return false; }});
+    }
     DeviceSleepGuard sleep_guard;
     LiveMidiRouter midi;
     LiveOscRouter osc;
@@ -658,7 +669,7 @@ struct LiveWorkspace::Impl {
         ui_timer.setInterval(kUiTickMilliseconds);
         midi_clock_timer.setInterval(1);
         QObject::connect(&render_timer, &QTimer::timeout, q, [this] {
-            requestFrame();
+            requestFrame(false, true);
             scheduleNextFrame();
         });
         QObject::connect(&ui_timer, &QTimer::timeout, q,
@@ -717,7 +728,7 @@ struct LiveWorkspace::Impl {
     void restartAudio();
     void restartOsc();
     void configureClockOutputs();
-    void requestFrame(bool force = false);
+    void requestFrame(bool force = false, bool scheduled = false);
     void runtimeTick();
     void frameFinished(const LiveFrameController::Result& result);
     void updateSafety();
@@ -2014,6 +2025,7 @@ void LiveWorkspace::Impl::rebuildTargetCache() {
     project_cache_valid = true;
     project_cache_revision = document_revision_provider ? document_revision_provider() : 0U;
     target_cache = buildLiveTargetRegistry(project_cache);
+    appendRemoteTarget(target_cache);
     QSet<QString> edited;
     target_index.reserve(static_cast<qsizetype>(target_cache.size()));
     for (int index = 0; index < static_cast<int>(target_cache.size()); ++index) {
@@ -2906,6 +2918,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         renderer.cancelCurrent();
         audio_snapshot = {};
         last_image = {};
+        frame_submitted = false;
         stage.clearFrame();
         presented_frame_clock.invalidate();
         delivered_frames = 0U;
@@ -2931,7 +2944,9 @@ void LiveWorkspace::Impl::setActive(bool value) {
         midi_clock_timer.start();
         if (!config.startup_scene_uuid.empty()) takeScene(config.startup_scene_uuid);
         showOutput();
-        requestFrame();
+        // Window setup can cancel an early metrics-driven render. Queue the
+        // final startup snapshot even at sub-Hz playback rates.
+        requestFrame(true);
         emit q->runtimeStatusChanged(LiveWorkspace::tr("Live performance runtime started."));
     } else {
         ++render_generation;
@@ -2976,6 +2991,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         stage.clearFrame();
         audio_snapshot = {};
         last_image = {};
+        frame_submitted = false;
         presented_frame_clock.invalidate();
         delivered_frames = 0U;
         output_button->setChecked(false);
@@ -3013,6 +3029,7 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
         render_failed = false;
         safety_blackout = false;
         last_image = {};
+        frame_submitted = false;
         stage.clearFrame();
         stage.setFrozen(false);
         stage.setBlackout(false);
@@ -3023,7 +3040,9 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
             : (project_provider ? project_provider() : pvt::default_project());
         restartFrameSchedule(project.canvas.fps);
         showOutput();
-        requestFrame();
+        // Window setup can cancel an early metrics-driven render. Queue the
+        // final startup snapshot even at sub-Hz playback rates.
+        requestFrame(true);
         emit q->runtimeStatusChanged(
             LiveWorkspace::tr("Video output started."));
     } else {
@@ -3039,6 +3058,7 @@ void LiveWorkspace::Impl::setPresentationActive(bool value) {
         renderer.stop();
         stage.clearFrame();
         last_image = {};
+        frame_submitted = false;
         presented_frame_clock.invalidate();
         output_button->setChecked(false);
         showStandbyState();
@@ -3255,6 +3275,7 @@ QScreen* LiveWorkspace::Impl::selectedScreen() const {
 }
 
 void LiveWorkspace::Impl::applyVisibleOutputPolicy() {
+    if (background_output) { stage.dismiss(); return; }
     QScreen* target = selectedScreen();
     const bool fullscreen = presentation_active
         ? QSettings().value(QStringLiteral("previewOutput/fullscreen"), true).toBool()
@@ -3380,8 +3401,16 @@ void LiveWorkspace::Impl::updateOutputState() {
 
 }
 
-void LiveWorkspace::Impl::requestFrame(bool force) {
+void LiveWorkspace::Impl::requestFrame(bool force, bool scheduled) {
     if (!realtimeActive() || (active && user_freeze)) return;
+    // Routine timeline and output refreshes share the timer's FPS budget.
+    // Explicit authored edits can still refresh immediately (including at
+    // sub-Hz project rates); they aren't another playback clock.
+    // This gate runs before snapshot copying or rendering.
+    if (playback_running && !scheduled && !force && frame_submitted) {
+        if (!render_timer.isActive()) scheduleNextFrame();
+        return;
+    }
     if (!force && !playback_running && !last_image.isNull()) return;
     if (active && document_revision_provider
         && document_revision_provider() != project_cache_revision) {
@@ -3471,6 +3500,7 @@ void LiveWorkspace::Impl::requestFrame(bool force) {
                      output_size, resolution_scale, deadline_milliseconds,
                      watchdog_milliseconds, options, render_generation,
                      revision);
+    frame_submitted = true;
 }
 
 void LiveWorkspace::Impl::frameFinished(
@@ -4183,9 +4213,10 @@ void LiveWorkspace::Impl::editMapping(int index) {
     setting->setAlternatingRowColors(true);
     setting_layout->addWidget(setting_search);
     setting_layout->addWidget(setting, 1);
-    const auto registry = project_provider
+    auto registry = project_provider
         ? buildLiveTargetRegistry(project_provider())
         : std::vector<LiveTargetDescriptor>{};
+    appendRemoteTarget(registry);
     QHash<QString, QTreeWidgetItem*> target_sections;
     QTreeWidgetItem* first_target = nullptr;
     for (const auto& target : registry) {
@@ -4590,6 +4621,11 @@ double LiveWorkspace::Impl::transformedValue(
 void LiveWorkspace::Impl::performMapping(
     const pvt::LiveControlMapping& mapping, int mappingIndex, double value, bool fire) {
     if (!fire) return;
+    if (mapping.target == pvt::LiveMappingTarget::Setting
+        && mapping.target_path == "runtime.active_control_remote") {
+        if (std::isfinite(value)) emit q->remoteControlSelected(static_cast<int>(std::clamp(std::round(value), 0.0, static_cast<double>(std::max(0, static_cast<int>(remote_names.size()) - 1)))));
+        return;
+    }
     if (mapping.target == pvt::LiveMappingTarget::Setting) {
         const QString path = qtext(mapping.target_path);
         if (!target_index.contains(path)) return;
@@ -5329,7 +5365,9 @@ LiveWorkspace::LiveWorkspace(ProjectSnapshotProvider projectProvider,
                                    std::move(renderOptionsProvider),
                                    std::move(documentRevisionProvider),
                                    std::move(activeLayerProvider),
-                                   std::move(authoredConfigEditor))) {}
+                                   std::move(authoredConfigEditor))) {
+    connect(&impl_->stage, &StageOutputWindow::imagePresented, this, &LiveWorkspace::remotePresentationFrame);
+}
 
 LiveWorkspace::~LiveWorkspace() = default;
 
@@ -5406,8 +5444,8 @@ bool LiveWorkspace::isRealtimeOutputActive() const noexcept {
     return impl_->realtimeActive();
 }
 
-void LiveWorkspace::requestRealtimeFrame() {
-    if (impl_->realtimeActive()) impl_->requestFrame(true);
+void LiveWorkspace::requestRealtimeFrame(bool immediate) {
+    if (impl_->realtimeActive()) impl_->requestFrame(immediate || !impl_->playback_running);
 }
 
 void LiveWorkspace::resetRealtimeFrame() {
@@ -5660,3 +5698,16 @@ void LiveWorkspace::setOutputStartingEnabled(bool enabled) {
     impl_->live_button->setEnabled(enabled || impl_->active);
     impl_->output_button->setEnabled(enabled || impl_->realtimeActive());
 }
+
+void LiveWorkspace::setBackgroundOutput(bool background) {
+    impl_->background_output = background;
+    if (background) impl_->stage.dismiss();
+    else if (isRealtimeOutputActive()) impl_->applyVisibleOutputPolicy();
+}
+void LiveWorkspace::setRemoteControlTargets(const QStringList& names, int current) {
+    impl_->remote_names = names;
+    impl_->remote_control = current;
+    impl_->rebuildTargetCache();
+}
+void LiveWorkspace::enableRemoteAudio(bool enabled) { impl_->audio.enable_remote_audio(enabled); }
+bool LiveWorkspace::readRemoteAudio(std::uint8_t* pcm) { return impl_->audio.read_remote_audio(pcm); }

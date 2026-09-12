@@ -34,6 +34,7 @@ public:
     void clearFrame();
 
 signals:
+    void imagePresented(const QImage& image);
     void dismissRequested();
     void playbackRequested();
     void outputMetricsChanged();
@@ -46,6 +47,7 @@ protected:
     void resizeEvent(QResizeEvent* event) override;
 
 private:
+    void emitPresentedImage();
     QMenuBar* menu_bar_ = nullptr;
     QImage last_good_frame_;
     bool frozen_ = false;

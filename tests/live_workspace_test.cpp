@@ -20,6 +20,7 @@
 #include <QTimer>
 
 #include <iostream>
+#include <cmath>
 
 bool test_live_mapping_controls();
 
@@ -138,6 +139,50 @@ int main(int argc, char** argv) {
         workspace.setLiveActive(false);
         std::cout << "Delivered: " << delivered << std::endl;
         return 0;
+    }
+    // Timeline/editor refresh requests must share the output timer's budget.
+    // A cheap render plus a second caller reproduced ~118 FPS at authored 60.
+    for (bool presentation : {false, true}) {
+        auto capped_project = blank_project();
+        capped_project.canvas.width = capped_project.canvas.height = 32;
+        std::uint64_t revision = 1;
+        LiveWorkspace capped([&] { return capped_project; }, [&] { return capped_project; },
+            [] { return 0; }, [] { pvt::FrameRenderOptions options; options.backend = pvt::RenderBackend::Cpu; return options; },
+            [&] { return revision; }, [&] { return capped_project.layers.front().uuid; }, {});
+        capped.setProjectLiveConfig(capped_project.canvas.live);
+        capped.setBackgroundOutput(true);
+        int delivered = 0;
+        QObject::connect(&capped, &LiveWorkspace::livePreviewFrame, &capped, [&](const QImage&) { ++delivered; });
+        QTimer extra_requests;
+        extra_requests.setTimerType(Qt::PreciseTimer);
+        extra_requests.setInterval(2);
+        QObject::connect(&extra_requests, &QTimer::timeout, &capped, [&] { capped.requestRealtimeFrame(); });
+        if (presentation) capped.setPresentationActive(true); else capped.setLiveActive(true);
+        extra_requests.start();
+        for (double fps : {60.0, 23.976}) {
+            capped_project.canvas.fps = fps;
+            ++revision;
+            capped.refreshProjectSnapshot();
+            QElapsedTimer warmup; warmup.start();
+            while (warmup.elapsed() < 100) { QCoreApplication::processEvents(); QThread::msleep(1); }
+            delivered = 0;
+            QElapsedTimer measured; measured.start();
+            while (measured.elapsed() < 650) { QCoreApplication::processEvents(); QThread::msleep(1); }
+            const int budget = static_cast<int>(std::ceil(fps * static_cast<double>(measured.nsecsElapsed()) / 1.0e9)) + 2;
+            if (delivered > budget || delivered < 3) {
+                std::cerr << (presentation ? "Presentation" : "Live") << " FPS cap: " << delivered
+                          << " frames exceeded budget " << budget << " at " << fps << " FPS\n";
+                return 1;
+            }
+        }
+        extra_requests.stop();
+        capped.setPlaybackRunning(false);
+        const int paused_count = delivered;
+        capped.requestRealtimeFrame();
+        QElapsedTimer paused; paused.start();
+        while (delivered == paused_count && paused.elapsed() < 1000) { QCoreApplication::processEvents(); QThread::msleep(1); }
+        if (delivered == paused_count) { std::cerr << "Paused refresh was lost\n"; return 1; }
+        if (presentation) capped.setPresentationActive(false); else capped.setLiveActive(false);
     }
     // Clock files join the normal input list and machine routing matrix without
     // starting devices or rendering just because their controls are visible.
