@@ -501,6 +501,9 @@ vec3 sampleEnvironmentDiffuse(vec3 authoredNormal) {
                  vec3(0.0), vec3(FINITE_HDR_MAX));
 }
 
+)PVT_GLSL"
+R"PVT_GLSL(
+
 vec4 shadeSurface(vec4 color, vec3 normal, float amount) {
     vec3 light = normalize(lightDirection);
     float diffuse = max(0.0, dot(normalize(normal), light));
