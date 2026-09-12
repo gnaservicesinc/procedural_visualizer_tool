@@ -20500,11 +20500,22 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     QKeyEvent performance_escape(
         QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    const auto wait_for_stage = [&](const std::function<bool()>& complete) {
+        QElapsedTimer transition;
+        transition.start();
+        while (!complete() && transition.elapsed() < 5000) {
+            QApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(2);
+        }
+        return complete();
+    };
     QApplication::sendEvent(performance_stage, &performance_escape);
-    QApplication::processEvents();
+    // Native full-screen exit is asynchronous on macOS. A second Escape
+    // during that transition still sees full-screen state and cannot dismiss.
+    wait_for_stage([&] { return !performance_stage->isFullScreen(); });
     if (performance_stage->isVisible()) {
         QApplication::sendEvent(performance_stage, &performance_escape);
-        QApplication::processEvents();
+        wait_for_stage([&] { return !performance_stage->isVisible(); });
     }
     if (live_workspace_->isLiveActive() || performance_stage->isVisible()
         || live_stage_output->isChecked()
@@ -20846,7 +20857,10 @@ bool MainWindow::runSmokeChecks(QString* error) {
         const auto wait_for_frame = [&] {
             QElapsedTimer deadline;
             deadline.start();
-            while (delivered.isNull() && deadline.elapsed() < 750) {
+            // Allow native window transitions and a busy CI runner to settle.
+            // This remains below the fixture's ten-second playback interval,
+            // so it still detects a missing immediate opening/edit frame.
+            while (delivered.isNull() && deadline.elapsed() < 5000) {
                 QApplication::processEvents();
                 QThread::msleep(1);
             }

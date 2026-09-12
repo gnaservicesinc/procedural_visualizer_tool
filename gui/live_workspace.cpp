@@ -937,7 +937,9 @@ void LiveWorkspace::Impl::buildUi() {
         if (!realtimeActive()) return;
         ++render_generation;
         renderer.cancelCurrent();
-        requestFrame();
+        // A geometry change invalidates submitted work. Its replacement must
+        // bypass the playback gate, especially before the first sub-Hz frame.
+        requestFrame(true);
     });
 }
 
@@ -3077,7 +3079,7 @@ void LiveWorkspace::Impl::resetRealtimeFrame() {
     stage.clearFrame();
     last_good_clock.invalidate();
     presented_frame_clock.invalidate();
-    if (realtimeActive()) requestFrame();
+    if (realtimeActive()) requestFrame(true);
 }
 
 void LiveWorkspace::Impl::updateSleepPrevention() {

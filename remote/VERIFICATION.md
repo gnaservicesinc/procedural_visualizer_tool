@@ -91,3 +91,21 @@ smoke separately verifies actual PVT rendering and edit/persistence integration.
 Public NAT/TURN deployment and Firefox/Safari runtime certification are not
 established by these tests. See README.md and IMPLEMENTATION.md for setup and
 remaining deployment requirements.
+
+## Final macOS 27 build repair
+
+The old AGL link dependency is eliminated by using Qt 6.11.2. The native
+VideoToolbox library now has a portable install name. GitHub run 34713543947
+built and verified the macOS 27 package and passed all 46 non-GUI native tests;
+its later GUI smoke exposed a native full-screen transition race. All four
+Windows/Linux jobs passed.
+
+A deterministic regression then reproduced a real startup race: output metrics
+cancelled a submitted frame but the FPS gate delayed its replacement. Geometry
+changes and explicit frame resets now request their replacement immediately.
+The regression passed after failing before the fix; all three translated GUI
+smokes passed locally. The full-screen test waits for native window state.
+
+PVT-RC and PVT-RD 0.1.1 are published. All six downloaded extension archives
+match their published SHA256 checksums. Desktop tagged CI and publication are
+tracked by the v19.1.6 release workflow.

@@ -363,6 +363,24 @@ int main(int argc, char** argv) {
         std::cerr << "Explicit audio-dropout Blackout policy was bypassed\n";
         return 1;
     }
+    // A native resize can arrive after startup submitted its first frame.
+    // Cancel that queued frame before it runs; sub-Hz output must replace it
+    // immediately rather than waiting for the next ten-second timer tick.
+    project.canvas.fps = 0.1;
+    workspace.setProjectLiveConfig({});
+    const int before_resize = delivered;
+    pool->setMaxThreadCount(1);
+    pool->reserveThread();
+    workspace.setLiveActive(true);
+    if (stage) emit stage->outputMetricsChanged();
+    pool->releaseThread();
+    const bool resized_start = wait_for([&] { return delivered > before_resize; }, 2000);
+    workspace.setLiveActive(false);
+    pool->setMaxThreadCount(previous_threads);
+    if (!resized_start) {
+        std::cerr << "Startup resize cancelled the first frame without replacing it\n";
+        return 1;
+    }
     std::cout << "Live unavailable-input startup/restart: " << delivered
               << " frames, animation advancing, explicit blackout retained, runtime stopped\n";
     return 0;
