@@ -8,7 +8,7 @@ export class Connection {
   }
   async connect() {
     const first = 49152 + parseInt(this.host.id.replaceAll('-', '').slice(0, 8), 16) % 16000;
-    const automatic = Array.from({length: 4}, (_, offset) => first + offset).flatMap(port =>
+    const automatic = [0, 4093, 8191, 12289].map(offset => 49152 + (first - 49152 + offset) % 16000).flatMap(port =>
       [`ws://127.0.0.1:${port}`, `ws://pvt-${this.host.id}.local:${port}`]);
     const choices = [...new Set([...this.host.endpoints, ...automatic])].map(url => ({url, relay: false}));
     if (this.host.signaling_url) choices.push({url: this.host.signaling_url, relay: true});

@@ -363,11 +363,7 @@ bool hardware_encoder_available(CMVideoCodecType codec) {
 NSString* av_codec(Codec codec, bool alpha) {
     switch (codec) {
         case Codec::ProRes4444: return AVVideoCodecTypeAppleProRes4444;
-        case Codec::ProRes4444Xq:
-            if (@available(macOS 15.0, *)) {
-                return AVVideoCodecTypeAppleProRes4444XQ;
-            }
-            return nil;
+        case Codec::ProRes4444Xq: return AVVideoCodecTypeAppleProRes4444XQ;
         case Codec::Hevc:
             return alpha ? AVVideoCodecTypeHEVCWithAlpha : AVVideoCodecTypeHEVC;
         case Codec::PngLossless: return nil;
@@ -679,14 +675,20 @@ bool prepare_audio_track(const std::string& path, CMTime start, CMTime duration,
     if (source == nil) return fail(error, "Project music path is not valid UTF-8.");
     AVURLAsset* asset = [AVURLAsset URLAssetWithURL:
         [NSURL fileURLWithPath:source] options:nil];
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-    // The synchronous accessor is retained for macOS 13/14 compatibility.
-    // Export already runs off the UI thread; macOS 15's async replacement
-    // would not improve responsiveness here.
-    AVAssetTrack* track = [[asset tracksWithMediaType:AVMediaTypeAudio]
-        firstObject];
-#pragma clang diagnostic pop
+    // Export runs on a worker. Load through the current asynchronous API,
+    // waiting here without blocking the UI thread.
+    __block AVAssetTrack* track = nil;
+    __block NSError* track_error = nil;
+    dispatch_semaphore_t loaded = dispatch_semaphore_create(0);
+    [asset loadTracksWithMediaType:AVMediaTypeAudio
+                completionHandler:^(NSArray<AVAssetTrack*>* tracks, NSError* load_error) {
+        track = tracks.firstObject;
+        track_error = load_error;
+        dispatch_semaphore_signal(loaded);
+    }];
+    dispatch_semaphore_wait(loaded, DISPATCH_TIME_FOREVER);
+    if (track_error != nil)
+        return fail(error, ns_error(track_error, "Could not load project music."));
     if (track == nil) return fail(error, "Project music contains no audio track.");
     NSError* reader_error = nil;
     audio.reader = [[AVAssetReader alloc] initWithAsset:asset
@@ -748,8 +750,7 @@ Capabilities capabilities() {
     result.available = true;
     result.png_lossless = true;
     result.prores_4444 = true;
-    result.prores_4444_xq = false;
-    if (@available(macOS 15.0, *)) result.prores_4444_xq = true;
+    result.prores_4444_xq = true;
     result.hevc = true;
     result.hevc_alpha = true;
     result.prores_4444_hardware = hardware_encoder_available(

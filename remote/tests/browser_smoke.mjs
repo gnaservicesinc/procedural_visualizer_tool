@@ -47,6 +47,11 @@ try {
     page.on('console', message => { if (message.type() === 'error') console.error(message.text()); });
     await page.addInitScript(() => {
       window.openedConnections = [];
+      window.peerConnections = [];
+      const Peer = RTCPeerConnection;
+      window.RTCPeerConnection = class extends Peer {
+        constructor(config) { super(config); window.peerConnections.push(this); }
+      };
       const Original = WebSocket;
       window.WebSocket = class extends Original {
         constructor(url, protocols) { super(url, protocols); this.addEventListener('open', () => window.openedConnections.push(url)); }
@@ -99,6 +104,14 @@ try {
   },33);
   try {
     await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
+    if (process.platform === 'darwin') {
+      const codecs = await display.page.evaluate(async()=>{
+        const stats = await window.peerConnections.at(-1).getStats();
+        return [...stats.values()].filter(s=>s.type==='inbound-rtp' && s.kind==='video')
+          .map(s=>({mime:stats.get(s.codecId).mimeType,frames:s.framesDecoded}));
+      });
+      assert.ok(codecs.some(codec=>codec.mime==='video/H264' && codec.frames>0));
+    }
     // Reload must restore the selected pairing and resume without Connect.
     await display.page.reload();
     await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:45000});
@@ -135,7 +148,13 @@ try {
 } catch (error) {
   console.error('Worker diagnostics:', stderr);
   for (const page of context?.pages() || []) {
-    if (page.url().includes('index.html')) console.error(await page.locator('body').innerText());
+    if (page.url().includes('index.html')) {
+      console.error(await page.locator('body').innerText());
+      console.error(await page.evaluate(async()=>Promise.all(window.peerConnections.map(async pc=>({
+
+        stats:[...(await pc.getStats()).values()].filter(s=>['inbound-rtp','codec'].includes(s.type))
+      })))));
+    }
   }
   throw error;
 } finally {

@@ -5,7 +5,7 @@ endif()
 set(_pvt_required_items
     "Contents/MacOS/Procedural Visualizer Tool"
     "Contents/MacOS/pvt-render"
-    "Contents/MacOS/pvt-remote/pvt-remote"
+    "Contents/Resources/pvt-remote/pvt-remote"
     "Contents/Resources/ProceduralVisualizerTool.icns"
     "Contents/Frameworks/QtCore.framework/Versions/A/QtCore"
     "Contents/Frameworks/QtGui.framework/Versions/A/QtGui"
@@ -48,6 +48,16 @@ if(NOT DEFINED PVT_DEPLOYMENT_TARGET
    OR NOT DEFINED PVT_VTOOL OR NOT EXISTS "${PVT_VTOOL}")
     message(FATAL_ERROR
         "Distribution deployment-target verification is not configured.")
+endif()
+if(PVT_DEPLOYMENT_TARGET VERSION_LESS "27.0")
+    message(FATAL_ERROR "PVT distributions require macOS 27.0 or later.")
+endif()
+execute_process(COMMAND /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion"
+    "${PVT_APP_BUNDLE}/Contents/Info.plist"
+    OUTPUT_VARIABLE _pvt_plist_minimum OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _pvt_plist_result)
+if(NOT _pvt_plist_result EQUAL 0 OR NOT _pvt_plist_minimum STREQUAL PVT_DEPLOYMENT_TARGET)
+    message(FATAL_ERROR "The application plist does not enforce the deployment target.")
 endif()
 set(_pvt_macho_count 0)
 foreach(_pvt_file IN LISTS _pvt_bundle_files)
@@ -122,7 +132,7 @@ endif()
 message(STATUS
     "Verified self-contained macOS distribution (${_pvt_macho_count} Mach-O files): ${PVT_APP_BUNDLE}")
 
-execute_process(COMMAND "${PVT_APP_BUNDLE}/Contents/MacOS/pvt-remote/pvt-remote" --self-test
+execute_process(COMMAND "${PVT_APP_BUNDLE}/Contents/Resources/pvt-remote/pvt-remote" --self-test
     RESULT_VARIABLE _pvt_remote_result TIMEOUT 45)
 if(NOT _pvt_remote_result EQUAL 0)
     message(FATAL_ERROR "Bundled remote transport failed its self-test")

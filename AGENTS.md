@@ -26,3 +26,9 @@ Before implementing a feature or fixing an apparently missing feature:
 These rules apply across the repository and across feature areas. For example,
 LFO shortcuts use the normal `ParameterLfo` model, creation path, and Numeric LFO
 editor; they do not create a separate oscillator implementation per destination.
+
+# macOS support policy
+
+PVT supports macOS 27.0 and later only. Do not lower the deployment target,
+restore older-OS fallbacks, or pin dependencies to preserve old macOS support.
+Use the current macOS SDK and system VideoToolbox for Mac video encoding.

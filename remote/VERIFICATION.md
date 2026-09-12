@@ -13,7 +13,14 @@ certification and independent cryptographic review are not release requirements.
 | Automatic local discovery | Stable identity-derived name/port alternatives, interface enumeration and multicast refresh | Browser test uses the stable `.local` name; unit tests simulate interface/address replacement and occupied port |
 | Same machine without external network | Loopback remains available without discovery | Unit test simulates no external interfaces and listener conflict; standalone loopback authentication/codec test passes; no physical network interface was disabled |
 
-Current local checks:
+macOS 27 update checks: the 49-test native suite passed; lower deployment targets
+are rejected at configuration; the direct VideoToolbox backend passed H264
+encoding, color, resolution-change and keyframe recovery checks. Real Chromium
+received H264 frames and passed stable-name connection, reload, interruption
+recovery and explicit pause/resume. Final package publication is recorded after
+release verification.
+
+Earlier local checks:
 
 - 19 protocol, host and relay unit tests pass, including legacy pairing migration,
   failed-import rollback, stable discovery updates and automatic port fallback.

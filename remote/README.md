@@ -22,7 +22,7 @@ Network and runtime configuration are not part of setup.
 ## Developer builds and packaging
 
 Release applications include the transport executable and dependencies alongside
-the desktop executable, under `pvt-remote/`. No end-user interpreter, package
+the desktop executable, under `pvt-remote/` (inside `Contents/Resources` on macOS). No end-user interpreter, package
 installation, or download-on-first-use is used. Build the transport on each
 target platform with a dedicated build environment:
 
@@ -33,8 +33,8 @@ cmake -S . -B build -DPVT_REMOTE_WORKER_DIR=/absolute/build/pvt-remote
 ```
 
 The script freezes the shared worker, includes dependency license metadata, and
-runs authenticated-loopback and actual VP8/Opus encoding checks. CMake stages the
-bundle next to the GUI; installation refuses to create a desktop package without
+runs authenticated-loopback and actual system VideoToolbox H264 (macOS) or VP8 (other platforms), plus Opus encoding checks. CMake stages the
+bundle with the GUI; installation refuses to create a desktop package without
 it. The desktop CI and Snap build recipe produce the worker during their builds.
 Debian packaging uses `PVT_REMOTE_SYSTEM_RUNTIME` to install this same worker
 with distribution-managed dependencies. The package manager supplies them as part
@@ -69,9 +69,9 @@ system tray reject hiding so the app remains locally recoverable. Closing to
 tray is a separate opt-in preference. Hidden output uses the normal stage
 freeze/blackout decisions, including native full-screen-space teardown.
 
-Remote video is currently limited to 1920×1080 at 30 FPS, using a latest-frame
+Remote video is limited to 1280×720 at 30 FPS on macOS and 1920×1080 at 30 FPS elsewhere, using a latest-frame
 JPEG bridge followed by WebRTC encoding. This adds a compression stage; it is not
-a lossless reference-output channel. RC controls use bounded JSON messages,
+a lossless reference-output channel. macOS 27.0+ uses VideoToolbox directly for H264 compression; PyAV supplies only the packet container and audio transport on Mac, and no bundled software video encoder is used. RC controls use bounded JSON messages,
 with a raw WebSocket fast path only after authentication on actual loopback.
 All non-loopback control travels over the WebRTC data channel.
 

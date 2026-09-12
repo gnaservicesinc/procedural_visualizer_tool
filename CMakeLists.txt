@@ -15,14 +15,24 @@ endif()
 option(PVT_DEPLOY_QT_RUNTIME
     "Deploy the Qt runtime and plugins when installing the GUI"
     ${PVT_DEPLOY_QT_RUNTIME_DEFAULT})
-# Set this before project() initializes compiler flags. Qt 6.5 supports this
-# baseline, and every native API used by the application is availability-
-# guarded where necessary. A caller's explicit deployment target still wins.
-if(PVT_ENABLE_DISTRIBUTION AND CMAKE_HOST_APPLE
-   AND (NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET
-        OR CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL ""))
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING
-        "Minimum macOS version for generated binaries" FORCE)
+# Product policy: every macOS build requires macOS 27, including the CLI.
+# Set this before project() initializes compiler flags and the bundle plist.
+if(CMAKE_HOST_APPLE)
+    if(DEFINED CMAKE_OSX_DEPLOYMENT_TARGET
+       AND NOT CMAKE_OSX_DEPLOYMENT_TARGET STREQUAL ""
+       AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_LESS "27.0")
+        message(FATAL_ERROR "PVT supports macOS 27.0 and later only.")
+    endif()
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "27.0" CACHE STRING
+            "Minimum macOS version for generated binaries" FORCE)
+    endif()
+    execute_process(COMMAND xcrun --sdk macosx --show-sdk-version
+        OUTPUT_VARIABLE PVT_MACOS_SDK_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE PVT_MACOS_SDK_RESULT)
+    if(NOT PVT_MACOS_SDK_RESULT EQUAL 0 OR PVT_MACOS_SDK_VERSION VERSION_LESS "27.0")
+        message(FATAL_ERROR "Building PVT requires the macOS 27 SDK or later.")
+    endif()
 endif()
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -37,6 +47,15 @@ endif()
 string(REGEX REPLACE "-.*$" "" PVT_PRODUCT_VERSION_CORE
     "${PVT_PRODUCT_VERSION}")
 project(ProceduralVisualizerTool VERSION "${PVT_PRODUCT_VERSION_CORE}" LANGUAGES CXX)
+
+if(APPLE)
+    execute_process(COMMAND xcrun --sdk macosx --show-sdk-path
+        OUTPUT_VARIABLE PVT_MACOS_SDK_PATH OUTPUT_STRIP_TRAILING_WHITESPACE
+        COMMAND_ERROR_IS_FATAL ANY)
+    # Link the supported OS's runtime, not an optional toolchain-local libc++
+    # that may require a future OS and is not installed on users' computers.
+    add_link_options(-nostdlib++ "${PVT_MACOS_SDK_PATH}/usr/lib/libc++.tbd")
+endif()
 
 include(GNUInstallDirs)
 include(CTest)
@@ -672,10 +691,15 @@ if(PVT_BUILD_QT_GUI)
         if(NOT EXISTS "${PVT_REMOTE_WORKER_DIR}/pvt-remote${CMAKE_EXECUTABLE_SUFFIX}")
             message(FATAL_ERROR "PVT_REMOTE_WORKER_DIR does not contain the bundled remote executable")
         endif()
+        if(APPLE)
+            set(PVT_REMOTE_STAGE_DIR "$<TARGET_BUNDLE_DIR:ProceduralVisualizerToolGui>/Contents/Resources/pvt-remote")
+        else()
+            set(PVT_REMOTE_STAGE_DIR "$<TARGET_FILE_DIR:ProceduralVisualizerToolGui>/pvt-remote")
+        endif()
         add_custom_target(pvt_stage_remote_worker ALL
             COMMAND "${CMAKE_COMMAND}"
                 "-DSOURCE=${PVT_REMOTE_WORKER_DIR}"
-                "-DDESTINATION=$<TARGET_FILE_DIR:ProceduralVisualizerToolGui>/pvt-remote"
+                "-DDESTINATION=${PVT_REMOTE_STAGE_DIR}"
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyBundleDirectory.cmake"
             DEPENDS ProceduralVisualizerToolGui
             VERBATIM)
@@ -731,11 +755,19 @@ if(PVT_BUILD_QT_GUI)
             COMMAND /usr/bin/codesign --force
                     --sign "${PVT_DISTRIBUTION_CODE_SIGN_IDENTITY}"
                     "${PVT_DISTRIBUTION_APP}/Contents/MacOS/pvt-render"
+            COMMAND "${CMAKE_COMMAND}" -E remove_directory
+                    "${PVT_DISTRIBUTION_APP}/Contents/Resources/pvt-remote"
             COMMAND "${PVT_MACDEPLOYQT}"
                     "${PVT_DISTRIBUTION_APP}"
                     -always-overwrite
                     "-codesign=${PVT_DISTRIBUTION_CODE_SIGN_IDENTITY}"
                     "$<$<CONFIG:Debug>:-use-debug-libs>"
+            COMMAND "${CMAKE_COMMAND}"
+                    "-DSOURCE=${PVT_REMOTE_WORKER_DIR}"
+                    "-DDESTINATION=${PVT_DISTRIBUTION_APP}/Contents/Resources/pvt-remote"
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CopyBundleDirectory.cmake"
+            COMMAND /usr/bin/codesign --force --sign "${PVT_DISTRIBUTION_CODE_SIGN_IDENTITY}"
+                    "${PVT_DISTRIBUTION_APP}"
             COMMAND "${CMAKE_COMMAND}"
                     "-DPVT_APP_BUNDLE=${PVT_DISTRIBUTION_APP}"
                     "-DPVT_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}"
@@ -1185,7 +1217,7 @@ if(PVT_BUILD_QT_GUI)
     endif()
     if(PVT_REMOTE_WORKER_DIR)
         if(APPLE)
-            set(pvt_remote_install_dir "Procedural Visualizer Tool.app/Contents/MacOS/pvt-remote")
+            set(pvt_remote_install_dir "Procedural Visualizer Tool.app/Contents/Resources/pvt-remote")
         else()
             set(pvt_remote_install_dir "${CMAKE_INSTALL_BINDIR}/pvt-remote")
         endif()

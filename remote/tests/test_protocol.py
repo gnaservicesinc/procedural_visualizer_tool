@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,7 +40,10 @@ class ProtocolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             file = Path(temp) / 'identity.json'
             save_private(file, self.host.identity)
-            self.assertEqual(file.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(file.read_text()), self.host.identity)
+            # POSIX mode bits do not describe Windows inherited user-profile ACLs.
+            if os.name != 'nt':
+                self.assertEqual(file.stat().st_mode & 0o777, 0o600)
 
 class HostTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

@@ -63,7 +63,7 @@ jobs:
             package-dir: procedural-visualizer-tool-windows-arm64
             archive: procedural-visualizer-tool-windows-arm64.zip
           - name: macOS arm64
-            os: macos-15
+            os: xcode-27
             qt-source: archive
             qt-host: mac
             qt-arch: clang_64
@@ -132,6 +132,10 @@ jobs:
         run: |
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" `
             install "libpng:${{ matrix.vcpkg-triplet }}"
+          if ($env:RUNNER_ARCH -eq "ARM64") {
+            & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install "openssl:arm64-windows-static"
+            if ($LASTEXITCODE -ne 0) { throw "Native OpenSSL build failed" }
+          }
 
       - name: Install Qt
         if: matrix.qt-source == 'archive'
@@ -236,9 +240,14 @@ jobs:
           if [ "$RUNNER_OS" = "Windows" ] && [ "$RUNNER_ARCH" = "ARM64" ]; then
             export SKIP_CYTHON=1
             export CRC32C_PURE_PYTHON=1
+            export OPENSSL_DIR="$(cygpath -m "$VCPKG_INSTALLATION_ROOT")/installed/arm64-windows-static"
+            export OPENSSL_STATIC=1
           fi
           python -m pip install ./remote 'pyinstaller==6.22.0'
           python scripts/build-remote-worker.py --output "$GITHUB_WORKSPACE/remote-bundle/pvt-remote"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            export PVT_REMOTE_TEST_VIDEOTOOLBOX_LIBRARY="$GITHUB_WORKSPACE/remote-bundle/pvt-remote/_internal/pvt-videotoolbox.dylib"
+          fi
           python -m unittest discover -s remote/tests -v
 
       - name: Configure Linux
@@ -576,6 +585,8 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          PVT now supports macOS 27.0 and later only. Both the application and CLI enforce that minimum. Mac Remote Display video uses Apple's VideoToolbox H264 encoder directly (up to 720p30); native movie export continues through AVFoundation and VideoToolbox. The former macOS 13 dependency pin and legacy audio-track loading were removed.
+
           Version 19.1.6 makes Remotes a pair-once feature for devices on the same network. PVT includes the transport runtime. Exchange the pairing files once; saved devices connect and reconnect automatically, including after a PVT restart. Same-computer connections work without an external network. Setup no longer asks for interpreters, dependencies, hostnames, addresses, ports or server settings. Existing controls, validation, undo, persistence, video and audio remain shared.
 
           Version 19.1.4 adds the PVT desktop side of the PVT-RC control and PVT-RD display extensions. Remote edits use the existing Live target registry, validation, undo/redo, persistence, renderer, and output-mix audio paths. Networking is disabled by default and supports explicit public-identity pairing, authenticated encrypted signaling, one active controller, multiple displays, LAN endpoints, a self-hostable relay, and configurable ICE servers. Background hosting uses the normal system-tray and unsaved-project lifecycle. The separate extension repositories provide Chrome, Firefox, and Safari build targets.

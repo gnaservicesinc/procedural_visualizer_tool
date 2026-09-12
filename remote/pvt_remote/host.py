@@ -11,6 +11,7 @@ import io
 import ipaddress
 import json
 import logging
+import platform
 import socket
 import sys
 import time
@@ -18,7 +19,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription, MediaStreamTrack
+from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection, RTCSessionDescription, MediaStreamTrack, RTCRtpSender
 from av import AudioFrame, VideoFrame
 from PIL import Image
 from websockets.asyncio.client import connect
@@ -36,15 +37,28 @@ class Video(MediaStreamTrack):
         self.host = host
         self.started = time.monotonic()
         self.sequence = -1
+        self.encoder = None
+        if sys.platform == 'darwin':
+            from .macos_video import Encoder
+            self.encoder = Encoder()
 
     async def recv(self):
         while self.host.image is None or self.sequence == self.host.sequence:
             await asyncio.sleep(0.005)
         self.sequence = self.host.sequence
+        if self.encoder:
+            # Packet transport bypasses aiortc's software video encoders.
+            return self.encoder.encode(self.host.image,
+                int((time.monotonic() - self.started) * 90000))
         frame = VideoFrame.from_image(self.host.image)
         frame.pts = int((time.monotonic() - self.started) * 90000)
         frame.time_base = fractions.Fraction(1, 90000)
         return frame
+
+    def stop(self):
+        if self.encoder:
+            self.encoder.close()
+        super().stop()
 
 class Audio(MediaStreamTrack):
     kind = "audio"
@@ -148,7 +162,7 @@ class Host:
         # Stable bounded alternatives allow a paired browser to recover from a
         # port conflict without service enumeration or another pairing export.
         first = 49152 + int(self.identity["public"]["id"].replace("-", "")[:8], 16) % 16000
-        return [first + offset for offset in range(4)]
+        return [49152 + (first - 49152 + offset) % 16000 for offset in (0, 4093, 8191, 12289)]
 
     def discovery_name(self):
         return f"pvt-{self.cipher.public['id']}.local"
@@ -215,7 +229,7 @@ class Host:
                 self.config["port"] = port
                 break
             except OSError as error:
-                if error.errno != errno.EADDRINUSE:
+                if error.errno not in (errno.EADDRINUSE, errno.EACCES):
                     raise
         if not self.server:
             raise OSError("Automatic connection endpoints are busy")
@@ -341,6 +355,16 @@ class Host:
                 if pc.connectionState != "closed":
                     await pc.close()
         try:
+            if peer['role'] == 'display' and sys.platform == 'darwin':
+                codecs = [codec for codec in RTCRtpSender.getCapabilities('video').codecs
+                          if codec.mimeType.lower() == 'video/h264'
+                          and str(codec.parameters.get('packetization-mode')) == '1']
+                if not codecs:
+                    raise RuntimeError('Remote video requires H264 support')
+                # Preferences must precede offer processing: aiortc resolves
+                # the sender codecs while applying the remote description.
+                transceiver = pc.addTransceiver('video', direction='sendonly')
+                transceiver.setCodecPreferences(codecs)
             await pc.setRemoteDescription(RTCSessionDescription(sdp=payload["sdp"], type="offer"))
             if peer["role"] == "display":
                 pc.addTrack(Video(self))
@@ -540,7 +564,16 @@ async def self_test():
             frame = VideoFrame.from_image(Image.new("RGB", (64, 64)))
             frame.pts = 0
             frame.time_base = fractions.Fraction(1, 90000)
-            assert get_encoder(RTCRtpCodecParameters(mimeType="video/VP8", clockRate=90000)).encode(frame)[0]
+            if sys.platform == 'darwin':
+                from .macos_video import Encoder
+                encoder = Encoder()
+                try:
+                    packet = encoder.encode(Image.new('RGB', (64, 64)), 0)
+                    assert get_encoder(RTCRtpCodecParameters(mimeType='video/H264', clockRate=90000)).pack(packet)[0]
+                finally:
+                    encoder.close()
+            else:
+                assert get_encoder(RTCRtpCodecParameters(mimeType="video/VP8", clockRate=90000)).encode(frame)[0]
             audio = Audio(host)
             try:
                 assert get_encoder(RTCRtpCodecParameters(mimeType="audio/opus", clockRate=48000, channels=2)).encode(await audio.recv())[0]
@@ -552,6 +585,8 @@ async def self_test():
 
 
 def main():
+    if sys.platform == 'darwin' and int(platform.mac_ver()[0].split('.')[0]) < 27:
+        raise SystemExit('PVT requires macOS 27.0 or later')
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory")
     parser.add_argument("--self-test", action="store_true")

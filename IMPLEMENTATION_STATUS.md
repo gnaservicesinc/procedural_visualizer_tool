@@ -6,6 +6,17 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## macOS platform policy for 19.1.6
+
+macOS 27.0 and later is the only supported Mac baseline. CMake rejects lower
+explicit targets and older SDKs; application metadata and native binaries enforce
+27.0. CI uses the macOS 27 `xcode-27` runner. The prior av 15.1 compatibility pin
+is removed. Remote's existing track uses a direct VideoToolbox H264 backend on
+Mac, with H264-only negotiation before processing the offer; no software video
+encoder fallback. Movie export retains AVFoundation/VideoToolbox and now loads
+music tracks through the current asynchronous API. Older release entries below
+are historical evidence, not the current support policy.
+
 ## 19.1.6 automatic same-network remotes
 
 Remote setup now uses the existing mutual pairing files without runtime or

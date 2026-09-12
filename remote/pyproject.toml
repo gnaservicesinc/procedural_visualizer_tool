@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Opt-in PVT WebRTC transport and encrypted signaling relay"
 requires-python = ">=3.11"
 license = "GPL-3.0-or-later"
-dependencies = ["aiortc>=1.14,<2", "cryptography>=45,<49", "websockets>=15,<17", "zeroconf>=0.148,<1", "Pillow>=11,<13", "ifaddr>=0.2,<1", "av==15.1.0; sys_platform == 'darwin'"]
+dependencies = ["aiortc>=1.14,<2", "cryptography>=45,<49", "websockets>=15,<17", "zeroconf>=0.148,<1", "Pillow>=11,<13", "ifaddr>=0.2,<1"]
 
 [project.scripts]
 pvt-remote = "pvt_remote.host:main"

@@ -75,7 +75,12 @@ void RemoteBridge::start() {
         process_.setProgram(test_python);
         process_.setArguments({"-I", "-m", "pvt_remote.host", "--directory", directory});
     } else {
-        const auto executable = QCoreApplication::applicationDirPath() + "/pvt-remote/pvt-remote"
+        const auto executable = QCoreApplication::applicationDirPath()
+#ifdef Q_OS_MACOS
+            + "/../Resources/pvt-remote/pvt-remote"
+#else
+            + "/pvt-remote/pvt-remote"
+#endif
 #ifdef Q_OS_WIN
             + ".exe"
 #endif
