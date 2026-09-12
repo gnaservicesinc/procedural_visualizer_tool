@@ -695,6 +695,9 @@ vec4 sampleCylinderHit(Hit hit, vec3 worldDirection) {
     return shadeHit(sampled, hit.normal, worldDirection);
 }
 
+)PVT_GLSL"
+R"PVT_GLSL(
+
 bool intersectSphere(vec3 origin, vec3 direction,
                      out Hit front, out Hit back, out bool hasBack) {
     float a = dot(direction, direction);
