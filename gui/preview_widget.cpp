@@ -25,8 +25,9 @@ PreviewWidget::PreviewWidget(QWidget* parent) : QWidget(parent) {
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
-void PreviewWidget::setPreview(const QImage& image) {
+void PreviewWidget::setPreview(const QImage& image, Qt::TransformationMode scaling) {
     preview_ = image;
+    preview_scaling_ = scaling;
     update();
 }
 
@@ -224,6 +225,8 @@ void PreviewWidget::paintEvent(QPaintEvent*) {
     }
     painter.restore();
     if (!preview_.isNull()) {
+        painter.setRenderHint(QPainter::SmoothPixmapTransform,
+                              preview_scaling_ == Qt::SmoothTransformation);
         painter.drawImage(target, preview_);
     }
     painter.setPen(QPen(QColor(160, 164, 173), 1.0));

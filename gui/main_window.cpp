@@ -2607,7 +2607,10 @@ MainWindow::MainWindow(QWidget* parent)
                     && live_workspace_->isRealtimeOutputActive()
                     && (workspace_stack_ == nullptr
                         || workspace_stack_->currentWidget() != live_workspace_)) {
-                    preview_->setPreview(image);
+                    // Match the Live monitor/stage when enlarging its reduced
+                    // resolution frame; nearest-neighbor scaling invents large
+                    // visible pixels even when the authored block size is one.
+                    preview_->setPreview(image, Qt::SmoothTransformation);
                     if (palette_remix_dialog_ && live_workspace_->isPresentationActive())
                         palette_remix_dialog_->setArtwork(image);
                 }
@@ -19195,9 +19198,8 @@ void MainWindow::schedulePreview() {
     // for the same CPU/GPU and could overwrite a newer delivered frame.
     if (live_workspace_ != nullptr
         && live_workspace_->isRealtimeOutputActive()) {
-        if (live_workspace_->isPresentationActive()) {
-            live_workspace_->requestRealtimeFrame();
-        }
+        // Authoring must be visible immediately even with a slow Live clock.
+        live_workspace_->requestRealtimeFrame();
         preview_deferred_ = false;
         if (preview_watcher_ != nullptr && preview_watcher_->isRunning()
             && preview_cancel_ != nullptr) {
@@ -20818,6 +20820,124 @@ bool MainWindow::runSmokeChecks(QString* error) {
             *error = tr("The reopened LIVE window did not clean up correctly.");
         }
         return false;
+    }
+
+    // Blank-project authoring must not depend on the next performance tick.
+    // Use the real editor widgets and Live companion lifecycle at 0.1 fps:
+    // missing an explicit update would otherwise leave an edit invisible for 10s.
+    {
+        const auto saved_project = captureProjectState();
+        const auto saved_active = active_layer_uuid_;
+        const auto saved_backend = render_backend_;
+        QImage delivered;
+        const auto delivery = connect(live_workspace_, &LiveWorkspace::livePreviewFrame,
+                                      this, [&](const QImage& frame) { delivered = frame; });
+        ScopeExit cleanup([&] {
+            disconnect(delivery);
+            restoreLiveWorkspace(false);
+            render_backend_ = saved_backend;
+            restoreProjectState(saved_project, saved_active);
+            clearUndoHistory(false);
+        });
+        project_ = built_in_workbench_project_document().project;
+        project_.canvas.width = project_.canvas.height = 64;
+        project_.canvas.fps = 0.1;
+        project_.canvas.live = {};
+        project_.canvas.live.safety.prevent_device_sleep = false;
+        active_layer_uuid_ = project_.layers.front().uuid;
+        render_backend_ = pvt::RenderBackend::Cpu;
+        loadActiveConfiguration();
+        refreshAll();
+        refreshLayerList();
+        noteDocumentChange();
+        clearUndoHistory(false);
+        const auto wait_for_frame = [&] {
+            QElapsedTimer deadline;
+            deadline.start();
+            while (delivered.isNull() && deadline.elapsed() < 750) {
+                QApplication::processEvents();
+                QThread::msleep(1);
+            }
+            return !delivered.isNull();
+        };
+        const auto transparent = [&] {
+            if (delivered.isNull()) return false;
+            for (int y = 0; y < delivered.height(); ++y)
+                for (int x = 0; x < delivered.width(); ++x)
+                    if (qAlpha(delivered.pixel(x, y)) != 0) return false;
+            return true;
+        };
+        for (int cycle = 0; cycle < 3; ++cycle) {
+            delivered = {};
+            live_mode_action_->trigger();
+            if (!wait_for_frame()) {
+                if (error) *error = QStringLiteral("Blank Live did not deliver its opening frame.");
+                return false;
+            }
+            if (cycle == 0) {
+                // Exercise the actual Live-to-editor delivery connection with a
+                // tiny known frame. The monitor interpolates between these two
+                // colors; nearest-neighbor editor painting would stay black here.
+                QImage ramp(2, 2, QImage::Format_RGB32);
+                for (int y = 0; y < 2; ++y) {
+                    ramp.setPixelColor(0, y, Qt::black);
+                    ramp.setPixelColor(1, y, Qt::white);
+                }
+                live_workspace_->livePreviewFrame(ramp);
+                const QImage painted = preview_->grab().toImage();
+                const double ratio = painted.devicePixelRatio();
+                const int x = static_cast<int>(ratio * (preview_->width() * 0.5
+                    - std::min(preview_->width(), preview_->height()) * 0.1));
+                const int y = static_cast<int>(ratio * preview_->height() * 0.5);
+                const int red = painted.pixelColor(x, y).red();
+                if (red < 16 || red > 240) {
+                    if (error) *error = QStringLiteral("Live frames became blocky in the main editor.");
+                    return false;
+                }
+                // A normal editor frame chooses its own display policy again.
+                preview_->setPreview(ramp);
+                if (preview_->grab().toImage().pixelColor(x, y).red() != 0) {
+                    if (error) *error = QStringLiteral("Live scaling leaked into a normal editor frame.");
+                    return false;
+                }
+            }
+            // The toolbar and window focus changes must not alter authored values.
+            const double block = 2.5 + cycle;
+            block_size_->setValue(block);
+            delivered = {};
+            layer_opacity_->setValue(0.0);
+            if (!wait_for_frame() || !transparent()
+                || project_.canvas.block_size != block || config_.block_size != block
+                || project_.layers.front().opacity != 0.0) {
+                if (error) *error = QStringLiteral("Main-editor edits did not reach blank Live immediately.");
+                return false;
+            }
+            delivered = {};
+            undo_stack_->undo();
+            if (!wait_for_frame() || transparent()
+                || project_.layers.front().opacity != 1.0
+                || layer_opacity_->value() != 100.0) {
+                if (error) *error = QStringLiteral("Undo did not restore both the editor and Live frame.");
+                return false;
+            }
+            delivered = {};
+            undo_stack_->redo();
+            if (!wait_for_frame() || !transparent()) {
+                if (error) *error = QStringLiteral("Redo did not reach the Live frame.");
+                return false;
+            }
+            layer_opacity_->setValue(100.0);
+            live_popout_window_->close();
+            QApplication::processEvents();
+            if (project_.canvas.block_size != block || block_size_->value() != block
+                || project_.canvas.fps != 0.1 || fps_->value() != 0.1
+                || project_.layers.front().opacity != 1.0
+                || layer_opacity_->value() != 100.0 || live_workspace_->isLiveActive()) {
+                if (error) *error = QStringLiteral("Closing Live changed authored editor values.");
+                return false;
+            }
+            clearUndoHistory(false);
+        }
     }
 
     layers_dock_->setFloating(true);

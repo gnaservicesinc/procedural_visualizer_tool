@@ -20,7 +20,8 @@ public:
 
     explicit PreviewWidget(QWidget* parent = nullptr);
 
-    void setPreview(const QImage& image);
+    void setPreview(const QImage& image,
+                    Qt::TransformationMode scaling = Qt::FastTransformation);
     void setConfiguration(const pvt::RenderConfig& config);
     void setOverlayMode(OverlayMode mode);
     void setSelectedWave(std::optional<std::size_t> index);
@@ -65,6 +66,7 @@ private:
     void emitSelected(std::size_t index);
 
     QImage preview_;
+    Qt::TransformationMode preview_scaling_ = Qt::FastTransformation;
     pvt::RenderConfig config_;
     OverlayMode overlay_mode_ = OverlayMode::Waves;
     std::optional<std::size_t> selected_wave_;

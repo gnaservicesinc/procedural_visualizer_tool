@@ -20,6 +20,7 @@
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QDataStream>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -448,6 +449,15 @@ struct LiveWorkspace::Impl {
         int smoothing_ms = 0;
         qint64 changed_ms = 0;
         double start = 0.0;
+        QByteArray mapping_key;
+
+        double valueAt(qint64 now) const {
+            if (smoothing_ms <= 0) return target;
+            const double amount = std::clamp(
+                static_cast<double>(std::max<qint64>(0, now - changed_ms))
+                    / smoothing_ms, 0.0, 1.0);
+            return amount >= 1.0 ? target : start * (1.0 - amount) + target * amount;
+        }
     };
 
     struct MappingRuntime {
@@ -522,11 +532,13 @@ struct LiveWorkspace::Impl {
     QHash<QString, OverrideValue> overrides;
     std::vector<LiveTargetDescriptor> target_cache;
     QHash<QString, int> target_index;
-    QHash<int, MappingRuntime> mapping_runtime;
+    QHash<QByteArray, MappingRuntime> mapping_runtime;
+    QVector<QByteArray> mapping_keys;
     SceneTransition scene_transition;
     QVector<ClockOutputRuntime> clock_outputs;
     pvt::ProjectConfig project_cache;
     bool project_cache_valid = false;
+    std::uint64_t project_cache_revision = 0;
     std::vector<QMetaObject::Connection> screen_connections;
 
     QLabel* monitor = nullptr;
@@ -657,6 +669,9 @@ struct LiveWorkspace::Impl {
     void commitConfig(pvt::LiveConfig next, const QString& reason);
     void refreshConfigUi();
     void rebuildTargetCache();
+    void synchronizeProjectSnapshot();
+    void reconcileMappings(const pvt::LiveConfig& next);
+    double targetValue(const QString& path, double fallback) const;
     void refreshRoleCombos();
     void refreshMappings();
     void refreshScenes();
@@ -724,7 +739,7 @@ struct LiveWorkspace::Impl {
     double transformedValue(const pvt::LiveControlMapping& mapping,
                             int mappingIndex, double raw, bool& fire);
     void performMapping(const pvt::LiveControlMapping& mapping,
-                        double value, bool fire);
+                        int mappingIndex, double value, bool fire);
     void performAction(pvt::LiveAction action, double value, bool fire);
     void captureScene(bool updateExisting);
     void removeScene();
@@ -1878,6 +1893,7 @@ void LiveWorkspace::Impl::commitConfig(pvt::LiveConfig next,
         != clock_output_signature(next);
     const bool endpoints_changed = endpoint_structure_signature(config)
         != endpoint_structure_signature(next);
+    reconcileMappings(next);
     config = next;
     if (authored_editor) authored_editor(config, reason);
     refreshConfigUi();
@@ -1915,27 +1931,95 @@ void LiveWorkspace::Impl::refreshConfigUi() {
 }
 
 void LiveWorkspace::Impl::rebuildTargetCache() {
+    const auto previous = std::move(target_cache);
+    const auto previous_index = std::move(target_index);
     target_cache.clear();
     target_index.clear();
     if (!project_provider) return;
     project_cache = project_provider();
     project_cache_valid = true;
+    project_cache_revision = document_revision_provider ? document_revision_provider() : 0U;
     target_cache = buildLiveTargetRegistry(project_cache);
+    QSet<QString> edited;
     target_index.reserve(static_cast<qsizetype>(target_cache.size()));
     for (int index = 0; index < static_cast<int>(target_cache.size()); ++index) {
-        target_index.insert(target_cache[static_cast<std::size_t>(index)].path, index);
+        const auto& target = target_cache[static_cast<std::size_t>(index)];
+        target_index.insert(target.path, index);
+        const auto old_index = previous_index.constFind(target.path);
+        if (old_index != previous_index.cend()) {
+            const auto& old = previous[static_cast<std::size_t>(*old_index)];
+            if (old.current_value != target.current_value || old.kind != target.kind
+                || old.minimum != target.minimum || old.maximum != target.maximum) {
+                edited.insert(target.path);
+            }
+        }
     }
+    // A deliberate authoring edit takes ownership of that setting. Keep other
+    // performance values, but do not let an old mapping or timed scene silently
+    // undo the edit on the next frame (including Undo/Redo and mode changes).
+    const auto released = [&](const QString& path) {
+        return !target_index.contains(path) || edited.contains(path);
+    };
     for (auto it = overrides.begin(); it != overrides.end();) {
-        if (!target_index.contains(it.key())) it = overrides.erase(it);
+        if (released(it.key())) it = overrides.erase(it);
         else ++it;
     }
     for (auto it = scene_transition.to.begin(); it != scene_transition.to.end();) {
-        if (!target_index.contains(it.key())) {
+        if (released(it.key())) {
             scene_transition.from.remove(it.key());
             scene_transition.discrete.remove(it.key());
             it = scene_transition.to.erase(it);
         } else ++it;
     }
+}
+
+void LiveWorkspace::Impl::synchronizeProjectSnapshot() {
+    if (!project_cache_valid || (document_revision_provider
+        && document_revision_provider() != project_cache_revision)) {
+        rebuildTargetCache();
+    }
+}
+
+void LiveWorkspace::Impl::reconcileMappings(const pvt::LiveConfig& next) {
+    QVector<QByteArray> keys;
+    QSet<QByteArray> enabled;
+    QHash<QByteArray, int> occurrences;
+    for (const auto& mapping : next.mappings) {
+        // Runtime identity follows a connection's semantics, not its table row
+        // or display name. Deleting another row must not transfer button edge
+        // state or release this connection's value. Keep duplicates independent.
+        QByteArray key;
+        QDataStream stream(&key, QIODevice::WriteOnly);
+        stream << qtext(mapping.endpoint_uuid) << int(mapping.input)
+               << mapping.midi_channel << mapping.control_number << qtext(mapping.osc_address)
+               << int(mapping.target) << qtext(mapping.target_path) << int(mapping.action)
+               << qtext(mapping.scene_uuid) << int(mapping.mode)
+               << mapping.input_minimum << mapping.input_maximum
+               << mapping.output_minimum << mapping.output_maximum
+               << mapping.curve << mapping.dead_zone << mapping.smoothing_milliseconds;
+        const int occurrence = occurrences[key]++;
+        stream << occurrence;
+        keys.push_back(key);
+        if (mapping.enabled) enabled.insert(key);
+    }
+    for (auto it = mapping_runtime.begin(); it != mapping_runtime.end();) {
+        if (!enabled.contains(it.key())) it = mapping_runtime.erase(it);
+        else ++it;
+    }
+    for (auto it = overrides.begin(); it != overrides.end();) {
+        if (!it->mapping_key.isEmpty() && !enabled.contains(it->mapping_key))
+            it = overrides.erase(it);
+        else ++it;
+    }
+    mapping_keys = std::move(keys);
+}
+
+double LiveWorkspace::Impl::targetValue(const QString& path, double fallback) const {
+    const auto overridden = overrides.constFind(path);
+    if (overridden != overrides.cend()) return overridden->target;
+    const auto index = target_index.constFind(path);
+    return index == target_index.cend() ? fallback
+        : target_cache[static_cast<std::size_t>(*index)].current_value;
 }
 
 const pvt::LiveEndpointConfig* LiveWorkspace::Impl::endpoint(
@@ -2107,16 +2191,11 @@ void LiveWorkspace::Impl::refreshMappings() {
         QString target;
         if (mapping.target == pvt::LiveMappingTarget::Setting) {
             target = qtext(mapping.target_path);
-            if (project_provider) {
-                const auto registry = buildLiveTargetRegistry(project_provider());
-                const auto found = std::find_if(
-                    registry.begin(), registry.end(),
-                    [&mapping](const LiveTargetDescriptor& item) {
-                        return narrow(item.path) == mapping.target_path;
-                    });
-                if (found != registry.end()) target = found->section + QStringLiteral(" · ") + found->label;
-                else target = LiveWorkspace::tr("Unresolved · %1").arg(target);
-            }
+            const auto index = target_index.constFind(target);
+            if (index != target_index.cend()) {
+                const auto& descriptor = target_cache[static_cast<std::size_t>(*index)];
+                target = descriptor.section + QStringLiteral(" · ") + descriptor.label;
+            } else target = LiveWorkspace::tr("Unresolved · %1").arg(target);
         } else if (mapping.target == pvt::LiveMappingTarget::Action) {
             target = action_name(mapping.action);
         } else {
@@ -2233,7 +2312,7 @@ void LiveWorkspace::Impl::applyMorph(int position) {
     scene_transition = {};
     const auto values = morph.values(static_cast<double>(position) / 1000.0);
     for (auto it = values.cbegin(); it != values.cend(); ++it) {
-        overrides[it.key()] = {it.value(), it.value(), 0, 0};
+        overrides[it.key()] = {it.value(), it.value(), 0, 0, it.value(), {}};
     }
     morph_status->setText(LiveWorkspace::tr("Blend held · %1 shared controls · %2 skipped")
         .arg(morph.targets.size()).arg(morph.skipped_targets));
@@ -2584,6 +2663,7 @@ void LiveWorkspace::Impl::setActive(bool value) {
         stage.clearFrame();
         presented_frame_clock.invalidate();
         updateSleepPrevention();
+        rebuildTargetCache();
         run_clock.restart();
         tempo_taps.clear();
         tapped_bpm = 0.0;
@@ -3042,6 +3122,13 @@ void LiveWorkspace::Impl::updateMonitor() {
 
 void LiveWorkspace::Impl::requestFrame() {
     if (!realtimeActive() || (active && user_freeze)) return;
+    if (active && document_revision_provider
+        && document_revision_provider() != project_cache_revision) {
+        // A new authored snapshot supersedes expensive work for the old one.
+        // Normal clock ticks still let their in-flight frame finish.
+        renderer.cancelCurrent();
+        synchronizeProjectSnapshot();
+    }
     if (active && shouldHoldAudioFrame()) {
         const std::string selected_role = narrow(
             audio_role->currentData().toString());
@@ -4111,6 +4198,7 @@ void LiveWorkspace::Impl::processControl(
     pvt::LiveControlInput input, int channel, int number, double value,
     const QString& endpointUuid, const QString& oscAddress) {
     if (!active || endpointUuid.isEmpty() || !std::isfinite(value)) return;
+    synchronizeProjectSnapshot();
     for (int index = 0; index < static_cast<int>(config.mappings.size()); ++index) {
         const auto& mapping = config.mappings[static_cast<std::size_t>(index)];
         if (!mapping.enabled || mapping.input != input
@@ -4128,14 +4216,14 @@ void LiveWorkspace::Impl::processControl(
         }
         bool fire = false;
         const double transformed = transformedValue(mapping, index, value, fire);
-        performMapping(mapping, transformed, fire);
+        performMapping(mapping, index, transformed, fire);
     }
 }
 
 double LiveWorkspace::Impl::transformedValue(
     const pvt::LiveControlMapping& mapping, int mappingIndex, double raw,
     bool& fire) {
-    MappingRuntime& state = mapping_runtime[mappingIndex];
+    MappingRuntime& state = mapping_runtime[mapping_keys[mappingIndex]];
     const double denominator = mapping.input_maximum - mapping.input_minimum;
     double normalized = denominator > 0.0
         ? (raw - mapping.input_minimum) / denominator : 0.0;
@@ -4161,8 +4249,8 @@ double LiveWorkspace::Impl::transformedValue(
             // 1 is +1, 127 is -1, and 0 is stationary.
             const double direction = raw > 0.5 ? raw - 128.0 / 127.0 : raw;
             const QString path = qtext(mapping.target_path);
-            const double current = overrides.contains(path)
-                ? overrides[path].target : mapping.output_minimum;
+            if (direction == 0.0) fire = false;
+            const double current = targetValue(path, mapping.output_minimum);
             output = current + direction
                 * (mapping.output_maximum - mapping.output_minimum) * 0.1;
             output = std::clamp(output,
@@ -4174,9 +4262,9 @@ double LiveWorkspace::Impl::transformedValue(
             fire = rising;
             if (fire) {
                 const QString path = qtext(mapping.target_path);
-                const bool on = overrides.contains(path)
-                    && overrides[path].target
-                           > (mapping.output_minimum + mapping.output_maximum) * 0.5;
+                const double current = targetValue(path, mapping.output_minimum);
+                const bool on = std::abs(current - mapping.output_maximum)
+                    <= std::abs(current - mapping.output_minimum);
                 output = on ? mapping.output_minimum : mapping.output_maximum;
             }
             break;
@@ -4193,15 +4281,27 @@ double LiveWorkspace::Impl::transformedValue(
 }
 
 void LiveWorkspace::Impl::performMapping(
-    const pvt::LiveControlMapping& mapping, double value, bool fire) {
+    const pvt::LiveControlMapping& mapping, int mappingIndex, double value, bool fire) {
     if (!fire) return;
     if (mapping.target == pvt::LiveMappingTarget::Setting) {
         const QString path = qtext(mapping.target_path);
         if (!target_index.contains(path)) return;
-        const bool existed = overrides.contains(path);
+        const qint64 now = run_clock.elapsed();
+        const auto existing = overrides.constFind(path);
+        if (existing != overrides.cend() && existing->target == value
+            && existing->smoothing_ms == mapping.smoothing_milliseconds
+            && existing->mapping_key == mapping_keys[mappingIndex]) {
+            return; // Repeated samples must not keep restarting the same ramp.
+        }
+        const double current = existing == overrides.cend()
+            ? targetValue(path, value) : existing->valueAt(now);
+        scene_transition.to.remove(path);
+        scene_transition.from.remove(path);
+        scene_transition.discrete.remove(path);
         OverrideValue& target = overrides[path];
-        if (!existed) target.current = value;
-        target.start = target.current;
+        target.current = current;
+        target.start = current;
+        target.mapping_key = mapping_keys[mappingIndex];
         target.target = value;
         target.smoothing_ms = mapping.smoothing_milliseconds;
         target.changed_ms = run_clock.elapsed();
@@ -4322,9 +4422,7 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
         [&uuid](const pvt::LiveSceneConfig& scene) { return scene.uuid == uuid; });
     if (found == config.scenes.end()) return;
     refreshMorph();
-    pvt::ProjectConfig current = project_provider
-        ? project_provider() : pvt::default_project();
-    applyOverrides(current);
+    pvt::ProjectConfig current = runtimeProject();
     const auto registry = buildLiveTargetRegistry(current);
     QHash<QString, LiveTargetDescriptor> targets;
     for (const auto& item : registry) targets.insert(item.path, item);
@@ -4357,6 +4455,7 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
     if (scene_transition.duration_ms == 0) {
         for (auto it = scene_transition.to.cbegin(); it != scene_transition.to.cend(); ++it) {
             OverrideValue& target = overrides[it.key()];
+            target.mapping_key.clear();
             target.current = it.value();
             target.target = it.value();
             target.smoothing_ms = 0;
@@ -4366,6 +4465,7 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
 }
 
 pvt::ProjectConfig LiveWorkspace::Impl::runtimeProject() {
+    synchronizeProjectSnapshot();
     // Authoring and performance are concurrent. Always take the latest
     // project; the cached registry only supplies stable target paths/setters
     // for transient overrides and must never freeze ordinary UI edits.
@@ -4391,6 +4491,7 @@ void LiveWorkspace::Impl::applyOverrides(pvt::ProjectConfig& project) {
             const double value = scene_transition.discrete.contains(it.key())
                 ? it.value() : from + (it.value() - from) * smooth;
             OverrideValue& target = overrides[it.key()];
+            target.mapping_key.clear();
             target.current = value;
             target.target = value;
             target.smoothing_ms = 0;
@@ -4402,15 +4503,7 @@ void LiveWorkspace::Impl::applyOverrides(pvt::ProjectConfig& project) {
     values.reserve(overrides.size());
     for (auto it = overrides.begin(); it != overrides.end(); ++it) {
         OverrideValue& value = it.value();
-        if (value.smoothing_ms > 0 && value.current != value.target) {
-            const qint64 elapsed = std::max<qint64>(0, now - value.changed_ms);
-            const double amount = std::clamp(
-                static_cast<double>(elapsed) / value.smoothing_ms, 0.0, 1.0);
-            value.current = amount >= 1.0 ? value.target
-                : value.start * (1.0 - amount) + value.target * amount;
-        } else {
-            value.current = value.target;
-        }
+        value.current = value.valueAt(now);
         values.insert(it.key(), value.current);
     }
     applyLiveTargetValues(project, target_cache, values);
@@ -4934,6 +5027,7 @@ void LiveWorkspace::setProjectLiveConfig(const pvt::LiveConfig& config) {
         != clock_output_signature(config);
     const bool endpoints_changed = endpoint_structure_signature(impl_->config)
         != endpoint_structure_signature(config);
+    impl_->reconcileMappings(config);
     impl_->config = config;
     if (impl_->target_cache.empty()) impl_->rebuildTargetCache();
     impl_->refreshConfigUi();
