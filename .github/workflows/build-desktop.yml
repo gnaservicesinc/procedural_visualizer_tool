@@ -77,6 +77,19 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Verify product version before building
+        shell: bash
+        run: |
+          product_version=$(tr -d '\r\n' < VERSION)
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v$product_version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match VERSION=$product_version" >&2
+            exit 1
+          fi
+          if ! grep -Fq "Current product version: **$product_version**." README.md; then
+            echo "README product version does not match VERSION=$product_version" >&2
+            exit 1
+          fi
+
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         shell: bash
@@ -556,15 +569,6 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Verify tag matches product version
-        shell: bash
-        run: |
-          product_version=$(tr -d '\r\n' < VERSION)
-          if [[ "$GITHUB_REF_NAME" != "v$product_version" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match VERSION=$product_version" >&2
-            exit 1
-          fi
-
       - name: Download verified platform packages
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
         with:
@@ -588,7 +592,9 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
-          PVT now supports macOS 27.0 and later only. Both the application and CLI enforce that minimum. Mac Remote Display video uses Apple's VideoToolbox H264 encoder directly (up to 720p30); native movie export continues through AVFoundation and VideoToolbox. The former macOS 13 dependency pin and legacy audio-track loading were removed.
+          Version 19.1.8 repairs the macOS packaging smoke test by waiting for native fullscreen transitions before checking Escape behavior. Release builds now check the tag, VERSION and README before compiling. The existing v19.1.7 tag contains VERSION=19.1.6 and was never published; this release supersedes that failed release attempt.
+
+          PVT supports and tests macOS 27.0 and later. Older macOS versions are unsupported but are not deliberately blocked; deployment requirements follow actual APIs and dependencies. Mac Remote Display video uses Apple's VideoToolbox H264 encoder directly (up to 720p30); native movie export continues through AVFoundation and VideoToolbox. The former PyAV 15.1 compatibility pin and legacy audio-track loading were removed.
 
           Version 19.1.6 makes Remotes a pair-once feature for devices on the same network. PVT includes the transport runtime. Exchange the pairing files once; saved devices connect and reconnect automatically, including after a PVT restart. Same-computer connections work without an external network. Setup no longer asks for interpreters, dependencies, hostnames, addresses, ports or server settings. Existing controls, validation, undo, persistence, video and audio remain shared.
 

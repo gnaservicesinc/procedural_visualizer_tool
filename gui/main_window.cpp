@@ -20210,6 +20210,15 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return nullptr;
     };
+    const auto wait_for_stage = [](const std::function<bool()>& complete) {
+        QElapsedTimer transition;
+        transition.start();
+        while (!complete() && transition.elapsed() < 5000) {
+            QApplication::processEvents(QEventLoop::AllEvents, 10);
+            QThread::msleep(2);
+        }
+        return complete();
+    };
 
     // Presentation output is intentionally independent from performance Live.
     // Keep requesting while the first frame renders: an implementation that
@@ -20323,7 +20332,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
 
         // Exercise the native full-screen state latch directly: dismissing a
-        // full-screen stage must normalize it while hidden, and the next
+        // full-screen stage must normalize it before hiding, and the next
         // windowed presentation must not jump back into the old Space.
         live_workspace_->setPresentationFullscreen(true);
         live_preview_output_action_->trigger();
@@ -20351,14 +20360,19 @@ bool MainWindow::runSmokeChecks(QString* error) {
         } dismissal_observer;
         presentation_stage->installEventFilter(&dismissal_observer);
         QApplication::sendEvent(presentation_stage, &escape);
-        QApplication::processEvents();
-        if (!presentation_stage->isVisible() || presentation_stage->isFullScreen()
-            || !live_workspace_->isPresentationActive()) {
+        // Cocoa completes native fullscreen exit asynchronously. A single
+        // processEvents() can still leave Qt in the transitional fullscreen
+        // state; retain the same bounded wait used by performance output.
+        if (!wait_for_stage([&] {
+                return presentation_stage->isVisible()
+                    && !presentation_stage->isFullScreen()
+                    && live_workspace_->isPresentationActive();
+            })) {
             if (error) *error = QStringLiteral("Escape must leave fullscreen while retaining windowed output.");
             return false;
         }
         QApplication::sendEvent(presentation_stage, &escape);
-        QApplication::processEvents();
+        wait_for_stage([&] { return !presentation_stage->isVisible(); });
         presentation_stage->removeEventFilter(&dismissal_observer);
         const bool dismissed_fullscreen =
             !live_workspace_->isPresentationActive()
@@ -20500,15 +20514,6 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
     QKeyEvent performance_escape(
         QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
-    const auto wait_for_stage = [&](const std::function<bool()>& complete) {
-        QElapsedTimer transition;
-        transition.start();
-        while (!complete() && transition.elapsed() < 5000) {
-            QApplication::processEvents(QEventLoop::AllEvents, 10);
-            QThread::msleep(2);
-        }
-        return complete();
-    };
     QApplication::sendEvent(performance_stage, &performance_escape);
     // Native full-screen exit is asynchronous on macOS. A second Escape
     // during that transition still sees full-screen state and cannot dismiss.

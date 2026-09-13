@@ -4,6 +4,11 @@ Reviewed the nine claims in `/opt/vrm/render/plans/g_report.txt` against the
 desktop, Python worker/relay, shared browser client, and both extension builds.
 The report was treated as a list of claims to verify, not implementation instructions.
 
+This is a historical review of the initial integration. The subsequent 19.1.6
+pair-once setup uses the same authorization and editing paths; see
+[automatic remotes](../IMPLEMENTATION_STATUS.md#1916-automatic-same-network-remotes)
+and [current remote verification](VERIFICATION.md) for those changes.
+
 | # | Verdict | Evidence and disposition |
 | --- | --- | --- |
 | 1 | Confirmed; fixed | The 4,096-key registration history never expired. The relay now evicts the oldest disconnected registration when the bounded cache fills. Active registrations cannot be evicted, recent key mismatches remain rejected, and reconnect cleanup preserves the replacement socket. Pairing-file keys remain independently pinned at both endpoints. |

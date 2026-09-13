@@ -1,4 +1,7 @@
-# 4.0.0 Live performance status
+# Historical Live performance status: 4.0.0–6.0.1
+
+For the current workflow, see [Live Controls](LIVE_CONTROLS.md). The entries
+below retain the implementation history in reverse chronological order.
 
 This file is the handoff checklist for the first integrated Live performance
 pass. It separates portable authored project state from machine-local bindings

@@ -6,7 +6,7 @@ Current Live Controls workflow: [audio routing, one video destination, playback,
 **Mac support: macOS 27.0 and later.** Older macOS versions are unsupported, but are not deliberately blocked; actual API and dependency requirements determine whether they run.
 Mac movie export and Remote video encoding use Apple’s system video frameworks.
 
-Current product version: **19.1.6**. The version is read from `VERSION` by every
+Current product version: **19.1.8**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -50,7 +50,9 @@ and supports all normal waveforms, timing, and LFO-to-LFO controls. The project
 Block size value remains the authored fallback. Existing project-wide block-size
 oscillators are converted to ordinary LFOs on each layer when opened in the editor.
 Values below one use subpixel supersampling; zero without modulation is an
-immediate BLACKOUT path that skips rendering. Numeric fields that display Auto
+immediate BLACKOUT path that skips rendering. With a Block size LFO, the
+evaluated value controls each frame: zero produces BLACKOUT and positive values
+resume rendering, even when the authored fallback is zero. Numeric fields that display Auto
 or another named minimum reveal the actual numeric value while editing.
 
 Add Layer is now a placement-aware workflow for blank, built-in/default,

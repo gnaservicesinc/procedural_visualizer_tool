@@ -20,6 +20,8 @@ The output window has native move/resize/maximize controls and an Output menu. F
 
 Devices are rescanned while controls or routing are active. A single/default input is ready for analysis; speaker routes are opt-in. Missing selected devices remain unavailable rather than silently falling back. Reconnect the device or choose another route. Buffer underrun/overrun counts report audio transport problems. Independent device clocks use bounded buffers and gradual resampling to prevent accumulating drift.
 
+Before an audio-driven frame arrives, video follows the project clock and shows **WAITING FOR AUDIO**. Changing the input restarts this startup state; choosing a device alone does not clear the status. It clears once a rendered frame uses the new live audio input. After that, the configured dropout protection applies if audio is lost.
+
 Project-timeline music playback continues when Live Controls opens. The optional looping file source is independent: routing that same file to a speaker while timeline monitoring is also audible will play both. Use the editor’s Audio volume to silence timeline monitoring when using a routed file mix.
 
 ## Saved Looks

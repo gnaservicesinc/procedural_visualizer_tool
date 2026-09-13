@@ -1,17 +1,32 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-12
+Last updated: 2026-09-13
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
-## macOS platform policy for 19.1.6
+## 19.1.8 release repair and Meta audit review
 
-macOS 27.0 and later is the only supported Mac baseline. CMake rejects lower
-explicit targets and older SDKs; application metadata and native binaries enforce
-27.0. CI uses the macOS 27 `xcode-27` runner. The prior av 15.1 compatibility pin
-is removed. Remote's existing track uses a direct VideoToolbox H264 backend on
+The macOS package job passed compilation, distribution verification and 46
+tests, then failed the presentation Escape smoke assertion. That assertion now
+uses the same bounded native-fullscreen transition wait as performance output.
+Release jobs check tag/VERSION and README consistency before building packages.
+
+The existing `v19.1.7` tag points to `7797998`, whose committed VERSION is
+19.1.6; the 19.1.7 metadata was left uncommitted. Neither 19.1.6 nor 19.1.7 was
+published. Version 19.1.8 supersedes those attempts without rewriting tags.
+See [META_AUDIT_REVIEW.md](META_AUDIT_REVIEW.md) for all 20 claim dispositions
+and verification evidence. Publication remains pending until verified there.
+
+## Current macOS platform policy
+
+macOS 27.0 and later is the supported and tested Mac baseline. Builds use the
+current macOS 27 SDK and Qt 6.11.2; CI uses the `xcode-27` runner. Older systems
+are unsupported but not deliberately blocked. Deployment metadata follows actual
+API and dependency requirements (the default native API floor is macOS 15.0).
+The prior PyAV (`av` package) 15.1 compatibility pin is removed. Remote's
+existing track uses a direct VideoToolbox H264 backend on
 Mac, with H264-only negotiation before processing the offer; no software video
 encoder fallback. Movie export retains AVFoundation/VideoToolbox and now loads
 music tracks through the current asynchronous API. Older release entries below
