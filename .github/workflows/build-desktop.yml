@@ -592,6 +592,11 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 19.1.9 integrates the published Remote Control and Remote Display Chrome Web Store listings into Settings → Networking & Remotes. Install the extensions from Chrome, then use the existing public pairing files. Chrome handles approved extension updates; desktop releases and Web Store review remain separate. The shared extension interface adds project/layer navigation, bounded item browsing and protected settings drafts.
+
+          - [PVT Remote Control](https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde)
+          - [PVT Remote Display](https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda)
+
           Version 19.1.8 repairs the macOS packaging smoke test by waiting for native fullscreen transitions before checking Escape behavior. Release builds now check the tag, VERSION and README before compiling. The existing v19.1.7 tag contains VERSION=19.1.6 and was never published; this release supersedes that failed release attempt.
 
           PVT supports and tests macOS 27.0 and later. Older macOS versions are unsupported but are not deliberately blocked; deployment requirements follow actual APIs and dependencies. Mac Remote Display video uses Apple's VideoToolbox H264 encoder directly (up to 720p30); native movie export continues through AVFoundation and VideoToolbox. The former PyAV 15.1 compatibility pin and legacy audio-track loading were removed.

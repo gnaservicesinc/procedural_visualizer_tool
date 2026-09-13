@@ -883,7 +883,7 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2311"/>
+        <location filename="../gui/live_workspace.cpp" line="+2313"/>
         <location line="+2168"/>
         <location line="+945"/>
         <source>Listening…</source>
@@ -899,7 +899,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-4907"/>
+        <location line="-4909"/>
         <source>Active Control Remote: %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -910,12 +910,12 @@
     </message>
     <message>
         <location line="+332"/>
-        <location line="+2499"/>
+        <location line="+2501"/>
         <source>STANDBY</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2492"/>
+        <location line="-2494"/>
         <source>Edit Project</source>
         <translation type="unfinished"></translation>
     </message>
@@ -926,20 +926,20 @@
     </message>
     <message>
         <location line="+9"/>
-        <location line="+2496"/>
+        <location line="+2498"/>
         <location line="+23"/>
         <source>FREEZE</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2515"/>
-        <location line="+2493"/>
+        <location line="-2517"/>
+        <location line="+2495"/>
         <location line="+29"/>
         <source>BLACKOUT</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2515"/>
+        <location line="-2517"/>
         <source>Play / Pause · Space</source>
         <translation type="unfinished"></translation>
     </message>
@@ -950,29 +950,29 @@
     </message>
     <message>
         <location line="+2"/>
-        <location line="+3086"/>
+        <location line="+3088"/>
         <source>MIDI</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-3085"/>
-        <location line="+2469"/>
+        <location line="-3087"/>
+        <location line="+2471"/>
         <source>— fps</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2468"/>
+        <location line="-2470"/>
         <source>Completed frames per second, measured over a quarter-second window. This measures frame delivery to the UI, not the display refresh rate.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+2466"/>
+        <location line="+2468"/>
         <source>No frame</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2465"/>
+        <location line="-2467"/>
         <source>Scene: —</source>
         <translation type="unfinished"></translation>
     </message>
@@ -982,7 +982,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+40"/>
+        <location line="+42"/>
         <source>Create Starter Rig</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2368,7 +2368,7 @@
         <translation>WAITING FOR AUDIO</translation>
     </message>
     <message>
-        <location line="-2753"/>
+        <location line="-2755"/>
         <source>LIVE CONTROLS</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2379,13 +2379,13 @@
     </message>
     <message>
         <location line="+10"/>
-        <location line="+2059"/>
+        <location line="+2061"/>
         <location line="+105"/>
         <source>Start Video Output</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-2151"/>
+        <location line="-2153"/>
         <source>Full Screen / Window</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2402,7 +2402,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+43"/>
+        <location line="+45"/>
         <source>Manage Roles…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2510,41 +2510,41 @@
         <location line="+1"/>
         <location line="+587"/>
         <location line="+143"/>
-        <location line="+19692"/>
+        <location line="+19711"/>
         <source>Starting Colors</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20421"/>
+        <location line="-20440"/>
         <location line="+587"/>
-        <location line="+19837"/>
+        <location line="+19856"/>
         <source>Layer Effects</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20423"/>
+        <location line="-20442"/>
         <location line="+585"/>
-        <location line="+19836"/>
+        <location line="+19855"/>
         <source>Modifiers</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20420"/>
+        <location line="-20439"/>
         <location line="+585"/>
-        <location line="+19836"/>
+        <location line="+19855"/>
         <source>Movement</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20420"/>
+        <location line="-20439"/>
         <location line="+584"/>
         <location line="+1639"/>
-        <location line="+18199"/>
+        <location line="+18218"/>
         <source>Post Effects</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20421"/>
+        <location line="-20440"/>
         <location line="+625"/>
         <location line="+3295"/>
         <location line="+948"/>
@@ -2564,12 +2564,12 @@
         <location line="+3025"/>
         <location line="+149"/>
         <location line="+1075"/>
-        <location line="+15547"/>
+        <location line="+15566"/>
         <source>Export</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20419"/>
+        <location line="-20438"/>
         <location line="+3649"/>
         <location line="+1227"/>
         <source>History</source>
@@ -2583,12 +2583,12 @@
     <message>
         <location line="+7"/>
         <location line="+1928"/>
-        <location line="+18508"/>
+        <location line="+18527"/>
         <source>Synchronization</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-20434"/>
+        <location line="-20453"/>
         <source>Project and active-layer synchronization</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2733,7 +2733,7 @@
     <message>
         <location line="-17094"/>
         <location line="+5"/>
-        <location line="+23860"/>
+        <location line="+23879"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+28"/>
@@ -2743,7 +2743,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-23957"/>
+        <location line="-23976"/>
         <source>The active project was not changed.
 
 %1</source>
@@ -2790,12 +2790,12 @@
         <location line="+5"/>
         <location line="+4901"/>
         <location line="+3059"/>
-        <location line="+11874"/>
+        <location line="+11893"/>
         <source>Project</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-19830"/>
+        <location line="-19849"/>
         <source>Edit project-wide canvas, loop, synchronization, audio, and history settings.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3198,12 +3198,12 @@
     </message>
     <message>
         <location line="-4970"/>
-        <location line="+19344"/>
+        <location line="+19363"/>
         <source>Use synchronized clock</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-19329"/>
+        <location line="-19348"/>
         <location line="+701"/>
         <location line="+216"/>
         <location line="+1601"/>
@@ -5255,14 +5255,14 @@
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15823"/>
+        <location line="+15842"/>
         <location line="+88"/>
         <location line="+11"/>
         <source>Auto</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-15920"/>
+        <location line="-15939"/>
         <source>Connected components</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6394,12 +6394,12 @@ The change requires an immediate Save.</source>
     </message>
     <message>
         <location line="+52"/>
-        <location line="+19450"/>
+        <location line="+19469"/>
         <source>Not saved as a bundle yet</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-19446"/>
+        <location line="-19465"/>
         <source>%1
 Revision history is disabled; only the current saved state is retained.</source>
         <translation type="unfinished"></translation>
@@ -6555,12 +6555,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15673"/>
+        <location line="+15692"/>
         <source>Layers &amp;&amp; Groups</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-15668"/>
+        <location line="-15687"/>
         <source>Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6729,12 +6729,12 @@ Project UUID: %2
     <message>
         <location line="+3"/>
         <location line="+92"/>
-        <location line="+18454"/>
+        <location line="+18473"/>
         <source>Play</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18545"/>
+        <location line="-18564"/>
         <source>Previous beat</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6916,12 +6916,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+5"/>
-        <location line="+13266"/>
+        <location line="+13285"/>
         <source>LFOs…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-13263"/>
+        <location line="-13282"/>
         <source>Animate numeric values between an authored minimum and maximum with a seamless low-frequency oscillator.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -6999,12 +6999,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+3"/>
-        <location line="+14765"/>
+        <location line="+14784"/>
         <source>Restore Layers &amp;&amp; Groups Panel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-14761"/>
+        <location line="-14780"/>
         <source>Show the Layers &amp; Groups panel and dock it on the left side.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -7015,12 +7015,12 @@ Project UUID: %2
     </message>
     <message>
         <location line="+16"/>
-        <location line="+18766"/>
+        <location line="+18785"/>
         <source>Open unpacked project bundle</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18751"/>
+        <location line="-18770"/>
         <source>Randomize layer values?</source>
         <translation type="unfinished"></translation>
     </message>
@@ -7042,12 +7042,12 @@ Project UUID: %2
     <message>
         <location line="+15"/>
         <location line="+20"/>
-        <location line="+18446"/>
+        <location line="+18465"/>
         <source>Invalid output text</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18461"/>
+        <location line="-18480"/>
         <location line="+20"/>
         <location line="+11354"/>
         <source>Invalid setup</source>
@@ -8201,13 +8201,13 @@ Project UUID: %2
     </message>
     <message>
         <location line="+2"/>
-        <location line="+13663"/>
+        <location line="+13682"/>
         <location line="+14"/>
         <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-13672"/>
+        <location line="-13691"/>
         <source>%1 invalid setting(s) could not be applied.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -8292,12 +8292,12 @@ Project UUID: %2
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+10250"/>
+        <location line="+10269"/>
         <source>The recovery notice did not explain the repaired setting.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-13639"/>
+        <location line="-13658"/>
         <source>Unsaved project changes</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10661,12 +10661,12 @@ Replace the current palette or append these values?</source>
         <location line="+8"/>
         <location line="+16"/>
         <location line="+12"/>
-        <location line="+5379"/>
+        <location line="+5398"/>
         <source>Preview cancelled.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-5386"/>
+        <location line="-5405"/>
         <source>The preview image buffer could not be allocated.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10918,7 +10918,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+62"/>
+        <location line="+71"/>
         <source>Live Preview Output settings did not persist or synchronize with LIVE quality controls.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10933,7 +10933,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+69"/>
+        <location line="+74"/>
         <source>Live Preview Output did not leave the native full-screen desktop before hiding or did not restart windowed.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10958,7 +10958,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+18"/>
+        <location line="+20"/>
         <source>Escape from the performance stage incorrectly stopped LIVE.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -10998,7 +10998,7 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+121"/>
+        <location line="+124"/>
         <source>The Layers &amp; Groups panel could not be restored from a floating or hidden state.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12636,19 +12636,19 @@ Run it directly for the default relative output, or pass an output file or direc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-18481"/>
+        <location line="-18500"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location line="-2198"/>
         <location line="+8395"/>
-        <location line="+7430"/>
+        <location line="+7449"/>
         <source>Add LFO…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-15823"/>
+        <location line="-15842"/>
         <source>Add or edit Block size LFO</source>
         <translation type="unfinished"></translation>
     </message>
@@ -12674,7 +12674,7 @@ Run it directly for the default relative output, or pass an output file or direc
     </message>
     <message>
         <location line="+6245"/>
-        <location line="+7433"/>
+        <location line="+7452"/>
         <source>Edit LFO…</source>
         <translation type="unfinished"></translation>
     </message>
@@ -13343,7 +13343,7 @@ Stop video output to preview here.</source>
     </message>
     <message>
         <location line="+4"/>
-        <location filename="../gui/main_window.cpp" line="-21835"/>
+        <location filename="../gui/main_window.cpp" line="-21854"/>
         <source>Quantization</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14296,7 +14296,7 @@ Stop video output to preview here.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3459"/>
+        <location filename="../gui/live_workspace.cpp" line="-3461"/>
         <source> · display %1 of %2</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14668,12 +14668,12 @@ Notes:</source>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+22216"/>
+        <location line="+22235"/>
         <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-22202"/>
+        <location line="-22221"/>
         <source>Movement placement</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14977,12 +14977,12 @@ Notes:</source>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+114"/>
+        <location filename="../gui/remote_bridge.cpp" line="+117"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+24"/>
+        <location line="+25"/>
         <source>Networking &amp; Remotes enabled</source>
         <translation type="unfinished"></translation>
     </message>
@@ -14993,17 +14993,37 @@ Notes:</source>
     </message>
     <message>
         <location line="+64"/>
-        <location line="+78"/>
+        <location line="+99"/>
         <source>None</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-48"/>
+        <location line="-69"/>
         <source>Networking &amp; Remotes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <location line="+3"/>
+        <source>Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location line="+4"/>
+        <source>Get Remote Control for Chrome</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Get Remote Display for Chrome</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Could not open the browser. Open this address in Chrome: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+9"/>
         <source>Enable Networking &amp; Remotes</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15013,7 +15033,12 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+12"/>
+        <location line="+4"/>
+        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote’s Hosts &amp; settings. Save changes there if prompted. Paired devices reconnect automatically while PVT is running.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+8"/>
         <source>Active Control Remote</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15038,27 +15063,22 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="-220"/>
+        <location line="-248"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+98"/>
+        <location line="+106"/>
         <source>Pairing changes could not be saved. Check the pairing file and try again.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+10"/>
+        <location line="+9"/>
         <source>Waiting for a connection. PVT will reconnect automatically.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+96"/>
-        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote. Paired devices reconnect automatically while PVT is running.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location line="+5"/>
+        <location line="+122"/>
         <source>Paired devices</source>
         <translation type="unfinished"></translation>
     </message>
@@ -15093,7 +15113,7 @@ Notes:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location line="+25"/>
+        <location line="+26"/>
         <source>Export host</source>
         <translation type="unfinished"></translation>
     </message>

@@ -883,7 +883,7 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2311"/>
+        <location filename="../gui/live_workspace.cpp" line="+2313"/>
         <location line="+2168"/>
         <location line="+945"/>
         <source>Listening…</source>
@@ -899,7 +899,7 @@
         <translation>Apprentissage MIDI</translation>
     </message>
     <message>
-        <location line="-4907"/>
+        <location line="-4909"/>
         <source>Active Control Remote: %1</source>
         <translation>Télécommande active : %1</translation>
     </message>
@@ -910,12 +910,12 @@
     </message>
     <message>
         <location line="+332"/>
-        <location line="+2499"/>
+        <location line="+2501"/>
         <source>STANDBY</source>
         <translation>EN ATTENTE</translation>
     </message>
     <message>
-        <location line="-2492"/>
+        <location line="-2494"/>
         <source>Edit Project</source>
         <translation>Modifier le projet</translation>
     </message>
@@ -926,20 +926,20 @@
     </message>
     <message>
         <location line="+9"/>
-        <location line="+2496"/>
+        <location line="+2498"/>
         <location line="+23"/>
         <source>FREEZE</source>
         <translation>FIGER</translation>
     </message>
     <message>
-        <location line="-2515"/>
-        <location line="+2493"/>
+        <location line="-2517"/>
+        <location line="+2495"/>
         <location line="+29"/>
         <source>BLACKOUT</source>
         <translation>ÉCRAN NOIR</translation>
     </message>
     <message>
-        <location line="-2515"/>
+        <location line="-2517"/>
         <source>Play / Pause · Space</source>
         <translation>Lecture / Pause · Espace</translation>
     </message>
@@ -950,29 +950,29 @@
     </message>
     <message>
         <location line="+2"/>
-        <location line="+3086"/>
+        <location line="+3088"/>
         <source>MIDI</source>
         <translation>MIDI</translation>
     </message>
     <message>
-        <location line="-3085"/>
-        <location line="+2469"/>
+        <location line="-3087"/>
+        <location line="+2471"/>
         <source>— fps</source>
         <translation>— images/s</translation>
     </message>
     <message>
-        <location line="-2468"/>
+        <location line="-2470"/>
         <source>Completed frames per second, measured over a quarter-second window. This measures frame delivery to the UI, not the display refresh rate.</source>
         <translation>Nombre d’images terminées par seconde, mesuré sur un quart de seconde. Il s’agit du débit d’images fournies à l’interface, et non de la fréquence de rafraîchissement de l’écran.</translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+2466"/>
+        <location line="+2468"/>
         <source>No frame</source>
         <translation>Aucune image</translation>
     </message>
     <message>
-        <location line="-2465"/>
+        <location line="-2467"/>
         <source>Scene: —</source>
         <translation>Scène : —</translation>
     </message>
@@ -982,7 +982,7 @@
         <translation>Affectations des commandes</translation>
     </message>
     <message>
-        <location line="+40"/>
+        <location line="+42"/>
         <source>Create Starter Rig</source>
         <translation>Créer une configuration de départ</translation>
     </message>
@@ -2369,7 +2369,7 @@
         <translation>EN ATTENTE DU SIGNAL AUDIO</translation>
     </message>
     <message>
-        <location line="-2753"/>
+        <location line="-2755"/>
         <source>LIVE CONTROLS</source>
         <translation>COMMANDES LIVE</translation>
     </message>
@@ -2380,13 +2380,13 @@
     </message>
     <message>
         <location line="+10"/>
-        <location line="+2059"/>
+        <location line="+2061"/>
         <location line="+105"/>
         <source>Start Video Output</source>
         <translation>Démarrer la sortie vidéo</translation>
     </message>
     <message>
-        <location line="-2151"/>
+        <location line="-2153"/>
         <source>Full Screen / Window</source>
         <translation>Plein écran / Fenêtre</translation>
     </message>
@@ -2403,7 +2403,7 @@
         <translation>Rendus enregistrés</translation>
     </message>
     <message>
-        <location line="+43"/>
+        <location line="+45"/>
         <source>Manage Roles…</source>
         <translation>Gérer les rôles…</translation>
     </message>
@@ -2511,41 +2511,41 @@
         <location line="+1"/>
         <location line="+587"/>
         <location line="+143"/>
-        <location line="+19692"/>
+        <location line="+19711"/>
         <source>Starting Colors</source>
         <translation>Couleurs initiales</translation>
     </message>
     <message>
-        <location line="-20421"/>
+        <location line="-20440"/>
         <location line="+587"/>
-        <location line="+19837"/>
+        <location line="+19856"/>
         <source>Layer Effects</source>
         <translation>Effets du calque</translation>
     </message>
     <message>
-        <location line="-20423"/>
+        <location line="-20442"/>
         <location line="+585"/>
-        <location line="+19836"/>
+        <location line="+19855"/>
         <source>Modifiers</source>
         <translation>Modificateurs</translation>
     </message>
     <message>
-        <location line="-20420"/>
+        <location line="-20439"/>
         <location line="+585"/>
-        <location line="+19836"/>
+        <location line="+19855"/>
         <source>Movement</source>
         <translation>Mouvement</translation>
     </message>
     <message>
-        <location line="-20420"/>
+        <location line="-20439"/>
         <location line="+584"/>
         <location line="+1639"/>
-        <location line="+18199"/>
+        <location line="+18218"/>
         <source>Post Effects</source>
         <translation>Effets de finition</translation>
     </message>
     <message>
-        <location line="-20421"/>
+        <location line="-20440"/>
         <location line="+625"/>
         <location line="+3295"/>
         <location line="+948"/>
@@ -2565,12 +2565,12 @@
         <location line="+3025"/>
         <location line="+149"/>
         <location line="+1075"/>
-        <location line="+15547"/>
+        <location line="+15566"/>
         <source>Export</source>
         <translation>Exporter</translation>
     </message>
     <message>
-        <location line="-20419"/>
+        <location line="-20438"/>
         <location line="+3649"/>
         <location line="+1227"/>
         <source>History</source>
@@ -2584,12 +2584,12 @@
     <message>
         <location line="+7"/>
         <location line="+1928"/>
-        <location line="+18508"/>
+        <location line="+18527"/>
         <source>Synchronization</source>
         <translation>Synchronisation</translation>
     </message>
     <message>
-        <location line="-20434"/>
+        <location line="-20453"/>
         <source>Project and active-layer synchronization</source>
         <translation>Synchronisation du projet et du calque actif</translation>
     </message>
@@ -2734,7 +2734,7 @@
     <message>
         <location line="-17094"/>
         <location line="+5"/>
-        <location line="+23860"/>
+        <location line="+23879"/>
         <location line="+6"/>
         <location line="+7"/>
         <location line="+28"/>
@@ -2744,7 +2744,7 @@
         <translation>Échec de l’enregistrement</translation>
     </message>
     <message>
-        <location line="-23957"/>
+        <location line="-23976"/>
         <source>The active project was not changed.
 
 %1</source>
@@ -2795,12 +2795,12 @@
         <location line="+5"/>
         <location line="+4901"/>
         <location line="+3059"/>
-        <location line="+11874"/>
+        <location line="+11893"/>
         <source>Project</source>
         <translation>Projet</translation>
     </message>
     <message>
-        <location line="-19830"/>
+        <location line="-19849"/>
         <source>Edit project-wide canvas, loop, synchronization, audio, and history settings.</source>
         <translation>Modifier le canevas, la boucle, la synchronisation, l’audio et l’historique de l’ensemble du projet.</translation>
     </message>
@@ -3203,12 +3203,12 @@
     </message>
     <message>
         <location line="-4970"/>
-        <location line="+19344"/>
+        <location line="+19363"/>
         <source>Use synchronized clock</source>
         <translation>Utiliser l’horloge synchronisée</translation>
     </message>
     <message>
-        <location line="-19329"/>
+        <location line="-19348"/>
         <location line="+701"/>
         <location line="+216"/>
         <location line="+1601"/>
@@ -5260,14 +5260,14 @@
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15823"/>
+        <location line="+15842"/>
         <location line="+88"/>
         <location line="+11"/>
         <source>Auto</source>
         <translation>Auto</translation>
     </message>
     <message>
-        <location line="-15920"/>
+        <location line="-15939"/>
         <source>Connected components</source>
         <translation>Composantes connexes</translation>
     </message>
@@ -6401,12 +6401,12 @@ La modification nécessite un enregistrement immédiat.</translation>
     </message>
     <message>
         <location line="+52"/>
-        <location line="+19450"/>
+        <location line="+19469"/>
         <source>Not saved as a bundle yet</source>
         <translation>Pas encore enregistré comme archive de projet</translation>
     </message>
     <message>
-        <location line="-19446"/>
+        <location line="-19465"/>
         <source>%1
 Revision history is disabled; only the current saved state is retained.</source>
         <translation>%1
@@ -6565,12 +6565,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+5"/>
-        <location line="+15673"/>
+        <location line="+15692"/>
         <source>Layers &amp;&amp; Groups</source>
         <translation>Calques &amp;&amp; groupes</translation>
     </message>
     <message>
-        <location line="-15668"/>
+        <location line="-15687"/>
         <source>Drag the title bar to move or dock this panel. Double-click its title bar to toggle between floating and docked.</source>
         <translation>Faites glisser la barre de titre pour déplacer ou ancrer ce panneau. Double-cliquez dessus pour basculer entre flottant et ancré.</translation>
     </message>
@@ -6739,12 +6739,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     <message>
         <location line="+3"/>
         <location line="+92"/>
-        <location line="+18454"/>
+        <location line="+18473"/>
         <source>Play</source>
         <translation>Lire</translation>
     </message>
     <message>
-        <location line="-18545"/>
+        <location line="-18564"/>
         <source>Previous beat</source>
         <translation>Battement précédent</translation>
     </message>
@@ -6926,12 +6926,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+5"/>
-        <location line="+13266"/>
+        <location line="+13285"/>
         <source>LFOs…</source>
         <translation>LFO…</translation>
     </message>
     <message>
-        <location line="-13263"/>
+        <location line="-13282"/>
         <source>Animate numeric values between an authored minimum and maximum with a seamless low-frequency oscillator.</source>
         <translation>Animer des valeurs numériques entre un minimum et un maximum définis avec un oscillateur basse fréquence en boucle continue.</translation>
     </message>
@@ -7009,12 +7009,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+3"/>
-        <location line="+14765"/>
+        <location line="+14784"/>
         <source>Restore Layers &amp;&amp; Groups Panel</source>
         <translation>Restaurer le panneau Calques &amp;&amp; groupes</translation>
     </message>
     <message>
-        <location line="-14761"/>
+        <location line="-14780"/>
         <source>Show the Layers &amp; Groups panel and dock it on the left side.</source>
         <translation>Afficher le panneau Calques et groupes et l’ancrer à gauche.</translation>
     </message>
@@ -7025,12 +7025,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+16"/>
-        <location line="+18766"/>
+        <location line="+18785"/>
         <source>Open unpacked project bundle</source>
         <translation>Ouvrir une archive de projet décompressée</translation>
     </message>
     <message>
-        <location line="-18751"/>
+        <location line="-18770"/>
         <source>Randomize layer values?</source>
         <translation>Tirer au hasard les valeurs du calque ?</translation>
     </message>
@@ -7052,12 +7052,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     <message>
         <location line="+15"/>
         <location line="+20"/>
-        <location line="+18446"/>
+        <location line="+18465"/>
         <source>Invalid output text</source>
         <translation>Texte de sortie invalide</translation>
     </message>
     <message>
-        <location line="-18461"/>
+        <location line="-18480"/>
         <location line="+20"/>
         <location line="+11354"/>
         <source>Invalid setup</source>
@@ -8211,13 +8211,13 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
     </message>
     <message>
         <location line="+2"/>
-        <location line="+13663"/>
+        <location line="+13682"/>
         <location line="+14"/>
         <source>Original values for %1 setting(s) are preserved and will be kept when saving.</source>
         <translation>Les valeurs d’origine de %1 réglage(s) sont conservées, y compris lors de l’enregistrement.</translation>
     </message>
     <message>
-        <location line="-13672"/>
+        <location line="-13691"/>
         <source>%1 invalid setting(s) could not be applied.</source>
         <translation>%1 réglage(s) non valide(s) n’ont pas pu être appliqués.</translation>
     </message>
@@ -8302,12 +8302,12 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <translation>Remixer la palette</translation>
     </message>
     <message>
-        <location line="+10250"/>
+        <location line="+10269"/>
         <source>The recovery notice did not explain the repaired setting.</source>
         <translation>L’avis de récupération n’expliquait pas le réglage réparé.</translation>
     </message>
     <message>
-        <location line="-13639"/>
+        <location line="-13658"/>
         <source>Unsaved project changes</source>
         <translation>Modifications du projet non enregistrées</translation>
     </message>
@@ -10684,12 +10684,12 @@ Remplacer la palette actuelle ou ajouter ces valeurs ?</translation>
         <location line="+8"/>
         <location line="+16"/>
         <location line="+12"/>
-        <location line="+5379"/>
+        <location line="+5398"/>
         <source>Preview cancelled.</source>
         <translation>Aperçu annulé.</translation>
     </message>
     <message>
-        <location line="-5386"/>
+        <location line="-5405"/>
         <source>The preview image buffer could not be allocated.</source>
         <translation>Impossible d’allouer le tampon d’image de l’aperçu.</translation>
     </message>
@@ -10949,7 +10949,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>Appliquer un préréglage d’égaliseur audio n’a pas mis à jour l’état modifiable de l’égaliseur.</translation>
     </message>
     <message>
-        <location line="+62"/>
+        <location line="+71"/>
         <source>Live Preview Output settings did not persist or synchronize with LIVE quality controls.</source>
         <translation>Les réglages de sortie d’aperçu Live n’ont pas été conservés ou synchronisés avec les commandes de qualité LIVE.</translation>
     </message>
@@ -10964,7 +10964,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>Échap n’a pas complètement arrêté la sortie de présentation seule.</translation>
     </message>
     <message>
-        <location line="+69"/>
+        <location line="+74"/>
         <source>Live Preview Output did not leave the native full-screen desktop before hiding or did not restart windowed.</source>
         <translation>La sortie d’aperçu Live n’a pas quitté le bureau plein écran natif avant de se masquer ou n’a pas redémarré en fenêtre.</translation>
     </message>
@@ -10989,7 +10989,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>La performance Live n’a pas pu ouvrir sa sortie scène.</translation>
     </message>
     <message>
-        <location line="+18"/>
+        <location line="+20"/>
         <source>Escape from the performance stage incorrectly stopped LIVE.</source>
         <translation>Échap depuis la scène de performance a arrêté LIVE à tort.</translation>
     </message>
@@ -11029,7 +11029,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>La fenêtre LIVE rouverte n’a pas été nettoyée correctement.</translation>
     </message>
     <message>
-        <location line="+121"/>
+        <location line="+124"/>
         <source>The Layers &amp; Groups panel could not be restored from a floating or hidden state.</source>
         <translation>Le panneau Calques et groupes n’a pas pu être restauré depuis son état flottant ou masqué.</translation>
     </message>
@@ -12669,19 +12669,19 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
         <translation>Projets PVT (*.zip *.pvt);;Archives de projet (*.zip);;Anciennes configurations (*.pvt);;Tous les fichiers (*)</translation>
     </message>
     <message>
-        <location line="-18481"/>
+        <location line="-18500"/>
         <source>Filters the available destinations. The current destination stays selected until you choose another.</source>
         <translation>Filtre les destinations disponibles. La destination actuelle reste sélectionnée jusqu’à ce que vous en choisissiez une autre.</translation>
     </message>
     <message>
         <location line="-2198"/>
         <location line="+8395"/>
-        <location line="+7430"/>
+        <location line="+7449"/>
         <source>Add LFO…</source>
         <translation>Ajouter un LFO…</translation>
     </message>
     <message>
-        <location line="-15823"/>
+        <location line="-15842"/>
         <source>Add or edit Block size LFO</source>
         <translation>Ajouter ou modifier le LFO de taille des blocs</translation>
     </message>
@@ -12707,7 +12707,7 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
     </message>
     <message>
         <location line="+6245"/>
-        <location line="+7433"/>
+        <location line="+7452"/>
         <source>Edit LFO…</source>
         <translation>Modifier le LFO…</translation>
     </message>
@@ -13377,7 +13377,7 @@ Arrêtez la sortie vidéo pour afficher l’aperçu ici.</translation>
     </message>
     <message>
         <location line="+4"/>
-        <location filename="../gui/main_window.cpp" line="-21835"/>
+        <location filename="../gui/main_window.cpp" line="-21854"/>
         <source>Quantization</source>
         <translation>Quantification</translation>
     </message>
@@ -14330,7 +14330,7 @@ Arrêtez la sortie vidéo pour afficher l’aperçu ici.</translation>
         <translation>Flou maximal</translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3459"/>
+        <location filename="../gui/live_workspace.cpp" line="-3461"/>
         <source> · display %1 of %2</source>
         <translation> · écran %1 sur %2</translation>
     </message>
@@ -14714,12 +14714,12 @@ Notes :</translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+22216"/>
+        <location line="+22235"/>
         <source>Particles are generated after surface mapping and whole-layer motion. They overlay the layer canvas instead of being clipped or wrapped to the object.</source>
         <translation>Les particules sont générées après le placage de surface et le mouvement du calque entier. Elles se superposent au canevas du calque au lieu d’être découpées ou plaquées sur l’objet.</translation>
     </message>
     <message>
-        <location line="-22202"/>
+        <location line="-22221"/>
         <source>Movement placement</source>
         <translation>Placement du mouvement</translation>
     </message>
@@ -15025,12 +15025,12 @@ Notes :</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+114"/>
+        <location filename="../gui/remote_bridge.cpp" line="+117"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Le processus distant a dépassé la limite des messages.</translation>
     </message>
     <message>
-        <location line="+24"/>
+        <location line="+25"/>
         <source>Networking &amp; Remotes enabled</source>
         <translation>Réseau et télécommandes activés</translation>
     </message>
@@ -15041,17 +15041,37 @@ Notes :</translation>
     </message>
     <message>
         <location line="+64"/>
-        <location line="+78"/>
+        <location line="+99"/>
         <source>None</source>
         <translation>Aucune</translation>
     </message>
     <message>
-        <location line="-48"/>
+        <location line="-69"/>
         <source>Networking &amp; Remotes</source>
         <translation>Réseau et télécommandes</translation>
     </message>
     <message>
+        <location line="+3"/>
+        <source>Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates.</source>
+        <translation>Installez les extensions depuis le Chrome Web Store, puis associez-les ci-dessous. Chrome gère leur installation et les mises à jour approuvées.</translation>
+    </message>
+    <message>
         <location line="+4"/>
+        <source>Get Remote Control for Chrome</source>
+        <translation>Installer Remote Control pour Chrome</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Get Remote Display for Chrome</source>
+        <translation>Installer Remote Display pour Chrome</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Could not open the browser. Open this address in Chrome: %1</source>
+        <translation>Impossible d’ouvrir le navigateur. Ouvrez cette adresse dans Chrome : %1</translation>
+    </message>
+    <message>
+        <location line="+9"/>
         <source>Enable Networking &amp; Remotes</source>
         <translation>Activer le réseau et les télécommandes</translation>
     </message>
@@ -15061,7 +15081,12 @@ Notes :</translation>
         <translation>Fermer la fenêtre dans la zone de notification / barre de menus</translation>
     </message>
     <message>
-        <location line="+12"/>
+        <location line="+4"/>
+        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote’s Hosts &amp; settings. Save changes there if prompted. Paired devices reconnect automatically while PVT is running.</source>
+        <translation>Associez les appareils une seule fois : enregistrez le fichier d’association depuis Remote Display ou Remote Control, puis ouvrez-le ici. Enregistrez ensuite le fichier d’association de PVT et ouvrez-le dans Hôtes et paramètres de l’extension. Enregistrez les modifications si cela vous est demandé. Les appareils associés se reconnectent automatiquement tant que PVT est en cours d’exécution.</translation>
+    </message>
+    <message>
+        <location line="+8"/>
         <source>Active Control Remote</source>
         <translation>Télécommande active</translation>
     </message>
@@ -15086,27 +15111,22 @@ Notes :</translation>
         <translation>Basculer le mode arrière-plan</translation>
     </message>
     <message>
-        <location line="-220"/>
+        <location line="-248"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation>Les télécommandes sont temporairement indisponibles. PVT réessaiera automatiquement.</translation>
     </message>
     <message>
-        <location line="+98"/>
+        <location line="+106"/>
         <source>Pairing changes could not be saved. Check the pairing file and try again.</source>
         <translation>Impossible d’enregistrer les modifications d’association. Vérifiez le fichier d’association et réessayez.</translation>
     </message>
     <message>
-        <location line="+10"/>
+        <location line="+9"/>
         <source>Waiting for a connection. PVT will reconnect automatically.</source>
         <translation>En attente d’une connexion. PVT se reconnectera automatiquement.</translation>
     </message>
     <message>
-        <location line="+96"/>
-        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote. Paired devices reconnect automatically while PVT is running.</source>
-        <translation>Association unique : enregistrez le fichier d’association de Remote Display ou Remote Control et ouvrez-le ici. Enregistrez ensuite le fichier d’association de PVT et ouvrez-le dans l’application distante. Les appareils associés se reconnectent automatiquement lorsque PVT est en cours d’exécution.</translation>
-    </message>
-    <message>
-        <location line="+5"/>
+        <location line="+122"/>
         <source>Paired devices</source>
         <translation>Appareils associés</translation>
     </message>
@@ -15141,7 +15161,7 @@ Notes :</translation>
         <translation>Supprimez l’identité existante avant de remplacer ses clés.</translation>
     </message>
     <message>
-        <location line="+25"/>
+        <location line="+26"/>
         <source>Export host</source>
         <translation>Exporter l’hôte</translation>
     </message>

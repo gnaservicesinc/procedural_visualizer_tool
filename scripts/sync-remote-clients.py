@@ -16,6 +16,18 @@ manifest = json.dumps({'protocol': 1, 'source': 'procedural_visualizer_tool/remo
 for repo in (args.rc, args.rd):
     target = repo / 'vendor/pvt-remote-client'
     if not args.check: target.mkdir(parents=True, exist_ok=True)
+    release_files = {
+        'scripts/chrome-store.mjs': (source.parent / 'release/chrome-store.mjs').read_bytes(),
+        'tests/store_publish.test.mjs': (source.parent / 'tests/store_publish.test.mjs').read_bytes().replace(b'../release/chrome-store.mjs', b'../scripts/chrome-store.mjs'),
+    }
+    for name, data in release_files.items():
+        destination = repo / name
+        if args.check:
+            if not destination.exists() or destination.read_bytes() != data:
+                raise SystemExit(f'Shared release tooling drift: {destination}')
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(data)
     for name, data in {**files, 'SOURCE.json': manifest}.items():
         if args.check:
             if not (target / name).exists() or (target / name).read_bytes() != data:

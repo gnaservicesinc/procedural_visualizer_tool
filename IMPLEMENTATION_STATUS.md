@@ -6,6 +6,20 @@ This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## 19.1.9 Chrome Web Store integration
+
+Networking & Remotes now opens the published Chrome listings for PVT-RC and
+PVT-RD through the existing manager. Paired-device setup continues to use the
+same public profiles and private per-installation identities. No Apple
+notarization requirement or browser trust bypass is introduced.
+
+Extensions advance separately to 0.2.1 with companion store links, packaged
+browser ZIPs and a tag-driven GitHub release / Chrome Web Store API V2 workflow.
+The store job requires CWS_PUBLISHER_ID and CWS_SERVICE_ACCOUNT_JSON configured
+in each extension repository. Google review and live rollout remain separate
+from GitHub release publication. Local validation and tag workflow status are
+reported at handoff; remote desktop artifacts are not yet verified.
+
 ## 19.1.8 release repair and Meta audit review
 
 The macOS package job passed compilation, distribution verification and 46

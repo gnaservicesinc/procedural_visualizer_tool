@@ -6,7 +6,9 @@ Current Live Controls workflow: [audio routing, one video destination, playback,
 **Mac support: macOS 27.0 and later.** Older macOS versions are unsupported, but are not deliberately blocked; actual API and dependency requirements determine whether they run.
 Mac movie export and Remote video encoding use Apple’s system video frameworks.
 
-Current product version: **19.1.8**. The version is read from `VERSION` by every
+Get [Remote Control for Chrome](https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde) or [Remote Display for Chrome](https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda) from the Chrome Web Store. Install and pair them through **Settings → Networking & Remotes**.
+
+Current product version: **19.1.9**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 

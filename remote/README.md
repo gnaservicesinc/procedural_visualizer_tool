@@ -6,6 +6,21 @@ shared protocol/client source, desktop integration and bundled WebRTC worker.
 Networking is off by default. No listener, discovery announcement, or signaling
 connection starts until the desktop preference is enabled.
 
+## Install from Chrome Web Store
+
+- [Remote Control (PVT-RC)](https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde)
+- [Remote Display (PVT-RD)](https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda)
+
+PVT's Settings → Networking & Remotes includes both store actions. They open
+the system browser; complete installation in Chrome. Google reviews extension
+updates separately from desktop releases. No Apple notarization is required
+for this Chrome integration.
+
+Store installation does not authorize control of a PVT host. Exchange the
+existing public pairing files below; private remote keys remain unique to each
+installation and are never embedded in a shared store package. Exporting a
+`.pvthost` shares connection information, not a controller's private identity.
+
 ## Pair once
 
 1. In Remote Display or Remote Control, save the `.pvtremote` pairing file.

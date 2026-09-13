@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {profile} from './protocol.mjs';
+import {chromeStores} from './store-links.mjs';
 
 export function Settings({data, display, onSave, onClose, onExport, store}) {
   const dialog = useRef(null);
@@ -51,6 +52,7 @@ export function Settings({data, display, onSave, onClose, onExport, store}) {
     <form ref={form} onSubmit={e => { e.preventDefault(); save(); }}><fieldset disabled={busy}>
       <div className="settings-body">
         <section className="pairing-guide"><h3>Pair with your PVT desktop</h3><ol><li><strong>Save this remote’s pairing file.</strong><p>Open it in PVT’s Settings → Networking & Remotes.</p></li><li><strong>Open PVT’s host pairing file here.</strong><p>Save changes below to connect automatically.</p></li></ol><div className="button-row"><button type="button" onClick={onExport}>Export .pvtremote</button><button type="button" onClick={() => file.current.click()}>Import .pvthost</button><input ref={file} type="file" accept=".pvthost,application/json" hidden onChange={e => { const input = e.target.files[0]; e.target.value = ''; importHost(input); }}/></div></section>
+        <section className="companion-extension"><h3>{display ? 'Control your project, too' : 'Put your output on another screen'}</h3><p>{display ? 'Remote Control lets you adjust PVT’s project and layer controls from Chrome.' : 'Remote Display receives PVT’s live video and audio in Chrome.'}</p><a href={chromeStores[display ? 'control' : 'display']} target="_blank" rel="noopener noreferrer">{display ? 'Get Remote Control' : 'Get Remote Display'} on the Chrome Web Store ↗</a></section>
         <section className="paired-hosts"><h3>Paired hosts <span className="muted">{hosts.length}</span></h3><p>Give each desktop a name you recognize.</p>
           {!hosts.length && <p className="notice">No paired hosts yet. Import a host pairing file to get started.</p>}
           <ul className="hosts">{hosts.map(host => <li key={host.id}><div className="host-profile"><label>Host name<input required maxLength={120} value={host.label} onChange={e => { setHosts(hosts.map(h => h.id === host.id ? {...h, label: e.target.value} : h)); setSaved(false); }}/></label><details><summary>Pairing identity</summary><small>{host.id}</small><code>{host.ed25519}</code></details></div><button type="button" aria-label={`Remove ${host.label}`} onClick={() => { setHosts(hosts.filter(h => h.id !== host.id)); setSaved(false); }}>Remove</button></li>)}</ul>

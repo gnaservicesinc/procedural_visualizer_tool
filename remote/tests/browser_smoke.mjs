@@ -69,6 +69,12 @@ try {
     await page.waitForFunction(()=>document.querySelector('img.brand').naturalWidth === 128);
     // First-run pairing is open automatically.
     await page.getByRole('button',{name:'Export .pvtremote'}).waitFor({state:'visible'});
+    const companion = page.getByRole('link', {name:/on the Chrome Web Store/});
+    const isDisplay = (await page.title()).includes('Display');
+    assert.equal(await companion.getAttribute('href'), isDisplay
+      ? 'https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde'
+      : 'https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda');
+    assert.equal(await companion.getAttribute('rel'), 'noopener noreferrer');
     await page.waitForFunction(async()=>!!(await chrome.storage.local.get('identity')).identity);
     const identity=await page.evaluate(async()=>(await chrome.storage.local.get('identity')).identity.public);
     pages.push({page,identity});

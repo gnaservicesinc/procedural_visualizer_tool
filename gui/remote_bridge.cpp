@@ -4,6 +4,8 @@
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -234,6 +236,27 @@ void RemoteBridge::showManager(QWidget* parent) {
     dialog.setWindowTitle(tr("Networking & Remotes"));
     dialog.resize(620, 480);
     auto* layout = new QVBoxLayout(&dialog);
+    auto* store_intro = new QLabel(tr("Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates."));
+    store_intro->setWordWrap(true);
+    layout->addWidget(store_intro);
+    auto* store_row = new QHBoxLayout;
+    auto* get_control = new QPushButton(tr("Get Remote Control for Chrome"));
+    get_control->setObjectName(QStringLiteral("remoteControlStore"));
+    auto* get_display = new QPushButton(tr("Get Remote Display for Chrome"));
+    get_display->setObjectName(QStringLiteral("remoteDisplayStore"));
+    store_row->addWidget(get_control);
+    store_row->addWidget(get_display);
+    layout->addLayout(store_row);
+    const auto open_store = [&](const QString& url) {
+        if (!QDesktopServices::openUrl(QUrl(url)))
+            store_intro->setText(tr("Could not open the browser. Open this address in Chrome: %1").arg(url));
+    };
+    connect(get_control, &QPushButton::clicked, &dialog, [&] {
+        open_store(QStringLiteral("https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde"));
+    });
+    connect(get_display, &QPushButton::clicked, &dialog, [&] {
+        open_store(QStringLiteral("https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda"));
+    });
     auto* form = new QFormLayout;
     auto* enable = new QCheckBox(tr("Enable Networking & Remotes"));
     enable->setObjectName(QStringLiteral("remoteNetworkingEnabled"));
@@ -241,7 +264,7 @@ void RemoteBridge::showManager(QWidget* parent) {
     close->setChecked(minimizeOnClose());
     form->addRow(enable);
     form->addRow(close);
-    auto* instructions = new QLabel(tr("Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote. Paired devices reconnect automatically while PVT is running."));
+    auto* instructions = new QLabel(tr("Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote’s Hosts & settings. Save changes there if prompted. Paired devices reconnect automatically while PVT is running."));
     instructions->setWordWrap(true);
     layout->addWidget(instructions);
     layout->addLayout(form);

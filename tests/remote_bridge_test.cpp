@@ -2,6 +2,8 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QDialog>
+#include <QDesktopServices>
+#include <QUrl>
 #include <QDialogButtonBox>
 #include <QElapsedTimer>
 #include <QJsonDocument>
@@ -16,6 +18,14 @@
 
 // Exercise the actual QProcess/JSON and modal-dialog paths without requiring
 // Python, networking, private identities, or a user's settings.
+class UrlReceiver : public QObject {
+    Q_OBJECT
+public:
+    QList<QUrl> urls;
+public slots:
+    void receive(const QUrl& url) { urls.append(url); }
+};
+
 static int worker() {
     QThread::msleep(200);
     const auto emitJson = [](const QJsonObject& value) {
@@ -68,6 +78,9 @@ int main(int argc, char** argv) {
     RemoteBridge bridge;
     QString last_status;
     QObject::connect(&bridge, &RemoteBridge::statusChanged, &app, [&](const QString& status) { last_status = status; });
+    UrlReceiver receiver;
+    QDesktopServices::setUrlHandler(QStringLiteral("https"), &receiver, "receive");
+    bool store_links = false;
     bool applied = false;
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
@@ -75,6 +88,14 @@ int main(int argc, char** argv) {
         auto* enabled = dialog->findChild<QCheckBox*>("remoteNetworkingEnabled");
         auto* buttons = dialog->findChild<QDialogButtonBox*>("remoteManagerButtons");
         if (!enabled || !buttons || !dialog->findChildren<QLineEdit*>().isEmpty() || !dialog->findChildren<QSpinBox*>().isEmpty()) { dialog->reject(); return; }
+        auto* control_store = dialog->findChild<QPushButton*>("remoteControlStore");
+        auto* display_store = dialog->findChild<QPushButton*>("remoteDisplayStore");
+        if (control_store && display_store) {
+            control_store->click(); display_store->click();
+            store_links = receiver.urls == QList<QUrl>{
+                QUrl("https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde"),
+                QUrl("https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda")};
+        }
         enabled->setChecked(true);
         buttons->button(QDialogButtonBox::Apply)->click();
         // Keep editing while startup and configure acknowledgments arrive.
@@ -84,6 +105,8 @@ int main(int argc, char** argv) {
         dialog->reject();
     });
     bridge.showManager(nullptr);
+    QDesktopServices::unsetUrlHandler(QStringLiteral("https"));
+    if (!store_links) { std::cerr << "Store actions opened an incorrect destination\n"; return 1; }
     if (!applied) { std::cerr << "Startup Apply or draft preservation failed\n"; return 1; }
     bool retained = false;
     QTimer::singleShot(0, &app, [&] {
@@ -117,3 +140,5 @@ int main(int argc, char** argv) {
     std::cout << "Remote startup configuration, draft retention and encoded video dimensions passed\n";
     return 0;
 }
+
+#include "remote_bridge_test.moc"
