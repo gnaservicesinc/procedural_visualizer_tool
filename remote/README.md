@@ -11,13 +11,30 @@ connection starts until the desktop preference is enabled.
 1. In Remote Display or Remote Control, save the `.pvtremote` pairing file.
 2. In PVT, open **Settings → Networking & Remotes** and import that file.
    Importing enables remotes. The first imported controller becomes active.
-3. Save PVT's `.pvthost` pairing file and open it in the remote.
+3. Save PVT's `.pvthost` pairing file and open it in the remote, then choose
+   **Save changes**.
 
 The remote connects automatically. Keep PVT running and the remote tab open.
 Saved pairings and the selected PVT survive restarts; temporary interruptions
 retry automatically. Disconnect pauses automatic connections until Connect is
 selected again. Remove a paired device in the normal manager to revoke it.
 Network and runtime configuration are not part of setup.
+
+## Extension workspace (0.2.0)
+
+PVT-RC groups the native Live registry into Project, layers and groups, then
+section tabs and individual waves, swings and effects. Stable paths preserve
+identity even when names repeat. Large collections and global search results
+are paginated without truncating controls. Search results link back to the
+normal section/item editor. The existing native edit and undo paths remain
+responsible for changes.
+
+Both extensions share a settings dialog with explicit Save changes, guarded
+Done/Escape/backdrop dismissal, and a browser reload/close warning while dirty.
+Validation and storage failures retain the draft. Names, profile removals and
+sync preference changes are saved together; account-backup clearing remains
+an explicit immediate action. PVT-RD keeps its video mounted while settings
+are open and fits the stage and audio/fullscreen controls to the window.
 
 ## Developer builds and packaging
 
@@ -173,3 +190,11 @@ remote smoke uses temporary identities/settings and tests manager opt-in,
 authorization, authored edits, stale-revision rejection, undo/redo, save/load,
 hidden rendering, and controller deselection. Browser tests load real unpacked
 extensions into an isolated Chromium profile and use real WebRTC audio/video.
+
+The browser fixture also exercises a 3,637-control project, bounded browsing,
+search-to-editor navigation, desktop/mobile layouts, settings Save/Discard and
+reload guards in both roles, rejected storage writes, and audio/fullscreen.
+When using a development Python worker on macOS, set
+`PVT_REMOTE_TEST_VIDEOTOOLBOX_LIBRARY` to the built `pvt-videotoolbox.dylib`, or
+use `PVT_REMOTE_WORKER` with the bundled worker executable. Screenshots are
+written to the temporary directory reported by the browser test.

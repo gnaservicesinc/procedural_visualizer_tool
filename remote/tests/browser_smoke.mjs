@@ -12,6 +12,9 @@ const rc = join(root, 'PVT-RC/dist/chrome'), rd = join(root, 'PVT-RD/dist/chrome
 const temporary = await mkdtemp(join(tmpdir(), 'pvt-browser-smoke-'));
 const worker = spawn(process.env.PVT_REMOTE_WORKER || process.env.PVT_REMOTE_PYTHON || 'python3', [...(process.env.PVT_REMOTE_WORKER ? [] : ['-m','pvt_remote.host']),'--directory', join(temporary,'host')], {stdio:['pipe','pipe','pipe']});
 const lines = createInterface({input:worker.stdout});
+const browserErrors = [];
+const expectedNetworkErrors = [];
+let networkInterruption = false;
 const waiters = [];
 const events = [];
 let stderr = '';
@@ -44,7 +47,11 @@ try {
   const pages=[];
   for (const service of workers) {
     const page=await context.newPage();
-    page.on('console', message => { if (message.type() === 'error') console.error(message.text()); });
+    page.on('console', message => { if (message.type() === 'error') {
+      if (networkInterruption && /WebSocket connection.*ERR_CONNECTION_REFUSED/.test(message.text())) expectedNetworkErrors.push(message.text());
+      else browserErrors.push(message.text());
+    } });
+    page.on('pageerror', error => browserErrors.push(error.message));
     await page.addInitScript(() => {
       window.openedConnections = [];
       window.peerConnections = [];
@@ -73,16 +80,106 @@ try {
   const configured=await waitEvent(e=>e.event==='configured' && e.enabled);
   const hostFile=join(temporary,'host.pvthost'); await writeFile(hostFile, JSON.stringify({...configured.profile, endpoints:useRelay ? [] : useLan ? configured.profile.endpoints.filter(url => url.includes(".local:")) : configured.profile.endpoints}));
   if(useRelay) await new Promise(resolve=>setTimeout(resolve,800));
-  const largeTargets = Array.from({length:700},(_,i)=>({path:`layer.fixture.${i}`,label:`Fixture parameter ${i}`,section:'Fixture layer',kind:2,minimum:0,maximum:100,value:i%100}));
-  send({op:'state',state:{revision:'1',targets:[{path:'project.fps',label:'Playback FPS',section:'Project',kind:2,minimum:1,maximum:120,value:30},...largeTargets],background:false,live:false,playing:false,busy:false}});
+  const layerNames = ['Aurora', 'Prism', 'Mirage', 'Ripple', 'Bloom', 'Drift', 'Haze', 'Echo', 'Afterglow'];
+  const largeTargets = layerNames.flatMap((name, layer) => [
+    ...['Layer visible', 'Layer opacity', 'Blend mode', 'Alpha order'].map((label, i) => ({path:`layer/fixture-${layer}/mix${i}`, label, section:`${name} — Mix`, kind:i === 0 ? 0 : i === 1 ? 2 : 3, minimum:0, maximum:i === 2 ? 13 : 1, value:i === 0 ? 1 : i === 1 ? 0.5 : 0})),
+    ...Array.from({length:40}, (_, wave) => ['Enabled', 'Use master clock', 'Audio response', 'Amplitude', 'Spatial frequency', 'Cycles per loop', 'Phase', 'Direction', 'Center X', 'Center Y'].map((label, i) => ({path:`layer/fixture-${layer}/wave/${wave + 1}/value${i}`, label, section:`${name} — Wave — Wave ${wave + 1}`, kind:i < 2 ? 0 : 2, minimum:0, maximum:100, value:i < 2 ? 1 : 20}))).flat(),
+  ]);
+  const initialTargets = [{path:'project.fps',label:'Playback FPS',section:'Project',kind:2,minimum:1,maximum:120,value:30},...largeTargets];
+  send({op:'state',state:{revision:'1',targets:initialTargets,background:false,live:false,playing:false,busy:false}});
   for (const {page} of pages) {
     await page.locator('input[type=file]').setInputFiles(hostFile);
+    await page.getByLabel('Host name', {exact:true}).waitFor();
+    await page.getByRole('button',{name:'Save changes',exact:true}).click();
     await page.getByRole('option',{name:configured.profile.label,exact:true}).waitFor({state:'attached'});
     await page.getByRole('button',{name:'Done',exact:true}).click();
     await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:60000});
     assert.equal(await page.getByRole('alert').count(),0);
     if (useLan) assert.ok((await page.evaluate(() => window.openedConnections[0])).includes('.local:'));
   }
+  // Settings drafts are protected on every close path in BOTH extensions.
+  for (const {page} of pages) {
+    await page.getByRole('button', {name:'Hosts & settings', exact:true}).click();
+    const hostName = page.getByLabel('Host name', {exact:true});
+    await hostName.fill('Unsaved desktop');
+    await page.getByRole('button', {name:'Done', exact:true}).click();
+    await page.getByRole('dialog', {name:'Save your changes?', exact:true}).waitFor();
+    await page.getByRole('button', {name:'Keep editing', exact:true}).click();
+    assert.equal(await hostName.inputValue(), 'Unsaved desktop');
+    // Browser reload must warn and a dismissed warning must keep the draft.
+    const beforeUnload = page.waitForEvent('dialog');
+    await page.evaluate(() => { setTimeout(() => location.reload(), 0); });
+    const warning = await beforeUnload;
+    assert.equal(warning.type(), 'beforeunload'); await warning.dismiss();
+    assert.equal(await hostName.inputValue(), 'Unsaved desktop');
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', {name:'Discard changes', exact:true}).click();
+    await page.getByRole('button', {name:'Hosts & settings', exact:true}).click();
+    assert.equal(await hostName.inputValue(), configured.profile.label);
+    await hostName.fill('Saved desktop');
+    await page.getByRole('button', {name:'Done', exact:true}).click();
+    await page.getByRole('button', {name:'Save and close', exact:true}).click();
+    await page.getByRole('dialog', {name:'Hosts & settings', exact:true}).waitFor({state:'detached'});
+    assert.equal(await page.evaluate(async () => (await chrome.storage.local.get('hosts')).hosts[0].label), 'Saved desktop');
+    await page.getByRole('button', {name:'Hosts & settings', exact:true}).click();
+    assert.equal(await hostName.inputValue(), 'Saved desktop');
+    // Invalid names stay visible and are not committed.
+    await hostName.fill('   ');
+    await page.getByRole('button', {name:'Save changes', exact:true}).click();
+    await page.getByRole('alert').filter({hasText:'Invalid identity or name'}).waitFor();
+    assert.equal(await hostName.inputValue(), '   ');
+    await hostName.fill('Retry desktop');
+    await page.evaluate(() => { window.originalStorageSet = chrome.storage.local.set; chrome.storage.local.set = () => { throw Error('Storage temporarily unavailable'); }; });
+    await page.getByRole('button', {name:'Save changes', exact:true}).click();
+    await page.getByRole('alert').filter({hasText:'Storage temporarily unavailable'}).waitFor();
+    assert.equal(await hostName.inputValue(), 'Retry desktop');
+    await page.evaluate(() => { chrome.storage.local.set = window.originalStorageSet; });
+    await hostName.fill(configured.profile.label);
+    await page.getByRole('button', {name:'Save changes', exact:true}).click();
+    await page.getByText('Changes saved', {exact:true}).waitFor();
+    await page.screenshot({path:join(temporary, page===controller.page ? 'control-settings.png' : 'display-settings.png')});
+    await page.getByRole('button', {name:'Done', exact:true}).click();
+    await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor();
+    assert.ok((await page.title()).includes('PVT'));
+    assert.ok(page.url().startsWith('chrome-extension://'));
+    assert.equal(await page.locator('vite-error-overlay').count(), 0);
+  }
+  const cp = controller.page;
+  await cp.getByRole('spinbutton', {name:'Playback FPS'}).waitFor();
+  assert.equal(await cp.locator('.parameter').count(), 1); // Never dump the entire registry.
+  await cp.getByRole('navigation', {name:'Layers and groups'}).getByRole('button', {name:'Aurora'}).click();
+  assert.equal(await cp.locator('.parameter').count(), 4);
+  await cp.screenshot({path:join(temporary,'control-layer.png'),fullPage:true});
+  await cp.getByRole('navigation', {name:'Control sections'}).getByRole('button', {name:'Waves'}).click();
+  assert.equal(await cp.locator('.item-grid button').count(), 8);
+  await cp.getByRole('button', {name:'Next items page', exact:true}).click();
+  await cp.getByRole('button', {name:'Wave 9 #9'}).click();
+  assert.equal(await cp.locator('.parameter').count(), 10);
+  await cp.screenshot({path:join(temporary,'control-waves.png'),fullPage:true});
+  const search = cp.getByRole('searchbox', {name:'Find a control', exact:true});
+  await search.fill('Spatial frequency');
+  assert.equal(await cp.locator('.parameter').count(), 24);
+  await cp.getByRole('button', {name:'Next controls page', exact:true}).click();
+  assert.equal(await cp.locator('.parameter').count(), 24);
+  await search.fill('layer/fixture-8/wave/40/value6');
+  assert.equal(await cp.locator('.parameter').count(), 1);
+  await cp.getByRole('button', {name:'Afterglow — Wave — Wave 40 ↗', exact:true}).click();
+  assert.equal(await cp.locator('.parameter').count(), 10);
+  assert.equal(await search.inputValue(), '');
+  // A polling refresh must preserve the selected item and a numeric draft.
+  const phase = cp.getByRole('spinbutton', {name:'Phase', exact:true});
+  await phase.fill('37');
+  await cp.waitForTimeout(1200);
+  assert.equal(await phase.inputValue(), '37');
+  await phase.press('Escape'); assert.equal(await phase.inputValue(), '20');
+  await cp.setViewportSize({width:390,height:844});
+  assert.ok(await cp.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await cp.screenshot({path:join(temporary,'control-browse-mobile.png'),fullPage:true});
+  await cp.getByRole('button', {name:'Project & layers Afterglow', exact:true}).click();
+  await cp.getByRole('navigation', {name:'Layers and groups'}).getByRole('button', {name:'Aurora'}).click();
+  assert.equal(await cp.locator('.parameter').count(), 4);
+  await cp.setViewportSize({width:1360,height:950});
+  await cp.getByRole('navigation', {name:'Project navigation'}).getByRole('button', {name:'Project'}).click();
   const input=controller.page.getByRole('spinbutton',{name:'Playback FPS'});
   await input.fill('35');
   await input.fill('40');
@@ -95,7 +192,7 @@ try {
   assert.equal(events.filter(e=>e.event==='command' && e.command.action==='set').length,1);
   assert.equal(command.command.value,45); assert.equal(command.remote,controller.identity.id);
   send({op:'reply',token:command.token,result:{ok:true,revision:'2'}});
-  send({op:'state',state:{revision:'2',targets:[{path:'project.fps',label:'Playback FPS',section:'Project',kind:2,minimum:1,maximum:120,value:45}],background:false,live:false,playing:false,busy:false}});
+  send({op:'state',state:{revision:'2',targets:initialTargets.map(t => t.path === 'project.fps' ? {...t, value:45} : t),background:false,live:false,playing:false,busy:false}});
   // The media fixture uses the real encoder, DTLS/SRTP, and browser decoders.
   const fixture=spawn(process.env.PVT_REMOTE_PYTHON || 'python3',['-c',"from PIL import Image; import io,base64; b=io.BytesIO(); Image.new('RGB',(640,360),(30,150,120)).save(b,format='JPEG'); print(base64.b64encode(b.getvalue()).decode())"]);
   let jpeg=''; for await (const data of fixture.stdout) jpeg+=data;
@@ -112,18 +209,29 @@ try {
       });
       assert.ok(codecs.some(codec=>codec.mime==='video/H264' && codec.frames>0));
     }
+    await display.page.getByRole('button', {name:'Hosts & settings', exact:true}).click();
+    assert.equal(await display.page.locator('video').evaluate(v => v.videoWidth), 640);
+    await display.page.getByRole('button', {name:'Done', exact:true}).click();
+    await display.page.getByRole('button', {name:'Enable audio', exact:true}).click();
+    assert.equal(await display.page.locator('video').evaluate(v => v.muted), false);
+    await display.page.getByRole('button', {name:'Mute audio', exact:true}).click();
+    await display.page.getByRole('button', {name:'Full screen', exact:true}).click();
+    await display.page.waitForFunction(() => document.fullscreenElement?.tagName === 'VIDEO');
+    await display.page.evaluate(() => document.exitFullscreen());
     // Reload must restore the selected pairing and resume without Connect.
     await display.page.reload();
     await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:45000});
     await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
     // Simulate a desktop/network interruption while retaining both identities.
     const since = events.length;
+    networkInterruption = true;
     send({op:'enable',enabled:false});
     await display.page.getByRole('button',{name:'Pause connection',exact:true}).waitFor({timeout:20000});
     send({op:'enable',enabled:true});
     await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:60000});
     await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
     assert.ok(events.slice(since).some(e => e.event === 'configured' && e.enabled));
+    networkInterruption = false;
     // Explicit pause survives reload and does not silently reconnect.
     await display.page.getByRole('button',{name:'Disconnect',exact:true}).click();
     await display.page.reload();
@@ -144,7 +252,8 @@ try {
       await page.screenshot({path:join(temporary,(page===controller.page?'control':'display')+'-mobile.png'),fullPage:true});
     }
   } finally {clearInterval(interval);}
-  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','reload reconnect','interruption recovery','persistent explicit pause','control request','responsive layout'],screenshots:temporary}));
+  assert.deepEqual(browserErrors, []);
+  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','reload reconnect','interruption recovery','persistent explicit pause','control request','responsive layout','3637-control hierarchy and bounded pagination','global search and locate','settings save/discard/reload guards in both roles','invalid save retains draft','audio and fullscreen','zero unexpected browser errors'],expectedNetworkErrors:expectedNetworkErrors.length,screenshots:temporary}));
 } catch (error) {
   console.error('Worker diagnostics:', stderr);
   for (const page of context?.pages() || []) {

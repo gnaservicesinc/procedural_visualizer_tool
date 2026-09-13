@@ -16,19 +16,22 @@ export class ProfileStore {
       ? (await this.api.storage.sync.get(['pvt.settings']))['pvt.settings']?.enabled === true : false;
     const syncEnabled = saved.syncEnabled === true || restoredPreference;
     if (syncEnabled) {
-      const synced = await this.api.storage.sync.get(null);
-      const byId = new Map(hosts.map(p => [p.id, p]));
-      for (const [key, value] of Object.entries(synced)) if (key.startsWith(prefix)) {
-        const host = profile(value, 'pvthost');
-        const existing = byId.get(host.id);
-        if (existing && (existing.ed25519 !== host.ed25519 || existing.x25519 !== host.x25519)) throw Error('Synced host key changed. Remove and pair it again explicitly.');
-        byId.set(host.id, host);
-      }
-      hosts = [...byId.values()];
-      if (hosts.length > 64) throw Error('Host limit reached');
+      hosts = await this.mergeSyncedHosts(hosts);
       await this.api.storage.local.set({hosts, syncEnabled});
     }
     return {...saved, hosts, syncEnabled};
+  }
+  async mergeSyncedHosts(hosts, preferLocal = false) {
+    const synced = await this.api.storage.sync.get(null);
+    const byId = new Map(hosts.map(p => [p.id, p]));
+    for (const [key, value] of Object.entries(synced)) if (key.startsWith(prefix)) {
+      const host = profile(value, 'pvthost');
+      const existing = byId.get(host.id);
+      if (existing && (existing.ed25519 !== host.ed25519 || existing.x25519 !== host.x25519)) throw Error('Synced host key changed. Remove and pair it again explicitly.');
+      if (!existing || !preferLocal) byId.set(host.id, host);
+    }
+    if (byId.size > 64) throw Error('Host limit reached');
+    return [...byId.values()];
   }
   async saveHosts(hosts, syncEnabled) {
     if (hosts.length > 64) throw Error('At most 64 hosts can be paired');
