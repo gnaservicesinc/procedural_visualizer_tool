@@ -556,7 +556,9 @@ async def self_test():
         try:
             remote = Cipher(new_identity("pvtremote", "display"))
             host.config["remotes"] = [remote.public]
-            async with connect(host.public()["endpoints"][0]) as ws:
+            # This smoke test connects only to our loopback listener. Build
+            # proxies (including Launchpad's) cannot route to that listener.
+            async with connect(host.public()["endpoints"][0], proxy=None) as ws:
                 challenge = json.loads(await ws.recv())["challenge"]
                 await ws.send(compact(remote.seal(host.cipher.public, dict(op="hello", challenge=challenge))).decode())
                 assert remote.open(host.cipher.public, json.loads(await ws.recv()))["challenge"] == challenge
