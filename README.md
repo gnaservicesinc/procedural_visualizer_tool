@@ -8,7 +8,7 @@ Mac movie export and Remote video encoding use Apple’s system video frameworks
 
 Get [Remote Control for Chrome](https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde) or [Remote Display for Chrome](https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda) from the Chrome Web Store. Install and pair them through **Settings → Networking & Remotes**.
 
-Current product version: **19.1.9**. The version is read from `VERSION` by every
+Current product version: **19.1.10**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 

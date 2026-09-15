@@ -23,6 +23,7 @@
 #include <cmath>
 
 bool test_live_mapping_controls();
+bool test_live_look_output();
 
 pvt::ProjectConfig blank_project() {
     // Keep the installed application's blank canvas aligned with the supplied
@@ -253,6 +254,7 @@ int main(int argc, char** argv) {
         if (routes.audioInputBinding(named->uuid) != QStringLiteral("clock:test")) return 1;
     }
     if (!test_live_mapping_controls()) return 1;
+    if (!test_live_look_output()) return 1;
     pvt::ProjectDocument document;
     auto project = pvt::default_project();
     project.canvas.width = 64;

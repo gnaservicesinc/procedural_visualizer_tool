@@ -671,7 +671,7 @@ struct LiveWorkspace::Impl {
         ui_timer.setInterval(kUiTickMilliseconds);
         midi_clock_timer.setInterval(1);
         QObject::connect(&render_timer, &QTimer::timeout, q, [this] {
-            requestFrame(false, true);
+            requestFrame(!playback_running && scene_transition.active, true);
             scheduleNextFrame();
         });
         QObject::connect(&ui_timer, &QTimer::timeout, q,
@@ -1740,6 +1740,7 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     auto* update = new QPushButton(LiveWorkspace::tr("Update Snapshot"));
     update->setObjectName(QStringLiteral("liveSceneUpdate"));
     auto* remove = new QPushButton(LiveWorkspace::tr("Remove"));
+    remove->setObjectName(QStringLiteral("liveSceneRemove"));
     capture_row->addWidget(capture);
     capture_row->addWidget(update);
     capture_row->addWidget(remove);
@@ -1748,6 +1749,8 @@ QWidget* LiveWorkspace::Impl::buildSceneTab() {
     auto* previous = new QPushButton(LiveWorkspace::tr("◀ Previous"));
     auto* take = new QPushButton(LiveWorkspace::tr("Apply to Output"));
     take->setObjectName(QStringLiteral("liveSceneTake"));
+    take->setToolTip(LiveWorkspace::tr(
+        "Show this look on video output, starting output if needed. Works while playback is paused."));
     take->setMinimumHeight(38);
     auto* next = new QPushButton(LiveWorkspace::tr("Next ▶"));
     take_row->addWidget(previous);
@@ -2409,6 +2412,7 @@ void LiveWorkspace::Impl::applyMorph(int position) {
     scene_readout->setText(LiveWorkspace::tr("Morph: %1 ↔ %2 · %3% B")
         .arg(morph_a->currentText(), morph_b->currentText())
         .arg(morph_amount->value(), 0, 'f', 1));
+    requestFrame(true);
 }
 
 void LiveWorkspace::Impl::refreshClockRouting() {
@@ -2882,7 +2886,7 @@ void LiveWorkspace::Impl::restartFrameSchedule(double fps) {
 }
 
 void LiveWorkspace::Impl::scheduleNextFrame() {
-    if (!realtimeActive() || !playback_running) return;
+    if (!realtimeActive() || (!playback_running && !scene_transition.active)) return;
     if (!frame_schedule_clock.isValid()) frame_schedule_clock.start();
     const double elapsed = static_cast<double>(frame_schedule_clock.elapsed());
     const std::uint64_t elapsed_tick = static_cast<std::uint64_t>(
@@ -4694,24 +4698,34 @@ void LiveWorkspace::Impl::performAction(pvt::LiveAction action, double value,
 }
 
 void LiveWorkspace::Impl::captureScene(bool updateExisting) {
-    int row = scene_list->currentRow();
-    if (updateExisting
-        && (row < 0 || row >= static_cast<int>(config.scenes.size()))) return;
+    // The editor owns the saved rig. Its document can change before the Live
+    // list is refreshed (save/load/undo callbacks); appending to our cached rig
+    // in that interval would replace newer saved looks with stale contents.
+    pvt::LiveConfig next = authored_editor && project_provider
+        ? project_provider().canvas.live : config;
+    const std::string selected_uuid = scene_list->currentItem()
+        ? narrow(scene_list->currentItem()->data(Qt::UserRole).toString()) : std::string{};
+    auto selected = std::find_if(next.scenes.begin(), next.scenes.end(),
+        [&](const pvt::LiveSceneConfig& scene) { return scene.uuid == selected_uuid; });
+    if (updateExisting && selected == next.scenes.end()) return;
     QString name;
     if (updateExisting) {
-        name = qtext(config.scenes[static_cast<std::size_t>(row)].name);
+        name = qtext(selected->name);
     } else {
         bool ok = false;
         name = QInputDialog::getText(q, LiveWorkspace::tr("Capture Live Scene"),
                                      LiveWorkspace::tr("Scene name"), QLineEdit::Normal,
-                                     LiveWorkspace::tr("Scene %1").arg(config.scenes.size() + 1),
+                                     LiveWorkspace::tr("Scene %1").arg(next.scenes.size() + 1),
                                      &ok).trimmed();
         if (!ok || name.isEmpty()) return;
+        // The name dialog runs an event loop; a pending document/config echo
+        // may complete while it is open. Append to the latest accepted rig.
+        if (authored_editor && project_provider) next = project_provider().canvas.live;
     }
     pvt::ProjectConfig snapshot = runtimeProject();
     const auto registry = buildLiveTargetRegistry(snapshot);
     pvt::LiveSceneConfig scene;
-    if (updateExisting) scene = config.scenes[static_cast<std::size_t>(row)];
+    if (updateExisting) scene = *selected;
     else scene.uuid = narrow(uuid_text());
     scene.name = narrow(name);
     scene.transition_milliseconds = scene_transition_ms->value();
@@ -4724,8 +4738,7 @@ void LiveWorkspace::Impl::captureScene(bool updateExisting) {
         value.value = narrow(number_text(target.current_value, target.kind));
         scene.values.push_back(std::move(value));
     }
-    pvt::LiveConfig next = config;
-    if (updateExisting) next.scenes[static_cast<std::size_t>(row)] = std::move(scene);
+    if (updateExisting) *selected = std::move(scene);
     else next.scenes.push_back(std::move(scene));
     commitConfig(std::move(next), updateExisting ? LiveWorkspace::tr("Update live scene")
                                                  : LiveWorkspace::tr("Capture live scene"));
@@ -4750,7 +4763,11 @@ void LiveWorkspace::Impl::removeScene() {
 void LiveWorkspace::Impl::takeSelectedScene() {
     const int row = scene_list->currentRow();
     if (row < 0 || row >= static_cast<int>(config.scenes.size())) return;
-    takeScene(config.scenes[static_cast<std::size_t>(row)].uuid);
+    // Starting output can synchronously refresh the authored config and list.
+    // Keep the selected identity across that callback, never a vector reference.
+    const std::string uuid = config.scenes[static_cast<std::size_t>(row)].uuid;
+    if (!active) setActive(true);
+    takeScene(uuid);
 }
 
 void LiveWorkspace::Impl::selectRelativeScene(int delta) {
@@ -4795,6 +4812,13 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
             next.discrete.insert(path);
         }
     }
+    if (next.to.isEmpty()) {
+        const QString message = LiveWorkspace::tr(
+            "This saved look has no controls available in the current project.");
+        scene_readout->setText(message);
+        emit q->runtimeStatusChanged(message);
+        return;
+    }
     scene_transition = std::move(next);
     scene_readout->setText(LiveWorkspace::tr("Scene: %1").arg(qtext(found->name)));
     for (int row = 0; row < scene_list->count(); ++row) {
@@ -4813,6 +4837,11 @@ void LiveWorkspace::Impl::takeScene(const std::string& uuid, bool) {
         }
         scene_transition.active = false;
     }
+    // Performance actions must refresh output even when transport is paused
+    // or the next ordinary frame is several seconds away. Use the shared frame
+    // scheduler for the remainder of a timed take, including its final frame.
+    requestFrame(true);
+    if (scene_transition.active) scheduleNextFrame();
 }
 
 pvt::ProjectConfig LiveWorkspace::Impl::runtimeProject() {

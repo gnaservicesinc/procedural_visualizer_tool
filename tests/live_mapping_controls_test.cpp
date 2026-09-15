@@ -3,14 +3,148 @@
 #include "project_bundle.h"
 
 #include <QCoreApplication>
+#include <QApplication>
 #include <QElapsedTimer>
+#include <QInputDialog>
 #include <QListWidget>
 #include <QPushButton>
 #include <QThread>
+#include <QTimer>
 
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+
+bool test_live_look_output() {
+    try {
+        auto project = pvt::default_project();
+        project.canvas.width = project.canvas.height = 16;
+        project.layers.resize(1);
+        project.layers.front().opacity = 1.0;
+        project.canvas.live = {};
+        project.canvas.live.safety.prevent_device_sleep = false;
+        project.canvas.live.safety.frame_time_watchdog_enabled = false;
+        std::uint64_t revision = 1;
+        LiveWorkspace* owner = nullptr;
+        LiveWorkspace workspace([&] { return project; }, [&] { return project; },
+            [] { return 0; }, [] {
+                pvt::FrameRenderOptions options;
+                options.backend = pvt::RenderBackend::Cpu;
+                return options;
+            }, [&] { return revision; }, [&] { return project.layers.front().uuid; },
+            [&](const pvt::LiveConfig& config, const QString&) {
+                project.canvas.live = config;
+                ++revision;
+                owner->setProjectLiveConfig(project.canvas.live);
+                owner->refreshProjectSnapshot();
+            });
+        owner = &workspace;
+        workspace.setProjectLiveConfig(project.canvas.live);
+        workspace.setBackgroundOutput(true);
+        workspace.setPlaybackRunning(false);
+        const auto require = [](bool ok, const char* message) {
+            if (!ok) throw std::runtime_error(message);
+        };
+        auto* scenes = workspace.findChild<QListWidget*>(QStringLiteral("liveSceneList"));
+        auto* capture = workspace.findChild<QPushButton*>(QStringLiteral("liveSceneCapture"));
+        auto* take = workspace.findChild<QPushButton*>(QStringLiteral("liveSceneTake"));
+        const auto capture_named = [&](const QString& name) {
+            QTimer::singleShot(0, &workspace, [name] {
+                if (auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget())) {
+                    dialog->setTextValue(name);
+                    dialog->accept();
+                }
+            });
+            capture->click();
+        };
+        capture_named(QStringLiteral("Visible"));
+        const auto first = project.canvas.live.scenes.front();
+        project.layers.front().opacity = 0.0;
+        ++revision;
+        capture_named(QStringLiteral("Hidden"));
+        require(project.canvas.live.scenes.size() == 2
+                    && project.canvas.live.scenes.front().uuid == first.uuid
+                    && project.canvas.live.scenes.front().name == "Visible",
+                "Capturing another look replaced the original.");
+        int frames = 0;
+        QImage latest;
+        QObject::connect(&workspace, &LiveWorkspace::remotePresentationFrame,
+            [&](const QImage& image) { latest = image; ++frames; });
+        const auto wait_frame = [&](int previous) {
+            QElapsedTimer timer;
+            timer.start();
+            while (frames <= previous && timer.elapsed() < 2000) {
+                QCoreApplication::processEvents();
+                QThread::msleep(2);
+            }
+            require(frames > previous, "Applying a look did not present a new paused-output frame.");
+        };
+        const auto has_coverage = [&] {
+            for (int y = 0; y < latest.height(); ++y)
+                for (int x = 0; x < latest.width(); ++x)
+                    if (latest.pixelColor(x, y).alpha() != 0) return true;
+            return false;
+        };
+        // Start through the ordinary Apply action, then recall both looks
+        // while paused. Check delivered pixels, not another snapshot capture.
+        scenes->setCurrentRow(0);
+        take->click();
+        require(workspace.isLiveActive(), "Apply to Output did not start output.");
+        wait_frame(0);
+        require(has_coverage(), "The visible look did not reach rendered output.");
+        const int before_hidden = frames;
+        scenes->setCurrentRow(1);
+        take->click();
+        wait_frame(before_hidden);
+        require(!has_coverage(), "The hidden look did not reach rendered output.");
+        // Timed takes must also complete while playback is paused.
+        project.canvas.live.scenes.front().transition_milliseconds = 80;
+        workspace.setProjectLiveConfig(project.canvas.live);
+        scenes->setCurrentRow(0);
+        const int before_transition = frames;
+        take->click();
+        QElapsedTimer transition;
+        transition.start();
+        while (transition.elapsed() < 200) {
+            QCoreApplication::processEvents();
+            QThread::msleep(2);
+        }
+        require(frames >= before_transition + 2 && has_coverage(),
+                "A timed look did not advance while paused.");
+        require(project.layers.front().opacity == 0.0,
+                "Applying a look rewrote the authored project.");
+        // A document replacement can reach the provider before the companion
+        // gets its config echo. Capture must append to that authoritative rig.
+        auto restored = first;
+        restored.uuid = pvt::generate_uuid();
+        restored.name = "Restored look";
+        project.canvas.live.scenes.insert(project.canvas.live.scenes.begin(), restored);
+        ++revision;
+        capture_named(QStringLiteral("After restore"));
+        require(project.canvas.live.scenes.size() == 4
+                    && project.canvas.live.scenes.front().uuid == restored.uuid
+                    && project.canvas.live.scenes.front().name == restored.name
+                    && project.canvas.live.scenes[1].uuid == first.uuid,
+                "Capture replaced newer saved looks with the stale Live list.");
+        // Updating follows the selected UUID even if the editor reorders the
+        // scenes before the companion refreshes its rows.
+        scenes->setCurrentRow(1);
+        std::swap(project.canvas.live.scenes[0], project.canvas.live.scenes[1]);
+        ++revision;
+        auto* update = workspace.findChild<QPushButton*>(QStringLiteral("liveSceneUpdate"));
+        update->click();
+        require(project.canvas.live.scenes[0].uuid == first.uuid
+                    && project.canvas.live.scenes[0].name == first.name
+                    && project.canvas.live.scenes[1].uuid == restored.uuid
+                    && project.canvas.live.scenes[1].name == restored.name,
+                "Update Snapshot changed the wrong look after a document reorder.");
+        workspace.setLiveActive(false);
+        return true;
+    } catch (const std::exception& error) {
+        std::cerr << error.what() << '\n';
+        return false;
+    }
+}
 
 // Exercise incoming controls through the MIDI router and inspect them through
 // the ordinary scene capture action, including edits made while Live is active.

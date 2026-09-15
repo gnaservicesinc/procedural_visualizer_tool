@@ -26,7 +26,7 @@ Project-timeline music playback continues when Live Controls opens. The optional
 
 ## Saved Looks
 
-Saved Looks is the existing Scenes system with clearer naming and instructions. Capture a look, change visual controls, then capture another. During video output, select a saved look and choose Apply to Output. Numeric values can crossfade; discrete switches change at the end. Scene Morph blends two saved looks. Captures are project settings with normal save/load and undo; performing a look does not rewrite authored project values.
+Saved Looks is the existing Scenes system with clearer naming and instructions. Capture a look, change visual controls, then capture another. Select a saved look and choose Apply to Output; this starts video output if needed and refreshes it even while playback is paused. Numeric values can crossfade; discrete switches change at the end. Scene Morph blends two saved looks. Captures are project settings with normal save/load and undo; performing a look does not rewrite authored project values.
 
 ## Black first frames
 

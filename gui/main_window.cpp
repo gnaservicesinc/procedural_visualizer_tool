@@ -20534,6 +20534,87 @@ bool MainWindow::runSmokeChecks(QString* error) {
     }
 
     live_runtime_button->click();
+    // Capture twice around an ordinary editor change. A new look must retain
+    // every previous identity/value, including after the editor refreshes Live.
+    {
+        auto* capture = live_workspace_->findChild<QPushButton*>(QStringLiteral("liveSceneCapture"));
+        auto* scenes = live_workspace_->findChild<QListWidget*>(QStringLiteral("liveSceneList"));
+        const int original_undo = undo_stack_->index();
+        const auto original_count = project_.canvas.live.scenes.size();
+        QTemporaryDir looks_directory;
+        const auto original_document = *document_;
+        const auto original_path = current_project_path_;
+        const auto original_dialog_directory = last_dialog_directory_;
+        const auto capture_named = [&](const QString& name) {
+            QTimer::singleShot(0, live_workspace_, [name] {
+                if (auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget())) {
+                    dialog->setTextValue(name);
+                    dialog->accept();
+                }
+            });
+            capture->click();
+        };
+        capture_named(QStringLiteral("First look"));
+        const auto first = project_.canvas.live.scenes.back();
+        if (!looks_directory.isValid()
+            || !saveProjectPath(looks_directory.filePath(QStringLiteral("looks.zip")))) {
+            if (error) *error = QStringLiteral("Could not save the first captured look.");
+            return false;
+        }
+        wall_enabled_->click();
+        capture_named(QStringLiteral("Second look"));
+        const auto& saved = project_.canvas.live.scenes;
+        if (saved.size() != original_count + 2
+            || saved[original_count].uuid != first.uuid
+            || saved[original_count].name != "First look"
+            || saved.back().name != "Second look"
+            || saved.back().uuid == first.uuid
+            || scenes->count() != static_cast<int>(saved.size())) {
+            if (error) *error = QStringLiteral("Capturing another look replaced the first look.");
+            return false;
+        }
+        const std::string wall_path = "layer/" + active_layer_uuid_ + "/wall_enabled";
+        const auto wall_value = [&](const pvt::LiveSceneConfig& scene) {
+            for (const auto& value : scene.values) {
+                if (value.target_path == wall_path) return value.value;
+            }
+            return std::string{};
+        };
+        if (wall_value(saved[original_count]) != wall_value(first)
+            || wall_value(saved.back()) == wall_value(first)) {
+            if (error) *error = QStringLiteral("Look capture lost the separate visual settings.");
+            return false;
+        }
+        if (!saveProjectPath(looks_directory.filePath(QStringLiteral("looks.zip")))) return false;
+        pvt::ProjectDocument reopened;
+        std::string looks_error;
+        if (!pvt::load_project_document(
+                looks_directory.filePath(QStringLiteral("looks.zip")).toStdString(), reopened, &looks_error)
+            || reopened.project.canvas.live.scenes.size() != saved.size()
+            || reopened.project.canvas.live.scenes[original_count].uuid != first.uuid
+            || reopened.project.canvas.live.scenes[original_count].name != first.name
+            || wall_value(reopened.project.canvas.live.scenes[original_count]) != wall_value(first)) {
+            if (error) *error = QStringLiteral("Saving/reopening replaced the first captured look: ")
+                + QString::fromStdString(looks_error);
+            return false;
+        }
+        auto* remove = live_workspace_->findChild<QPushButton*>(QStringLiteral("liveSceneRemove"));
+        remove->click();
+        if (project_.canvas.live.scenes.size() != original_count + 1
+            || project_.canvas.live.scenes.back().uuid != first.uuid) {
+            if (error) *error = QStringLiteral("Removing the second look changed the first look.");
+            return false;
+        }
+        undo_stack_->undo();
+        if (project_.canvas.live.scenes.size() != original_count + 2) {
+            if (error) *error = QStringLiteral("Undo did not restore the removed look.");
+            return false;
+        }
+        while (undo_stack_->index() > original_undo) undo_stack_->undo();
+        *document_ = original_document;
+        current_project_path_ = original_path;
+        last_dialog_directory_ = original_dialog_directory;
+    }
     // Exercise the perform/capture boundary through the actual widgets and
     // authoring callback. Moving a fader must not add undo entries; explicitly
     // capturing its result must make exactly one undoable, portable scene.
