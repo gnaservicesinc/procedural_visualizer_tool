@@ -40,6 +40,15 @@ try {
   }
   context = await chromium.launchPersistentContext(join(temporary,'browser'), {channel:'chromium', headless:true,
     args:[`--disable-extensions-except=${rc},${rd}`, `--load-extension=${rc},${rd}`], viewport:{width:1360,height:950}});
+  if (useRelay) await context.addInitScript(() => {
+    const Original = WebSocket;
+    window.WebSocket = class extends Original {
+      constructor(url, protocols) {
+        if (url !== 'ws://127.0.0.1:49740') throw Error('Direct paths disabled by relay test');
+        super(url, protocols);
+      }
+    };
+  });
   if (context.serviceWorkers().length < 2) await context.waitForEvent('serviceworker');
   const deadline = Date.now()+10000;
   while(context.serviceWorkers().length < 2 && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,100));
@@ -68,7 +77,7 @@ try {
     await page.locator('img.brand').waitFor();
     await page.waitForFunction(()=>document.querySelector('img.brand').naturalWidth === 128);
     // First-run pairing is open automatically.
-    await page.getByRole('button',{name:'Export .pvtremote'}).waitFor({state:'visible'});
+    await page.getByRole('button',{name:'Export Remote file (.pvtremote)'}).waitFor({state:'visible'});
     const companion = page.getByRole('link', {name:/on the Chrome Web Store/});
     const isDisplay = (await page.title()).includes('Display');
     assert.equal(await companion.getAttribute('href'), isDisplay
@@ -82,7 +91,7 @@ try {
   const controller=pages.find(p=>p.identity.role==='control');
   const display=pages.find(p=>p.identity.role==='display');
   assert.ok(controller && display);
-  send({op:'configure', enabled:true, config:{...ready.config,port:49739,remotes:pages.map(p=>p.identity),active_control:controller.identity.id, signaling_url:useRelay ? 'ws://127.0.0.1:49740' : ''}});
+  send({op:'configure', enabled:true, config:{...ready.config,port:49739,remotes:pages.map(p=>p.identity),active_control:controller.identity.id, address_scope:useRelay ? 'any' : 'subnet', signaling_url:useRelay ? 'ws://127.0.0.1:49740' : ''}});
   const configured=await waitEvent(e=>e.event==='configured' && e.enabled);
   const hostFile=join(temporary,'host.pvthost'); await writeFile(hostFile, JSON.stringify({...configured.profile, endpoints:useRelay ? [] : useLan ? configured.profile.endpoints.filter(url => url.includes(".local:")) : configured.profile.endpoints}));
   if(useRelay) await new Promise(resolve=>setTimeout(resolve,800));
@@ -99,7 +108,7 @@ try {
     await page.getByRole('button',{name:'Save changes',exact:true}).click();
     await page.getByRole('option',{name:configured.profile.label,exact:true}).waitFor({state:'attached'});
     await page.getByRole('button',{name:'Done',exact:true}).click();
-    await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:60000});
+    await page.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:60000});
     assert.equal(await page.getByRole('alert').count(),0);
     if (useLan) assert.ok((await page.evaluate(() => window.openedConnections[0])).includes('.local:'));
   }
@@ -145,7 +154,7 @@ try {
     await page.getByText('Changes saved', {exact:true}).waitFor();
     await page.screenshot({path:join(temporary, page===controller.page ? 'control-settings.png' : 'display-settings.png')});
     await page.getByRole('button', {name:'Done', exact:true}).click();
-    await page.getByRole('button',{name:'Disconnect',exact:true}).waitFor();
+    await page.getByRole('status').filter({hasText:/^Connected$/}).waitFor();
     assert.ok((await page.title()).includes('PVT'));
     assert.ok(page.url().startsWith('chrome-extension://'));
     assert.equal(await page.locator('vite-error-overlay').count(), 0);
@@ -226,24 +235,42 @@ try {
     await display.page.evaluate(() => document.exitFullscreen());
     // Reload must restore the selected pairing and resume without Connect.
     await display.page.reload();
-    await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:45000});
+    await display.page.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:45000});
     await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
     // Simulate a desktop/network interruption while retaining both identities.
     const since = events.length;
     networkInterruption = true;
     send({op:'enable',enabled:false});
-    await display.page.getByRole('button',{name:'Pause connection',exact:true}).waitFor({timeout:20000});
+    await display.page.getByRole('status').filter({hasText:/reconnecting|Connecting/}).waitFor({timeout:20000});
     send({op:'enable',enabled:true});
-    await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:60000});
+    await display.page.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:60000});
     await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
     assert.ok(events.slice(since).some(e => e.event === 'configured' && e.enabled));
     networkInterruption = false;
-    // Explicit pause survives reload and does not silently reconnect.
-    await display.page.getByRole('button',{name:'Disconnect',exact:true}).click();
+    // Migrate old browser pauses, then exercise two tabs with the same identity.
+    await display.page.evaluate(() => chrome.storage.local.set({paused: true}));
     await display.page.reload();
-    await display.page.getByRole('button',{name:'Connect',exact:true}).waitFor();
-    await display.page.getByRole('button',{name:'Connect',exact:true}).click();
-    await display.page.getByRole('button',{name:'Disconnect',exact:true}).waitFor({timeout:45000});
+    await display.page.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:45000});
+    assert.equal(await display.page.evaluate(async () => (await chrome.storage.local.get('paused')).paused), undefined);
+    const second = await context.newPage();
+    await second.addInitScript(() => {
+      window.peerConnections = [];
+      const Peer = RTCPeerConnection;
+      window.RTCPeerConnection = class extends Peer {
+        constructor(config) { super(config); window.peerConnections.push(this); }
+      };
+    });
+    await second.goto(display.page.url());
+    await second.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:45000});
+    await second.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
+    const stableCounts = await Promise.all([display.page, second].map(page => page.evaluate(() => window.peerConnections.length)));
+    // Longer than two reported 14-second churn cycles.
+    await new Promise(resolve => setTimeout(resolve, 32000));
+    for (const [index, page] of [display.page, second].entries()) {
+      assert.equal(await page.getByRole('status').filter({hasText:/^Connected$/}).count(), 1);
+      assert.equal(await page.evaluate(() => window.peerConnections.length), stableCounts[index], 'Parallel tabs must not replace one another');
+    }
+    await second.close();
     await display.page.waitForFunction(()=>document.querySelector('video').videoWidth===640,{},{timeout:15000});
     const tracks=await display.page.locator('video').evaluate(video=>video.srcObject.getTracks().map(t=>t.kind));
     assert.deepEqual(tracks.sort(),['audio','video']);
@@ -259,7 +286,7 @@ try {
     }
   } finally {clearInterval(interval);}
   assert.deepEqual(browserErrors, []);
-  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','reload reconnect','interruption recovery','persistent explicit pause','control request','responsive layout','3637-control hierarchy and bounded pagination','global search and locate','settings save/discard/reload guards in both roles','invalid save retains draft','audio and fullscreen','zero unexpected browser errors'],expectedNetworkErrors:expectedNetworkErrors.length,screenshots:temporary}));
+  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','reload reconnect','interruption recovery','legacy pause migration', 'sustained same-profile multi-tab media','control request','responsive layout','3637-control hierarchy and bounded pagination','global search and locate','settings save/discard/reload guards in both roles','invalid save retains draft','audio and fullscreen','zero unexpected browser errors'],expectedNetworkErrors:expectedNetworkErrors.length,screenshots:temporary}));
 } catch (error) {
   console.error('Worker diagnostics:', stderr);
   for (const page of context?.pages() || []) {

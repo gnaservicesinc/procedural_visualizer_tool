@@ -12,7 +12,7 @@ Implemented in the three local repositories:
 - Mutual public-file pairing, Ed25519 signatures, X25519/AES-GCM encrypted
   signaling, challenge authentication, replay rejection and transport bounds.
 - Multi-host import/edit/remove/switch, including selecting several Remote
-  pairing files in one desktop import, local identity, opt-in public-profile
+  files in one desktop import, local identity, opt-in public-profile
   browser sync with preference restoration, view/disable/clear controls.
 - Real WebRTC video/audio and data channels, authenticated loopback WebSocket
   control, automatic LAN discovery with stable identity names and interface refresh.
@@ -21,11 +21,13 @@ Implemented in the three local repositories:
 - Artist-facing Remote settings apply as they are entered, while Cancel restores
   the complete opening state. Address ranges appear only for the matching
   choice; obsolete browser-source port controls and saved limits are removed.
-- When Remotes are allowed beyond nearby networks, the manager offers a
+- When Remotes are allowed beyond this computer’s IP subnets, the manager offers a
   platform-specific local-firewall setup file and an exact routed-firewall
   handoff for Windows, macOS, and Ubuntu administrators.
-- Single active control identity with immediate permission enforcement,
-  multiple displays, revocation, and selection in the normal MIDI Control Map.
+- All imported control identities can edit. Multiple displays and tabs remain
+  connected independently. Removing a profile revokes every session for its keys.
+- Legacy pauses and controller selections are migrated away. Live connection
+  details appear first in Remotes and open in one click from the status bar.
 - Shared Live scalar target registry for remote editing with normal validation,
   undo/redo, save/load and existing editor visibility.
 - System-tray/menu-bar background operation using the existing image renderer,

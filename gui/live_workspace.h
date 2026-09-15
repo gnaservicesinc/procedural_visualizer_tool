@@ -120,12 +120,10 @@ public:
     void revealAudioInputSetup(const std::string& roleUuid);
 
     void setBackgroundOutput(bool background);
-    void setRemoteControlTargets(const QStringList& names, int current);
     void enableRemoteAudio(bool enabled);
     bool readRemoteAudio(std::uint8_t* pcm);
 
 signals:
-    void remoteControlSelected(int slot);
     void requestEditMode();
     void requestTogglePlayback();
     void runtimeStatusChanged(const QString& summary);

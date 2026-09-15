@@ -12,7 +12,7 @@ Remote access ranges, live connection tracking, portrait/spatial photo extractio
 image inspection/export, and combined photo/Plane depth are described in
 [Remote connections and depth photos](docs/remotes-and-photos.md).
 
-Current product version: **19.1.12**. The version is read from `VERSION` by every
+Current product version: **19.1.13**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 

@@ -55,23 +55,43 @@ class AccessPolicyTests(unittest.IsolatedAsyncioTestCase):
         async with connect(self.host.public()['endpoints'][0],proxy=None) as ws:
             with self.assertRaises(Exception): await ws.recv()
         self.assertFalse(self.host.socket_peers)
-    async def test_pause_is_persistent_and_denies_commands(self):
-        remote = Cipher(new_identity('pvtremote','control'))
-        self.host.config['remotes'] = [remote.public]
-        self.host.config['active_control'] = remote.public['id']
+    async def test_legacy_pause_is_removed_and_authenticated_socket_reconnects(self):
+        remote = Cipher(new_identity('pvtremote', 'control'))
+        self.host.config.update(remotes=[remote.public], paused_remotes=[remote.public['id']], active_control='stale')
+        self.host.config_path.write_text(json.dumps(self.host.config))
+        self.host = Host(self.directory.name)
+        self.host.emit = lambda _: None
         self.host.config['lan'] = False
         await self.host.enable()
-        async with connect(self.host.public()['endpoints'][0],proxy=None) as ws:
-            challenge = json.loads(await ws.recv())['challenge']
-            await ws.send(compact(remote.seal(self.host.cipher.public,dict(op='hello',challenge=challenge,client={'browser':'test','version':'1'}))).decode())
-            await ws.recv()
-            await self.host.input(dict(op='pause',remote=remote.public['id'],paused=True))
-            result = await self.host.command(remote.public,dict(id='test',action='set'))
-            self.assertFalse(result['ok'])
+        await self.host.input(dict(op='pause', remote=remote.public['id'], paused=True))
+        self.assertNotIn('paused_remotes', self.host.config)
+        for _ in range(2):
+            async with connect(self.host.public()['endpoints'][0], proxy=None) as ws:
+                challenge = json.loads(await ws.recv())['challenge']
+                await ws.send(compact(remote.seal(self.host.cipher.public, dict(op='hello', challenge=challenge,
+                    client={'browser': 'Chrome 145', 'platform': 'macOS', 'version': '1'}))).decode())
+                await ws.recv()
+                await ws.send(json.dumps(dict(op='command', id='state', action='state')))
+                self.assertTrue(json.loads(await ws.recv())['ok'])
         saved = json.loads(self.host.config_path.read_text())
-        self.assertIn(remote.public['id'], saved['paused_remotes'])
-        await self.host.input(dict(op='pause',remote=remote.public['id'],paused=False))
-        self.assertNotIn(remote.public['id'],self.host.config['paused_remotes'])
+        self.assertNotIn('paused_remotes', saved)
+        self.assertNotIn('active_control', saved)
+        self.assertEqual(saved['remotes'][0]['client']['browser'], 'Chrome 145')
+        self.assertIn('127.0.0.1:', saved['remotes'][0]['last_endpoint'])
+
+    async def test_old_extension_browser_metadata_comes_from_handshake(self):
+        remote = Cipher(new_identity('pvtremote', 'control'))
+        self.host.config.update(remotes=[remote.public], lan=False)
+        await self.host.enable()
+        agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/145.0.0.0 Safari/537.36'
+        async with connect(self.host.public()['endpoints'][0], proxy=None, user_agent_header=agent) as ws:
+            challenge = json.loads(await ws.recv())['challenge']
+            await ws.send(compact(remote.seal(self.host.cipher.public, dict(op='hello', challenge=challenge))).decode())
+            await ws.recv()
+            await asyncio.sleep(0)
+            self.assertEqual(self.host.peer(remote.public['id'])['client']['browser'], 'Chrome 145.0.0.0')
+            self.assertEqual(self.host.peer(remote.public['id'])['client']['platform'], 'macOS')
+
     async def test_real_ice_guard_blocks_peer_reflexive_request(self):
         pc = RTCPeerConnection(); pc.createDataChannel('test')
         self.host.config.update(address_scope='custom',custom_networks='127.0.0.1')

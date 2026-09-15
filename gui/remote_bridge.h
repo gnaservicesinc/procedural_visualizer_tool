@@ -28,9 +28,7 @@ public:
     void reply(const QString& token, const QJsonObject& result);
     bool enabled() const { return enabled_; }
     bool authorized(const QString& remote, const QString& action) const;
-    void selectControl(int slot);
-    QStringList controlNames() const;
-    int activeControlSlot() const;
+    QStringList profileNames() const;
     bool background() const { return background_; }
     void setBackground(bool value) { background_ = value; }
     bool minimizeOnClose() const;
@@ -48,7 +46,7 @@ private:
     void send(const QJsonObject& message);
     void receive();
     void configure(const QJsonObject& config, bool enabled);
-    void setPaused(const QString& remote, bool paused);
+    QWidget* createConnections(QWidget* parent);
     QProcess process_;
     QTimer restart_timer_;
     QTimer state_timer_;

@@ -23,17 +23,16 @@ installation and are never embedded in a shared store package. Exporting a
 
 ## Pair once
 
-1. In Remote Display or Remote Control, save the `.pvtremote` pairing file.
-2. In PVT, open **Settings → Remotes** and add that file. You can select pairing
+1. In Remote Display or Remote Control, export the **Remote file (.pvtremote)**.
+2. In PVT, open **Settings → Remotes** and import that file. You can select Remote
    files from several remotes at once.
-   Importing enables remotes. The first imported controller becomes active.
-3. Save PVT's `.pvthost` pairing file and open it in the remote, then choose
+   Importing enables remotes. Every imported controller can edit PVT.
+3. Export the **PVT host file (.pvthost)** and import it in the remote, then choose
    **Save changes**.
 
 The remote connects automatically. Keep PVT running and the remote tab open.
 Saved pairings and the selected PVT survive restarts; temporary interruptions
-retry automatically. Disconnect pauses automatic connections until Connect is
-selected again. Remove a paired device in the normal manager to revoke it.
+retry automatically. Legacy connection pauses are removed on upgrade. Remove a paired device in the normal manager to revoke it.
 Connection details are handled automatically. If the remotes are on another
 network, PVT can save local-firewall setup and exact network-admin instructions.
 
@@ -88,13 +87,12 @@ state reports authored scalar values rather than inventing another scene model.
 Structural changes, file paths, asset uploads, exports and arbitrary scripting
 are intentionally outside the scalar control protocol.
 
-The existing MIDI Control Map target picker includes **Active Control Remote**
-under Remotes. Slot 0 means None; subsequent slots follow the imported
-control-profile order. The picker displays the names in that order. Revisit mappings
-when removing profiles, since subsequent slots shift. A mapping can only select
-an existing control profile. It cannot import, remove, or invent identities.
-Controller handoff takes effect at every command check and preserves viewer
-connections. Revoking a profile closes its WebSocket and WebRTC sessions.
+All imported control profiles can edit; there is no active-controller selector or
+MIDI controller-selection target. Revoking a profile closes all of its WebSocket
+and WebRTC sessions. Multiple tabs using one profile can remain connected together.
+**Remote connection details** in the status bar opens live addresses, browser/system
+information, response time, packet loss and human-readable traffic measurements.
+The same table appears first in Settings → Remotes.
 
 **Host in background** hides the desktop and stage while preserving the existing
 image renderer and GPU resources. A system tray/menu-bar menu restores the app

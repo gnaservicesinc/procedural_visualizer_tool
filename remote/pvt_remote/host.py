@@ -11,6 +11,7 @@ import io
 import ipaddress
 import json
 import logging
+import re
 import socket
 import sys
 import time
@@ -96,13 +97,14 @@ class Host:
             save_private(identity_path, self.identity)
         self.cipher = Cipher(self.identity)
         self.config_path = self.directory / "remotes.json"
-        self.config = dict(remotes=[], active_control="", signaling_url="", port=self.automatic_ports()[0], lan=True, ice_servers=[], address_scope="subnet", custom_networks="", paused_remotes=[])
+        self.config = dict(remotes=[], signaling_url="", port=self.automatic_ports()[0], lan=True, ice_servers=[], address_scope="subnet", custom_networks="")
         if self.config_path.exists():
             self.config.update(json.loads(self.config_path.read_text()))
         # Migrate previous opt-in LAN settings to automatic reachability.
         # Qt's persisted enable switch still controls whether any listener runs.
         self.config["lan"] = True
         self.validate_config(self.config)
+        save_private(self.config_path, self.config)
         self.enabled = False
         self.server = None
         self.mdns = None
@@ -148,9 +150,9 @@ class Host:
         cleaned = [profile(item, "pvtremote") for item in remotes]
         if len({item["id"] for item in cleaned}) != len(cleaned):
             raise ValueError("Duplicate remote identity")
-        active = config.get("active_control", "")
-        if active and not any(item["id"] == active and item["role"] == "control" for item in cleaned):
-            raise ValueError("Active controller must be an imported control remote")
+        # Retire the old per-device blocks even when loading legacy settings.
+        config.pop("active_control", None)
+        config.pop("paused_remotes", None)
         if type(config.get("port")) is not int or not 1024 <= config["port"] <= 65535:
             raise ValueError("Port must be 1024–65535")
         if config.get("signaling_url"):
@@ -175,10 +177,6 @@ class Host:
             raise ValueError("One of the allowed addresses or ranges is not valid") from error
         if config["address_scope"] == "custom" and not parsed_networks:
             raise ValueError("Enter at least one address or start-to-end range")
-        paused = config.get("paused_remotes", [])
-        if not isinstance(paused, list) or len(paused) > MAX_PROFILES or any(not isinstance(x, str) for x in paused):
-            raise ValueError("Invalid paused devices")
-        config["paused_remotes"] = [x for x in paused if any(p["id"] == x for p in cleaned)]
         config["remotes"] = cleaned
 
     @staticmethod
@@ -232,6 +230,38 @@ class Host:
             return {}
         return {key: " ".join(str(value.get(key, "")).split())[:200]
                 for key in ("browser", "version", "platform")}
+
+    @staticmethod
+    def browser_headers(ws):
+        # Older extensions did not send client metadata. The WebSocket request
+        # still supplies a browser User-Agent; it is descriptive, never trusted.
+        agent = ws.request.headers.get("User-Agent", "")[:1000]
+        match = re.search(r"(Edg|Firefox|Chrome|Version)/([\d.]+)", agent)
+        names = {"Edg": "Edge", "Firefox": "Firefox", "Chrome": "Chrome", "Version": "Safari"}
+        # Edge also advertises Chrome; prefer its explicit product token.
+        edge = re.search(r"Edg/([\d.]+)", agent)
+        browser = f"Edge {edge[1]}" if edge else f"{names[match[1]]} {match[2]}" if match else agent
+        platform = next((name for token, name in [("Android", "Android"), ("iPhone", "iOS"),
+            ("iPad", "iPadOS"), ("Windows", "Windows"), ("Macintosh", "macOS"),
+            ("CrOS", "ChromeOS"), ("Linux", "Linux")] if token in agent), "")
+        return {"browser": browser[:200], "platform": platform}
+
+    def remember_client(self, peer, value, endpoint=None):
+        current = self.peer(peer["id"])
+        if current is None:
+            return
+        before = dict(current)
+        client = {k: v for k, v in self.client_info(value).items() if v}
+        if client:
+            current["client"] = dict(current.get("client", {}), **client)
+        if endpoint:
+            current["last_endpoint"] = endpoint
+        if current != before:
+            try:
+                save_private(self.config_path, self.config)
+            except OSError:
+                logging.exception("Could not save remote connection details")
+            self.emit(dict(event="configured", profile=self.public(), config=self.config, enabled=self.enabled))
 
     def allowed_offer(self, sdp, source):
         description = SessionDescription.parse(sdp)
@@ -288,34 +318,31 @@ class Host:
             connection.gather_candidates = gather
 
 
-    async def disconnect(self, remote_id):
-        for ws, identity in list(self.socket_peers.items()):
-            if identity == remote_id:
-                await ws.close(1008, "Device paused in PVT")
-        session = self.sessions.pop(remote_id, None)
-        if session:
-            await session["pc"].close()
-
     async def monitor(self):
         while self.enabled:
             rows = []
             now = time.monotonic()
-            for remote_id in set(self.socket_peers.values()) | set(self.sessions):
+            # A browser profile can have several tabs. Track each session rather
+            # than replacing another tab that has the same authenticated identity.
+            entries = [(key, session["peer"]["id"], session, session.get("socket"))
+                       for key, session in list(self.sessions.items())]
+            attached = {entry[3] for entry in entries}
+            entries += [(str(id(ws)), remote_id, None, ws)
+                        for ws, remote_id in list(self.socket_peers.items()) if ws not in attached]
+            for key, remote_id, session, ws in entries:
                 peer = self.peer(remote_id)
                 if not peer:
                     continue
-                sockets = [self.socket_details.get(ws, {}) for ws, identity in self.socket_peers.items() if identity == remote_id]
-                details = dict(endpoint=", ".join(sorted({d["endpoint"] for d in sockets if "endpoint" in d})),
-                               started=min((d.get("started", now) for d in sockets), default=now),
-                               client={key: " | ".join(sorted({d.get("client", {}).get(key, "") for d in sockets}))
-                                       for key in ("browser", "version", "platform")}) if sockets else {}
-                session = self.sessions.get(remote_id)
-                row = dict(id=remote_id, label=peer["label"], role=peer["role"], endpoint=details.get("endpoint", "Encrypted relay"),
-                           seconds=int(now - details.get("started", session["started"] if session else now)),
-                           client=details.get("client", session.get("client", {}) if session else {}),
-                           status=session["pc"].connectionState if session else "Authenticated signaling",
-                           active_control=remote_id == self.config["active_control"])
-                latency = next((getattr(ws, "latency", 0) for ws, identity in self.socket_peers.items() if identity == remote_id), 0)
+                details = self.socket_details.get(ws, {})
+                client = dict(peer.get("client", {}))
+                client.update({k: v for k, v in details.get("client", {}).items() if v})
+                if session:
+                    client.update({k: v for k, v in session.get("client", {}).items() if v})
+                row = dict(id=remote_id, session=key, label=peer["label"], role=peer["role"],
+                           endpoint=details.get("endpoint", "Encrypted relay"),
+                           seconds=int(now - (session["started"] if session else details.get("started", now))),
+                           client=client, status=session["pc"].connectionState if session else "Authenticated signaling")
+                latency = getattr(ws, "latency", 0)
                 if latency > 0:
                     row["rtt_ms"] = round(latency * 1000, 1)
                 if session:
@@ -471,7 +498,7 @@ class Host:
         if not self.address_allowed(ws.remote_address[0]):
             await ws.close(1008, "Endpoint outside allowed ranges")
             return
-        if len(self.sockets) >= 32:
+        if len(self.sockets) >= MAX_PROFILES:
             await ws.close(1013, "Connection limit")
             return
         self.sockets.add(ws)
@@ -480,14 +507,17 @@ class Host:
             await ws.send(compact(dict(challenge=challenge)).decode())
             envelope = json.loads(await asyncio.wait_for(ws.recv(), 8))
             peer = self.peer(envelope.get("from"))
-            if not peer or peer["id"] in self.config["paused_remotes"]:
-                raise ValueError("Remote is not paired or is paused")
+            if not peer:
+                raise ValueError("Remote is not paired")
             hello = self.cipher.open(peer, envelope)
             if hello.get("op") != "hello" or hello.get("challenge") != challenge:
                 raise ValueError("Invalid authentication challenge")
             await ws.send(compact(self.cipher.seal(peer, dict(op="hello", challenge=challenge))).decode())
             self.socket_peers[ws] = peer["id"]
-            self.socket_details[ws] = dict(endpoint=self.endpoint(ws.remote_address[0], ws.remote_address[1]), started=time.monotonic(), client=self.client_info(hello.get("client")))
+            client = self.browser_headers(ws)
+            client.update({k: v for k, v in self.client_info(hello.get("client")).items() if v})
+            self.socket_details[ws] = dict(endpoint=self.endpoint(ws.remote_address[0], ws.remote_address[1]), started=time.monotonic(), client=client)
+            self.remember_client(peer, client, self.socket_details[ws]["endpoint"])
             loopback = ipaddress.ip_address(ws.remote_address[0]).is_loopback
             async def send(payload):
                 await ws.send(compact(self.cipher.seal(peer, payload)).decode())
@@ -498,7 +528,7 @@ class Host:
                 if message.get("version") == 1:
                     payload = self.cipher.open(peer, message)
                     if payload.get("op") == "offer":
-                        await self.offer(peer, payload, send, ws.remote_address[0])
+                        await self.offer(peer, payload, send, ws.remote_address[0], ws)
                     else:
                         raise ValueError("Unexpected signaling message")
                 elif loopback and message.get("op") == "command":
@@ -514,8 +544,8 @@ class Host:
             self.socket_peers.pop(ws, None)
             self.socket_details.pop(ws, None)
 
-    async def offer(self, peer, payload, send, source=None):
-        if not self.enabled or not self.peer(peer["id"]) or peer["id"] in self.config["paused_remotes"]:
+    async def offer(self, peer, payload, send, source=None, ws=None):
+        if not self.enabled or not self.peer(peer["id"]):
             raise ValueError("Networking disabled or remote revoked")
         if source is None and self.config["address_scope"] != "any":
             raise ValueError("Relay connections require Any IP")
@@ -523,17 +553,23 @@ class Host:
         remote_id = peer["id"]
         session_id = payload.get("session")
         uuid.UUID(session_id)
-        previous = self.sessions.pop(remote_id, None)
-        if previous:
-            await previous["pc"].close()
-        if len(self.sessions) >= 16:
-            raise ValueError("Viewer limit reached")
+        # A new offer replaces only the session on this signaling socket.
+        # Other tabs using the same imported profile remain connected.
+        for key, old in list(self.sessions.items()):
+            if (ws is not None and old.get("socket") is ws) or key == session_id:
+                if old["peer"]["id"] != remote_id:
+                    raise ValueError("Session identity mismatch")
+                self.sessions.pop(key, None)
+                await old["pc"].close()
+        if len(self.sessions) >= MAX_PROFILES:
+            raise ValueError("Connection limit reached")
         ice = [RTCIceServer(**server) for server in self.config.get("ice_servers", [])]
         pc = RTCPeerConnection(RTCConfiguration(iceServers=ice))
-        session = dict(pc=pc, peer=peer, channel=None, id=session_id, started=time.monotonic(),
+        session = dict(pc=pc, peer=peer, channel=None, id=session_id, socket=ws, started=time.monotonic(),
                        client=self.client_info(payload.get("client")),
                        media_endpoints=", ".join(self.endpoint(c.ip,c.port) for m in SessionDescription.parse(sdp).media for c in m.ice_candidates))
-        self.sessions[remote_id] = session
+        self.sessions[session_id] = session
+        self.remember_client(peer, payload.get("client"))
         @pc.on("datachannel")
         def datachannel(channel):
             if channel.label != "pvt-control" or session["channel"] is not None:
@@ -544,7 +580,7 @@ class Host:
             def message(raw):
                 async def handle():
                     try:
-                        if not isinstance(raw, str) or len(raw) > 65536 or self.sessions.get(remote_id) is not session:
+                        if not isinstance(raw, str) or len(raw) > 65536 or self.sessions.get(session_id) is not session:
                             raise ValueError("Invalid data channel message")
                         result = await self.command(peer, json.loads(raw))
                         if channel.readyState == "open" and channel.bufferedAmount < MAX_MESSAGE:
@@ -558,8 +594,8 @@ class Host:
         @pc.on("connectionstatechange")
         async def state_change():
             if pc.connectionState in ("failed", "closed"):
-                if self.sessions.get(remote_id) is session:
-                    self.sessions.pop(remote_id, None)
+                if self.sessions.get(session_id) is session:
+                    self.sessions.pop(session_id, None)
                 if pc.connectionState != "closed":
                     await pc.close()
         try:
@@ -581,8 +617,8 @@ class Host:
             await pc.setLocalDescription(await pc.createAnswer())
             await send(dict(op="answer", session=session_id, sdp=pc.localDescription.sdp))
         except Exception:
-            if self.sessions.get(remote_id) is session:
-                self.sessions.pop(remote_id, None)
+            if self.sessions.get(session_id) is session:
+                self.sessions.pop(session_id, None)
             await pc.close()
             raise
 
@@ -614,13 +650,13 @@ class Host:
             raise ValueError("Invalid command identifier")
         result = dict(op="result", id=request_id)
         try:
-            if not self.enabled or not self.peer(peer["id"]) or peer["id"] in self.config["paused_remotes"]:
+            if not self.enabled or not self.peer(peer["id"]):
                 raise ValueError("Remote revoked or networking disabled")
             action = message.get("action")
             if action not in ("state", "background", "set", "live", "playback", "undo", "redo"):
                 raise ValueError("Unknown action")
-            if action not in ("state", "background") and (peer["role"] != "control" or self.config["active_control"] != peer["id"]):
-                raise ValueError("Select this remote as Active Control Remote in PVT")
+            if action not in ("state", "background") and peer["role"] != "control":
+                raise ValueError("Display remotes cannot edit PVT")
             now = time.monotonic()
             history = [t for t in self.request_times.get(peer["id"], []) if t > now - 1]
             if len(history) >= 60:
@@ -628,7 +664,8 @@ class Host:
             history.append(now)
             self.request_times[peer["id"]] = history
             if action == "state":
-                result.update(ok=True, state=self.state, active_control=self.config["active_control"])
+                # Older extensions use this response field to enable editing.
+                result.update(ok=True, state=self.state, active_control=peer["id"] if peer["role"] == "control" else "")
             else:
                 if len(self.pending) >= 32:
                     raise ValueError("Desktop is busy")
@@ -689,34 +726,20 @@ class Host:
                           for key in ("port", "lan", "signaling_url", "ice_servers", "address_scope", "custom_networks"))
             previous = {p["id"]: p for p in self.config["remotes"]}
             self.config = candidate  # Permission checks see the handoff immediately.
-            revoked = {key for key, old in previous.items() if self.peer(key) != old} | set(candidate["paused_remotes"])
+            revoked = {key for key, old in previous.items() if not self.peer(key) or any(
+                self.peer(key).get(field) != old.get(field) for field in ("role", "ed25519", "x25519"))}
             for ws, remote_id in list(self.socket_peers.items()):
                 if remote_id in revoked:
                     await ws.close(1008, "Pairing revoked")
-            for remote_id in revoked:
-                session = self.sessions.pop(remote_id, None)
-                if session:
+            for key, session in list(self.sessions.items()):
+                if session["peer"]["id"] in revoked:
+                    self.sessions.pop(key, None)
                     await session["pc"].close()
             if restart or not wanted:
                 await self.disable()
             if wanted:
                 await self.enable()
             self.emit(dict(event="configured", profile=self.public(), config=self.config, enabled=self.enabled))
-        elif op == "pause":
-            remote_id = message.get("remote")
-            if self.peer(remote_id):
-                candidate = dict(self.config)
-                paused = set(candidate["paused_remotes"])
-                if message.get("paused", True):
-                    paused.add(remote_id)
-                else:
-                    paused.discard(remote_id)
-                candidate["paused_remotes"] = sorted(paused)
-                save_private(self.config_path, candidate)
-                self.config = candidate
-                if remote_id in paused:
-                    await self.disconnect(remote_id)
-                self.emit(dict(event="configured", profile=self.public(), config=self.config, enabled=self.enabled))
         elif op == "enable":
             if message.get("enabled"):
                 await self.enable()
@@ -761,7 +784,7 @@ class Host:
                     if not await self.input(message):
                         break
                 except Exception as error:
-                    if isinstance(message, dict) and message.get("op") in ("configure", "pause"):
+                    if isinstance(message, dict) and message.get("op") == "configure":
                         self.emit(dict(event="configured", config=self.config, profile=self.public(), enabled=self.enabled))
                     self.emit(dict(event="status", error=str(error), enabled=self.enabled))
         finally:

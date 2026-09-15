@@ -19,13 +19,15 @@ export function endpoint(text, relay = false) {
   return text;
 }
 export function profile(value, expected) {
-  if (!value || value.version !== 1 || !['pvthost', 'pvtremote'].includes(value.type) || (expected && value.type !== expected)) throw Error('Unsupported pairing file');
+  if (!value || value.version !== 1 || !['pvthost', 'pvtremote'].includes(value.type) || (expected && value.type !== expected)) throw Error(expected === 'pvthost' ? 'Expected a PVT host file (.pvthost)' : 'Expected a Remote file (.pvtremote) or PVT host file (.pvthost)');
   if (!uuid.test(value.id) || typeof value.label !== 'string' || !value.label.trim() || value.label.length > 120) throw Error('Invalid identity or name');
   unb64(value.ed25519, 32); unb64(value.x25519, 32);
   const clean = Object.fromEntries(['version', 'type', 'id', 'label', 'ed25519', 'x25519'].map(key => [key, value[key]]));
   if (value.type === 'pvtremote') {
     if (!['control', 'display'].includes(value.role)) throw Error('Invalid remote role');
     clean.role = value.role;
+    if (value.client && typeof value.client === 'object') clean.client = Object.fromEntries(
+      ['browser', 'version', 'platform'].map(key => [key, String(value.client[key] || '').replace(/\s+/g, ' ').slice(0, 200)]));
   } else {
     if (!Array.isArray(value.endpoints) || value.endpoints.length > 16) throw Error('Invalid endpoints');
     clean.endpoints = value.endpoints.map(url => endpoint(url));

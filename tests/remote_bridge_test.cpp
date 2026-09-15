@@ -20,6 +20,7 @@
 #include <QSpinBox>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTableWidget>
 
 #include <iostream>
 
@@ -67,6 +68,13 @@ static int worker() {
                 config.insert(it.key(), it.value());
             emitJson({{"event", "configured"}, {"profile", profile},
                       {"config", config}, {"enabled", message.value("enabled")}});
+        }
+        if (op == "enable" || op == "configure") {
+            emitJson({{"event", "connections"}, {"connections", QJsonArray{QJsonObject{
+                {"id", "saved-remote"}, {"session", "tab-one"}, {"role", "control"},
+                {"client", QJsonObject{{"browser", "Chrome 145"}, {"platform", "macOS"}, {"version", "0.2.1"}}},
+                {"endpoint", "127.0.0.1:54321"}, {"status", "connected"},
+                {"bytes_sent", 14039500}, {"bytes_received", 436297}, {"kbps", 349.3}, {"rtt_ms", 0.7}}}}});
         }
         if (op == "video") {
             const auto image = QImage::fromData(QByteArray::fromBase64(
@@ -155,6 +163,7 @@ int main(int argc, char** argv) {
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
+        if (auto* setup = dialog->findChild<QPushButton*>("remoteSetupToggle")) setup->setChecked(true);
         auto* enabled = dialog->findChild<QCheckBox*>("remoteNetworkingEnabled");
         auto* buttons = dialog->findChild<QDialogButtonBox*>("remoteManagerButtons");
         auto* scope = dialog->findChild<QComboBox*>("remoteAddressScope");
@@ -218,6 +227,7 @@ int main(int argc, char** argv) {
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
+        if (auto* setup = dialog->findChild<QPushButton*>("remoteSetupToggle")) setup->setChecked(true);
         auto* enabled = dialog->findChild<QCheckBox*>("remoteNetworkingEnabled");
         if (!enabled || !spin([&] { return enabled->isEnabled(); })) {
             dialog->reject();
@@ -253,6 +263,7 @@ int main(int argc, char** argv) {
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
+        if (auto* setup = dialog->findChild<QPushButton*>("remoteSetupToggle")) setup->setChecked(true);
         auto* import = dialog->findChild<QPushButton*>("remoteImport");
         auto* list = dialog->findChild<QListWidget*>();
         if (!import || !list || !spin([&] { return import->isEnabled(); })) {
@@ -278,7 +289,10 @@ int main(int argc, char** argv) {
         import->click();
         multi_imported = spin([&] {
             return list->count() == 3
-                && bridge.controlNames().contains("Studio control");
+                && bridge.profileNames().contains("Studio control")
+                && bridge.authorized("saved-remote", "set")
+                && bridge.authorized("second-remote", "set")
+                && !bridge.authorized("third-remote", "set");
         });
         if (multi_imported) dialog->accept(); else dialog->reject();
     });
@@ -292,9 +306,10 @@ int main(int argc, char** argv) {
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
+        if (auto* setup = dialog->findChild<QPushButton*>("remoteSetupToggle")) setup->setChecked(true);
         retained = dialog->findChild<QLineEdit*>("remoteCustomNetworks")
-            && bridge.controlNames().contains("Saved control")
-            && bridge.controlNames().contains("Studio control");
+            && bridge.profileNames().contains("Saved control")
+            && bridge.profileNames().contains("Studio control");
         dialog->reject();
     });
     bridge.showManager(nullptr);
@@ -302,6 +317,28 @@ int main(int argc, char** argv) {
         std::cerr << "Worker did not retain the accepted configuration\n";
         return 1;
     }
+
+    auto* connectionsPage = bridge.createManager(nullptr);
+    auto* table = connectionsPage->findChild<QTableWidget*>("remoteConnections");
+    if (!table || !spin([&] { return table->rowCount() == 1; })
+        || !table->item(0, 0)->text().contains("Chrome 145")
+        || !table->item(0, 0)->text().contains("macOS")
+        || !table->item(0, 4)->text().contains("MB")
+        || !table->item(0, 4)->text().contains("kb/s")
+        || table->item(0, 4)->text().contains("e+")) {
+        std::cerr << "Connection details did not identify the browser or format traffic units\n";
+        return 1;
+    }
+    if (connectionsPage->findChildren<QComboBox*>().size() != 1) {
+        std::cerr << "Retired controller selection is still exposed\n";
+        return 1;
+    }
+    if (qEnvironmentVariableIsSet("PVT_REMOTE_UI_CAPTURE")) {
+        connectionsPage->resize(1100, 650); connectionsPage->show();
+        QCoreApplication::processEvents();
+        connectionsPage->grab().save(qEnvironmentVariable("PVT_REMOTE_UI_CAPTURE"));
+    }
+    delete connectionsPage;
 
     const std::pair<QSize, QSize> frame_sizes[] = {
         {{640, 360}, {640, 360}}, {{1920, 1080}, {1920, 1080}},
@@ -313,7 +350,7 @@ int main(int argc, char** argv) {
         bridge.sendFrame(image);
         const auto expected = QStringLiteral("frame %1x%2")
                                   .arg(output.width()).arg(output.height());
-        if (!spin([&] { return bridge.controlNames().contains(expected); })) {
+        if (!spin([&] { return bridge.profileNames().contains(expected); })) {
             std::cerr << "Unexpected encoded frame dimensions: "
                       << last_status.toStdString() << '\n';
             return 1;

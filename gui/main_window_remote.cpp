@@ -24,13 +24,13 @@
 void MainWindow::initializeRemotes() {
     remote_bridge_ = new RemoteBridge(this);
     connect(remote_bridge_, &RemoteBridge::connectionsChanged, this, &MainWindow::updateWindowTitle);
-    auto* connections = new QPushButton(tr("Connected Remotes"), this);
+    auto* connections = new QPushButton(tr("Remote connection details"), this);
     connections->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
-    connections->hide(); statusBar()->addPermanentWidget(connections);
+    statusBar()->addPermanentWidget(connections);
     connect(connections, &QPushButton::clicked, this, [this] { remote_bridge_->showTracker(this); });
     connect(remote_bridge_, &RemoteBridge::connectionsChanged, connections, [this, connections] {
         const auto summary = remote_bridge_->connectionSummary();
-        connections->setVisible(!summary.isEmpty()); connections->setToolTip(summary);
+        connections->setToolTip(summary.isEmpty() ? tr("No remote connections") : summary);
     });
     remote_bridge_->setStateProvider([this] {
         QJsonArray targets;
@@ -49,12 +49,10 @@ void MainWindow::initializeRemotes() {
     });
     connect(remote_bridge_, &RemoteBridge::backgroundRequested, this, [this](bool value) { setRemoteBackground(value); });
     connect(remote_bridge_, &RemoteBridge::configurationChanged, this, [this] {
-        live_workspace_->setRemoteControlTargets(remote_bridge_->controlNames(), remote_bridge_->activeControlSlot());
         audio_playback_->enable_remote_audio(remote_bridge_->enabled());
         live_workspace_->enableRemoteAudio(remote_bridge_->enabled());
         if (remote_bridge_->enabled()) { schedulePreview(); live_workspace_->requestRealtimeFrame(); }
     });
-    connect(live_workspace_, &LiveWorkspace::remoteControlSelected, remote_bridge_, &RemoteBridge::selectControl);
     connect(live_workspace_, &LiveWorkspace::remotePresentationFrame, remote_bridge_, &RemoteBridge::sendFrame);
     connect(preview_, &PreviewWidget::imagePresented, this, [this](const QImage& image) {
         if (!live_workspace_->isRealtimeOutputActive()) remote_bridge_->sendFrame(image);
@@ -267,12 +265,7 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
     }
     live_workspace_->setBackgroundOutput(false);
     live_workspace_->setPresentationActive(false);
-    remote_bridge_->selectControl(0);
-    if (!spin([&] { return remote_bridge_->enabled() && remote_bridge_->activeControlSlot() == 0; }))
-        return fail(QStringLiteral("Controller handoff did not persist."));
-    if (remote_bridge_->authorized(controller, "set")) return fail(QStringLiteral("Previous controller retained permission."));
-    remote_bridge_->selectControl(9999);
-    if (remote_bridge_->activeControlSlot() != 0) return fail(QStringLiteral("MIDI selected an unknown profile."));
+
     // Exercise the actual pairing manager actions and file dialogs using the
     // same public profiles as the extension. No network settings are entered.
     const auto remote_file = temporary.path() + "/display.pvtremote";
@@ -357,7 +350,7 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         control_pairing.close();
         pairing_stage = QStringLiteral("import controller pairing");
         choose(remote_file); import->click();
-        paired = spin([&] { return import->isEnabled() && remote_bridge_->activeControlSlot() == 1
+        paired = spin([&] { return import->isEnabled()
             && remote_bridge_->authorized(controller, "set"); });
         const auto screenshot = qEnvironmentVariable("PVT_REMOTE_TEST_SCREENSHOT");
         if (!screenshot.isEmpty()) dialog->grab().save(screenshot);

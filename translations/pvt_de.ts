@@ -883,34 +883,29 @@
 <context>
     <name>LiveWorkspace</name>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="+2316"/>
-        <location line="+2169"/>
-        <location line="+970"/>
+        <location filename="../gui/live_workspace.cpp" line="+2304"/>
+        <location line="+2168"/>
+        <location line="+965"/>
         <source>Listening…</source>
         <translation>Warte auf Signal…</translation>
     </message>
     <message>
-        <location line="-3797"/>
-        <location line="+658"/>
-        <location line="+2164"/>
+        <location line="-3790"/>
+        <location line="+657"/>
+        <location line="+2163"/>
         <location line="+5"/>
-        <location line="+971"/>
+        <location line="+966"/>
         <source>MIDI Learn</source>
         <translation>MIDI-Lernen</translation>
     </message>
     <message>
-        <location line="-4938"/>
-        <source>Active Control Remote: %1</source>
-        <translation>Aktive Fernsteuerung: %1</translation>
-    </message>
-    <message>
-        <location line="+334"/>
-        <location line="+2505"/>
+        <location line="-4597"/>
+        <location line="+2504"/>
         <source>STANDBY</source>
         <translation>BEREIT</translation>
     </message>
     <message>
-        <location line="-2498"/>
+        <location line="-2497"/>
         <source>Edit Project</source>
         <translation>Projekt bearbeiten</translation>
     </message>
@@ -921,20 +916,20 @@
     </message>
     <message>
         <location line="+9"/>
-        <location line="+2502"/>
+        <location line="+2501"/>
         <location line="+23"/>
         <source>FREEZE</source>
         <translation>EINFRIEREN</translation>
     </message>
     <message>
-        <location line="-2521"/>
-        <location line="+2499"/>
+        <location line="-2520"/>
+        <location line="+2498"/>
         <location line="+29"/>
         <source>BLACKOUT</source>
         <translation>BLACKOUT</translation>
     </message>
     <message>
-        <location line="-2521"/>
+        <location line="-2520"/>
         <source>Play / Pause · Space</source>
         <translation>Wiedergabe / Pause · Leertaste</translation>
     </message>
@@ -945,29 +940,29 @@
     </message>
     <message>
         <location line="+2"/>
-        <location line="+3092"/>
+        <location line="+3091"/>
         <source>MIDI</source>
         <translation>MIDI</translation>
     </message>
     <message>
-        <location line="-3091"/>
-        <location line="+2475"/>
+        <location line="-3090"/>
+        <location line="+2474"/>
         <source>— fps</source>
         <translation>— Bilder/s</translation>
     </message>
     <message>
-        <location line="-2474"/>
+        <location line="-2473"/>
         <source>Completed frames per second, measured over a quarter-second window. This measures frame delivery to the UI, not the display refresh rate.</source>
         <translation>Fertiggestellte Bilder pro Sekunde, gemessen über eine Viertelsekunde. Gemessen wird die Bildausgabe an die Oberfläche, nicht die Bildwiederholrate des Monitors.</translation>
     </message>
     <message>
         <location line="+3"/>
-        <location line="+2472"/>
+        <location line="+2471"/>
         <source>No frame</source>
         <translation>Kein Bild</translation>
     </message>
     <message>
-        <location line="-2471"/>
+        <location line="-2470"/>
         <source>Scene: —</source>
         <translation>Szene: —</translation>
     </message>
@@ -1024,12 +1019,12 @@
     </message>
     <message>
         <location line="-1"/>
-        <location line="+2099"/>
+        <location line="+2098"/>
         <source>Stop Audio Routing</source>
         <translation>Audio-Routing stoppen</translation>
     </message>
     <message>
-        <location line="-2090"/>
+        <location line="-2089"/>
         <source>Audio routing stopped</source>
         <translation>Audio-Routing angehalten</translation>
     </message>
@@ -1240,18 +1235,18 @@
         <location line="+9"/>
         <location line="+4"/>
         <location line="+355"/>
-        <location line="+2590"/>
+        <location line="+2588"/>
         <source> ms</source>
         <translation> ms</translation>
     </message>
     <message>
-        <location line="-3069"/>
-        <location line="+1255"/>
+        <location line="-3067"/>
+        <location line="+1254"/>
         <source>Portable rig offset. Positive values advance a beat that reaches the analyzer late; negative values delay an early source.</source>
         <translation>Portabler Zeitversatz des Setups. Positive Werte ziehen verspätet analysierte Beats vor; negative Werte verzögern eine zu frühe Quelle.</translation>
     </message>
     <message>
-        <location line="-1253"/>
+        <location line="-1252"/>
         <source>Tap beat to align</source>
         <translation>Beat zum Ausrichten tippen</translation>
     </message>
@@ -1272,12 +1267,12 @@
     </message>
     <message>
         <location line="+1"/>
-        <location line="+2099"/>
+        <location line="+2098"/>
         <source>Waiting for audio…</source>
         <translation>Warte auf Audio…</translation>
     </message>
     <message>
-        <location line="-2098"/>
+        <location line="-2097"/>
         <source>Causal analysis</source>
         <translation>Kausale Analyse</translation>
     </message>
@@ -1516,35 +1511,35 @@
     <message>
         <location line="+1"/>
         <location line="+85"/>
-        <location line="+2261"/>
+        <location line="+2260"/>
         <source>Remove</source>
         <translation>Entfernen</translation>
     </message>
     <message>
-        <location line="-2335"/>
+        <location line="-2334"/>
         <source>On</source>
         <translation>An</translation>
     </message>
     <message>
         <location line="+0"/>
-        <location line="+2330"/>
+        <location line="+2329"/>
         <location line="+193"/>
         <source>Name</source>
         <translation>Name</translation>
     </message>
     <message>
-        <location line="-2523"/>
+        <location line="-2522"/>
         <source>Source</source>
         <translation>Quelle</translation>
     </message>
     <message>
         <location line="+1"/>
-        <location line="+2548"/>
+        <location line="+2547"/>
         <source>Target</source>
         <translation>Ziel</translation>
     </message>
     <message>
-        <location line="-2548"/>
+        <location line="-2547"/>
         <source>Mode</source>
         <translation>Modus</translation>
     </message>
@@ -1686,18 +1681,18 @@
 %1</translation>
     </message>
     <message>
-        <location line="+277"/>
+        <location line="+276"/>
         <source>No logical role</source>
         <translation>Keine logische Rolle</translation>
     </message>
     <message>
         <location line="+37"/>
-        <location line="+1969"/>
+        <location line="+1968"/>
         <source>Unresolved · %1</source>
         <translation>Nicht aufgelöst · %1</translation>
     </message>
     <message>
-        <location line="-1959"/>
+        <location line="-1958"/>
         <source>Unresolved scene</source>
         <translation>Nicht aufgelöste Szene</translation>
     </message>
@@ -1759,40 +1754,40 @@
     <message>
         <location line="+21"/>
         <location line="+1"/>
-        <location line="+3041"/>
+        <location line="+3035"/>
         <location line="+27"/>
         <location line="+43"/>
         <source>System default</source>
         <translation>Systemstandard</translation>
     </message>
     <message>
-        <location line="-3105"/>
-        <location line="+3039"/>
+        <location line="-3099"/>
+        <location line="+3033"/>
         <source>%1 · default</source>
         <translation>%1 · Standard</translation>
     </message>
     <message>
-        <location line="-3030"/>
+        <location line="-3024"/>
         <location line="+108"/>
-        <location line="+2927"/>
+        <location line="+2921"/>
         <location line="+20"/>
         <source> · looping file</source>
         <translation> · Dateischleife</translation>
     </message>
     <message>
-        <location line="-3028"/>
-        <location line="+3036"/>
+        <location line="-3022"/>
+        <location line="+3030"/>
         <source>previously selected input</source>
         <translation>zuvor gewählter Eingang</translation>
     </message>
     <message>
-        <location line="-3034"/>
-        <location line="+3035"/>
+        <location line="-3028"/>
+        <location line="+3029"/>
         <source>Unavailable · %1</source>
         <translation>Nicht verfügbar · %1</translation>
     </message>
     <message>
-        <location line="-3019"/>
+        <location line="-3013"/>
         <source>Input discovery failed: %1</source>
         <translation>Eingangserkennung fehlgeschlagen: %1</translation>
     </message>
@@ -2185,7 +2180,7 @@
         <translation>Aktuell</translation>
     </message>
     <message>
-        <location line="+115"/>
+        <location line="+114"/>
         <source>Input range</source>
         <translation>Eingangsbereich</translation>
     </message>
@@ -2257,7 +2252,7 @@
         <translation>Live-MIDI-Steuerung lernen</translation>
     </message>
     <message>
-        <location line="+197"/>
+        <location line="+192"/>
         <source>Capture Live Scene</source>
         <translation>Live-Szene erfassen</translation>
     </message>
@@ -2337,13 +2332,13 @@
         <translation>Die ausgewählte Live-Rolle ist kein Audioeingang.</translation>
     </message>
     <message>
-        <location line="-2967"/>
-        <location line="+2971"/>
+        <location line="-2961"/>
+        <location line="+2965"/>
         <source>Unavailable · </source>
         <translation>Nicht verfügbar · </translation>
     </message>
     <message>
-        <location line="-1663"/>
+        <location line="-1657"/>
         <source>Manage Live Roles</source>
         <translation>Live-Rollen verwalten</translation>
     </message>
@@ -2358,45 +2353,40 @@
         <translation>Rolle</translation>
     </message>
     <message>
-        <location line="+1660"/>
+        <location line="+1654"/>
         <source> · default</source>
         <translation> · Standard</translation>
     </message>
     <message>
-        <location line="-2036"/>
-        <location line="+2114"/>
+        <location line="-2030"/>
+        <location line="+2108"/>
         <source>PAUSED</source>
         <translation>PAUSIERT</translation>
     </message>
     <message>
-        <location line="-2119"/>
+        <location line="-2113"/>
         <source>WAITING FOR AUDIO</source>
         <translation>WARTE AUF AUDIO</translation>
     </message>
     <message>
-        <location line="-2759"/>
+        <location line="-2758"/>
         <source>LIVE CONTROLS</source>
         <translation>LIVE-STEUERUNG</translation>
     </message>
     <message>
-        <location line="-322"/>
-        <source>Remotes</source>
-        <translation>Fernsteuerungen</translation>
-    </message>
-    <message>
-        <location line="+324"/>
+        <location line="+2"/>
         <source>Choose audio sources, route your mix, and start video output</source>
         <translation>Audioquellen wählen, Mix routen und Videoausgabe starten</translation>
     </message>
     <message>
         <location line="+10"/>
-        <location line="+2065"/>
+        <location line="+2064"/>
         <location line="+105"/>
         <source>Start Video Output</source>
         <translation>Videoausgabe starten</translation>
     </message>
     <message>
-        <location line="-2157"/>
+        <location line="-2156"/>
         <source>Full Screen / Window</source>
         <translation>Vollbild / Fenster</translation>
     </message>
@@ -2438,7 +2428,7 @@
         <translation>Auf Ausgabe anwenden</translation>
     </message>
     <message>
-        <location line="+883"/>
+        <location line="+882"/>
         <source> · input</source>
         <translation> · Eingang</translation>
     </message>
@@ -6993,7 +6983,7 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
     </message>
     <message>
         <location line="+4"/>
-        <location filename="../gui/main_window_remote.cpp" line="+132"/>
+        <location filename="../gui/main_window_remote.cpp" line="+130"/>
         <source>Remotes…</source>
         <translation>Fernsteuerungen…</translation>
     </message>
@@ -12727,12 +12717,17 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
         <translation>LFO bearbeiten…</translation>
     </message>
     <message>
-        <location filename="../gui/main_window_remote.cpp" line="-105"/>
-        <source>Connected Remotes</source>
-        <translation>Verbundene Fernsteuerungen</translation>
+        <location filename="../gui/main_window_remote.cpp" line="-103"/>
+        <source>Remote connection details</source>
+        <translation>Details der Remote-Verbindungen</translation>
     </message>
     <message>
-        <location line="+53"/>
+        <location line="+6"/>
+        <source>No remote connections</source>
+        <translation>Keine Remote-Verbindungen</translation>
+    </message>
+    <message>
+        <location line="+45"/>
         <source>Remote is no longer authorized.</source>
         <translation>Diese Fernsteuerung ist nicht mehr autorisiert.</translation>
     </message>
@@ -14468,7 +14463,7 @@ Stoppen Sie die Videoausgabe, um hier eine Vorschau zu sehen.</translation>
         <translation>Maximale Unschärfe</translation>
     </message>
     <message>
-        <location filename="../gui/live_workspace.cpp" line="-3465"/>
+        <location filename="../gui/live_workspace.cpp" line="-3453"/>
         <source> · display %1 of %2</source>
         <translation> · Bildschirm %1 von %2</translation>
     </message>
@@ -15223,23 +15218,12 @@ Hinweise:</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+129"/>
+        <location filename="../gui/remote_bridge.cpp" line="+130"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Der Fernsteuerungsprozess hat das Nachrichtenlimit überschritten.</translation>
     </message>
     <message>
-        <location line="+24"/>
-        <source>Remote settings could not be saved. Check the pairing file and address ranges.</source>
-        <translation>Remote-Einstellungen konnten nicht gespeichert werden. Prüfen Sie Kopplungsdatei und Adressbereiche.</translation>
-    </message>
-    <message>
-        <location line="+68"/>
-        <location line="+156"/>
-        <source>None</source>
-        <translation>Keine</translation>
-    </message>
-    <message>
-        <location line="-109"/>
+        <location line="+128"/>
         <source>Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates.</source>
         <translation>Installieren Sie die Browser-Erweiterungen aus dem Chrome Web Store und koppeln Sie sie anschließend unten. Chrome übernimmt die Installation und genehmigte Updates.</translation>
     </message>
@@ -15264,38 +15248,129 @@ Hinweise:</translation>
         <translation>Fenster in den Infobereich / die Menüleiste schließen</translation>
     </message>
     <message>
-        <location line="+89"/>
-        <location line="+258"/>
+        <location line="+5"/>
+        <source>Export the Remote file (.pvtremote) from each browser extension and import those files here. Export the PVT host file (.pvthost) here and import it in each remote. Paired remotes reconnect automatically while PVT is running.</source>
+        <translation>Exportieren Sie die Remote-Datei (.pvtremote) aus jeder Browser-Erweiterung und importieren Sie diese Dateien hier. Exportieren Sie hier die PVT-Hostdatei (.pvthost) und importieren Sie sie in jede Remote-Erweiterung. Gekoppelte Geräte verbinden sich automatisch erneut, solange PVT läuft.</translation>
+    </message>
+    <message>
+        <location line="+10"/>
+        <source>This computer and devices on the same IP subnets</source>
+        <translation>Dieser Computer und Geräte in denselben IP-Subnetzen</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Accept remote connections from</source>
+        <translation>Remote-Verbindungen zulassen von</translation>
+    </message>
+    <message>
+        <location line="+25"/>
+        <source>Import Remote files (.pvtremote)…</source>
+        <translation>Remote-Dateien (.pvtremote) importieren…</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Export PVT host file (.pvthost)…</source>
+        <translation>PVT-Hostdatei (.pvthost) exportieren…</translation>
+    </message>
+    <message>
+        <location line="+31"/>
+        <location line="+241"/>
         <source>Control</source>
         <translation>Steuerung</translation>
     </message>
     <message>
-        <location line="+3"/>
+        <location line="-232"/>
+        <location line="+283"/>
+        <source>ID: %1</source>
+        <translation>ID: %1</translation>
+    </message>
+    <message>
+        <location line="-282"/>
+        <source> · </source>
+        <translation> · </translation>
+    </message>
+    <message>
+        <location line="+71"/>
+        <source>Import Remote files (.pvtremote)</source>
+        <translation>Remote-Dateien (.pvtremote) importieren</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Remote files (*.pvtremote)</source>
+        <translation>Remote-Dateien (*.pvtremote)</translation>
+    </message>
+    <message>
+        <location line="+29"/>
+        <source>That Remote file could not be added, or it is already paired.</source>
+        <translation>Diese Remote-Datei konnte nicht hinzugefügt werden oder ist bereits gekoppelt.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>None of the selected Remote files could be added, or they are already paired.</source>
+        <translation>Keine der ausgewählten Remote-Dateien konnte hinzugefügt werden oder sie sind bereits gekoppelt.</translation>
+    </message>
+    <message>
+        <location line="+25"/>
+        <source>Export PVT host file (.pvthost)</source>
+        <translation>PVT-Hostdatei (.pvthost) exportieren</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PVT host file (*.pvthost)</source>
+        <translation>PVT-Hostdatei (*.pvthost)</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>PVT host file saved. Open it in each Remote Display or Remote Control to finish setup.</source>
+        <translation>PVT-Hostdatei gespeichert. Öffnen Sie sie in jeder Remote-Display- oder Remote-Control-Erweiterung, um die Einrichtung abzuschließen.</translation>
+    </message>
+    <message>
+        <location line="+100"/>
         <source> ● Remotes: %1</source>
         <translation> ● Remotes: %1</translation>
     </message>
     <message>
-        <location line="+18"/>
+        <location line="+23"/>
+        <source>Live connections reconnect automatically. Remove a Remote file from the saved devices to revoke its access. A dash means no measurement is available.</source>
+        <translation>Aktive Verbindungen werden automatisch wiederhergestellt. Entfernen Sie eine Remote-Datei aus den gespeicherten Geräten, um deren Zugriff zu widerrufen. Ein Strich bedeutet, dass kein Messwert verfügbar ist.</translation>
+    </message>
+    <message>
+        <location line="+5"/>
         <source>Status</source>
         <translation>Status</translation>
     </message>
     <message>
-        <location line="+6"/>
-        <source>Disconnect and pause selected device</source>
-        <translation>Ausgewähltes Gerät trennen und pausieren</translation>
+        <location line="+26"/>
+        <source>%1 ms</source>
+        <translation>%1 ms</translation>
     </message>
     <message>
-        <location line="+12"/>
+        <location line="+1"/>
+        <source>%1 Mb/s</source>
+        <translation>%1 Mb/s</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>%1 kb/s</source>
+        <translation>%1 kb/s</translation>
+    </message>
+    <message>
+        <location line="-2"/>
         <source>%1 s</source>
         <translation>%1 s</translation>
     </message>
     <message>
-        <location line="-636"/>
+        <location line="-615"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation>Fernsteuerungen sind vorübergehend nicht verfügbar. PVT versucht es automatisch erneut.</translation>
     </message>
     <message>
-        <location line="+112"/>
+        <location line="+111"/>
+        <source>Remote settings could not be saved. Check the Remote file (.pvtremote) and address ranges.</source>
+        <translation>Remote-Einstellungen konnten nicht gespeichert werden. Prüfen Sie die Remote-Datei (.pvtremote) und die Adressbereiche.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
         <source>Remotes enabled</source>
         <translation>Fernsteuerungen aktiviert</translation>
     </message>
@@ -15310,37 +15385,27 @@ Hinweise:</translation>
         <translation>Warten auf eine Verbindung. PVT stellt die Verbindung automatisch wieder her.</translation>
     </message>
     <message>
-        <location line="+86"/>
+        <location line="+63"/>
         <source>Remotes</source>
         <translation>Fernsteuerungen</translation>
     </message>
     <message>
-        <location line="+39"/>
+        <location line="+19"/>
+        <source>Manage remote files and network settings</source>
+        <translation>Remote-Dateien und Netzwerkeinstellungen verwalten</translation>
+    </message>
+    <message>
+        <location line="+32"/>
         <source>Enable Remotes</source>
         <translation>Fernsteuerungen aktivieren</translation>
     </message>
     <message>
-        <location line="+7"/>
-        <source>Pair once: save the pairing file from each Remote Display or Remote Control, then add all of those files here. Save PVT’s pairing file and open it in each remote. Paired remotes reconnect automatically while PVT is running.</source>
-        <translation>Einmal koppeln: Speichern Sie die Kopplungsdatei von jeder Remote-Anzeige bzw. Remote-Steuerung und fügen Sie alle diese Dateien hier hinzu. Speichern Sie die Kopplungsdatei von PVT und öffnen Sie sie in jeder Fernsteuerung. Gekoppelte Fernsteuerungen verbinden sich automatisch neu, solange PVT ausgeführt wird.</translation>
-    </message>
-    <message>
-        <location line="+6"/>
+        <location line="+13"/>
         <source>Paired devices</source>
         <translation>Gekoppelte Geräte</translation>
     </message>
     <message>
-        <location line="+3"/>
-        <source>Remote allowed to control PVT</source>
-        <translation>Fernsteuerung, die PVT steuern darf</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>This computer and nearby networks</source>
-        <translation>Dieser Computer und nahe gelegene Netzwerke</translation>
-    </message>
-    <message>
-        <location line="+1"/>
+        <location line="+5"/>
         <source>Any private network</source>
         <translation>Beliebiges privates Netzwerk</translation>
     </message>
@@ -15355,12 +15420,7 @@ Hinweise:</translation>
         <translation>Nur die unten aufgeführten Adressen oder Bereiche</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>Allow Connections With Remotes On</source>
-        <translation>Verbindungen mit Fernsteuerungen zulassen in</translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+4"/>
         <source>For example: 192.168.1.20, 10.0.0.10-10.0.0.40</source>
         <translation>Zum Beispiel: 192.168.1.20, 10.0.0.10-10.0.0.40</translation>
     </message>
@@ -15390,32 +15450,12 @@ Hinweise:</translation>
         <translation>Anweisungen für Netzwerkadministration speichern…</translation>
     </message>
     <message>
-        <location line="+7"/>
-        <source>Connection details for support…</source>
-        <translation>Verbindungsdetails für den Support…</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Reconnect selected remote</source>
-        <translation>Ausgewählte Fernsteuerung erneut verbinden</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Add Remote pairing files…</source>
-        <translation>Kopplungsdateien für Fernsteuerungen hinzufügen…</translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+10"/>
         <source>Remove selected remote</source>
         <translation>Ausgewählte Fernsteuerung entfernen</translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>Save PVT pairing file…</source>
-        <translation>PVT-Kopplungsdatei speichern…</translation>
-    </message>
-    <message>
-        <location line="+4"/>
+        <location line="+6"/>
         <source>Run Remotes in the background</source>
         <translation>Fernsteuerungen im Hintergrund ausführen</translation>
     </message>
@@ -15425,48 +15465,23 @@ Hinweise:</translation>
         <translation>Fernsteuerungen werden vorbereitet…</translation>
     </message>
     <message>
-        <location line="+28"/>
-        <location line="+258"/>
+        <location line="+25"/>
+        <location line="+241"/>
         <source>Display</source>
         <translation>Anzeige</translation>
     </message>
     <message>
-        <location line="-257"/>
+        <location line="-231"/>
         <source> — </source>
         <translation> — </translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source> — Paused</source>
-        <translation> — Pausiert</translation>
-    </message>
-    <message>
-        <location line="+68"/>
+        <location line="+59"/>
         <source>Enter at least one address or range.</source>
         <translation>Geben Sie mindestens eine Adresse oder einen Bereich ein.</translation>
     </message>
-    <message>
-        <location line="+13"/>
-        <source>Add Remote pairing files</source>
-        <translation>Kopplungsdateien für Fernsteuerungen hinzufügen</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>PVT Remote pairing files (*.pvtremote)</source>
-        <translation>PVT-Kopplungsdateien für Fernsteuerungen (*.pvtremote)</translation>
-    </message>
-    <message>
-        <location line="+31"/>
-        <source>That pairing file could not be added, or it is already paired.</source>
-        <translation>Diese Kopplungsdatei konnte nicht hinzugefügt werden oder ist bereits gekoppelt.</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>None of the selected pairing files could be added, or they are already paired.</source>
-        <translation>Keine der ausgewählten Kopplungsdateien konnte hinzugefügt werden oder sie sind bereits gekoppelt.</translation>
-    </message>
     <message numerus="yes">
-        <location line="+9"/>
+        <location line="+52"/>
         <source>Added %n Remote(s).</source>
         <translation>
             <numerusform>%n Fernsteuerung hinzugefügt.</numerusform>
@@ -15479,22 +15494,7 @@ Hinweise:</translation>
         <translation>%1 Fernsteuerung(en) hinzugefügt; %2 Datei(en) wurden übersprungen, weil sie ungültig oder bereits gekoppelt waren oder die Grenze von 64 Fernsteuerungen überschritten wurde.</translation>
     </message>
     <message>
-        <location line="+17"/>
-        <source>Save PVT pairing file</source>
-        <translation>PVT-Kopplungsdatei speichern</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>PVT pairing file (*.pvthost)</source>
-        <translation>PVT-Kopplungsdatei (*.pvthost)</translation>
-    </message>
-    <message>
-        <location line="+6"/>
-        <source>PVT pairing file saved. Open it in each Remote Display or Remote Control to finish setup.</source>
-        <translation>PVT-Kopplungsdatei gespeichert. Öffnen Sie sie in jeder Remote-Anzeige bzw. Remote-Steuerung, um die Einrichtung abzuschließen.</translation>
-    </message>
-    <message>
-        <location line="+15"/>
+        <location line="+30"/>
         <source>Save network-admin instructions</source>
         <translation>Anweisungen für Netzwerkadministration speichern</translation>
     </message>
@@ -15519,72 +15519,72 @@ Hinweise:</translation>
         <translation>Firewall-Einrichtung gespeichert. Führen Sie sie auf dem PVT-Computer aus; sie bittet um Administratorfreigabe.</translation>
     </message>
     <message>
-        <location line="+49"/>
+        <location line="+46"/>
         <source>%1: %2</source>
         <translation>%1: %2</translation>
     </message>
     <message>
-        <location line="+15"/>
+        <location line="-356"/>
+        <location line="+371"/>
         <source>Remote connection details</source>
-        <translation>Verbindungsdetails der Fernsteuerung</translation>
+        <translation>Details der Remote-Verbindungen</translation>
     </message>
     <message>
-        <location line="+3"/>
-        <source>Use these details when troubleshooting with your network administrator or PVT support. A dash means no measurement is available. Pausing a remote disconnects it until you reconnect it from Remotes.</source>
-        <translation>Verwenden Sie diese Details bei der Fehlersuche mit Ihrer Netzwerkadministration oder dem PVT-Support. Ein Gedankenstrich bedeutet, dass keine Messung verfügbar ist. Wenn Sie eine Fernsteuerung pausieren, wird ihre Verbindung getrennt, bis Sie sie unter „Fernsteuerungen“ erneut verbinden.</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Remote</source>
-        <translation>Fernsteuerung</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>What it can do</source>
-        <translation>Berechtigung</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Browser and system</source>
-        <translation>Browser und System</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>First connection</source>
-        <translation>Erste Verbindung</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Live stream path</source>
-        <translation>Live-Stream-Pfad</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Time connected</source>
-        <translation>Verbindungsdauer</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Response time</source>
-        <translation>Reaktionszeit</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Interruptions</source>
-        <translation>Unterbrechungen</translation>
-    </message>
-    <message>
-        <location line="+0"/>
+        <location line="+16"/>
         <source>Data use</source>
         <translation>Datennutzung</translation>
     </message>
     <message>
-        <location line="+15"/>
+        <location line="+18"/>
+        <source>Browser/system not reported — update the extension</source>
+        <translation>Browser/System nicht gemeldet — Erweiterung aktualisieren</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Media: %1</source>
+        <translation>Medien: %1</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Packets lost: %1</source>
+        <translation>Verlorene Pakete: %1</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>%1
+Sent %2
+Received %3</source>
+        <translation>%1
+Gesendet %2
+Empfangen %3</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Extension %1</source>
+        <translation>Erweiterung %1</translation>
+    </message>
+    <message>
+        <location line="-14"/>
         <source>Control PVT</source>
         <translation>PVT steuern</translation>
     </message>
     <message>
+        <location line="-17"/>
+        <source>Remote</source>
+        <translation>Remote-Gerät</translation>
+    </message>
+    <message>
         <location line="+0"/>
+        <source>Connection addresses</source>
+        <translation>Verbindungsadressen</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Response / loss</source>
+        <translation>Antwortzeit / Verluste</translation>
+    </message>
+    <message>
+        <location line="+17"/>
         <source>View PVT</source>
         <translation>PVT anzeigen</translation>
     </message>

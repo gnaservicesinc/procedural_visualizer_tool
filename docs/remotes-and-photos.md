@@ -2,46 +2,46 @@
 
 ## Remote settings
 
-Application Settings → Remotes contains the full pairing manager. The Settings
-menu's Networking & Remotes action opens that tab. Apply saves the remote draft;
-OK also applies it. Import, removal, pause, and resume take effect immediately.
-Networking remains opt-in.
+**Remote connection details** in the status bar opens the live table in one click,
+even when no devices are connected. **Settings → Remotes** shows the same table
+first; expand **Manage remote files and network settings** for setup. Settings
+apply immediately; Cancel restores the opening settings. Networking remains opt-in.
+
+Export a **Remote file (.pvtremote)** from each extension and import the files in
+PVT. Export the **PVT host file (.pvthost)** from PVT and import it in each extension.
+Every imported control profile can edit through the normal project validation and
+undo path. Display profiles receive output. Removing a saved Remote file revokes
+that identity and closes all its connections. Connection pause and controller
+selection controls have been removed, including their saved settings and MIDI target.
 
 The address presets are:
 
-- **My subnets and this computer** (default): all current interface subnets and
-  loopback, including IPv6 interfaces. Interface changes are refreshed within
-  three seconds; already authenticated connections remain visible in the tracker.
-- **Private networks**: exactly RFC 1918, IPv6 unique-local `fc00::/7`, IPv6
-  link-local `fe80::/10`, and loopback. Documentation, carrier-grade NAT, and other
-  special ranges are not silently treated as private networks.
-- **Any IP**: any unicast endpoint. Encrypted signaling relays require this preset
-  because they cannot establish the original client's source address.
-- **Custom**: individual IPs, CIDR subnets, and inclusive start–end ranges,
-  separated by spaces or commas. IPv4 and IPv6 may be combined. For example:
-  `192.168.1.0/24, 10.0.0.20-10.0.0.40, fd12:3456::/48`.
+- **This computer and devices on the same IP subnets** (default): loopback and
+  the actual IP subnets of this computer’s current network interfaces, including
+  IPv6. Interface changes are refreshed within three seconds.
+- **Any private network**: RFC 1918, IPv6 unique-local `fc00::/7`, IPv6 link-local
+  `fe80::/10`, and loopback.
+- **Anywhere**: any unicast endpoint. Encrypted signaling relays require this
+  preset because they cannot establish the original client’s source address.
+- **Only the addresses or ranges below**: individual IPs, CIDR subnets, and
+  inclusive start–end ranges separated by spaces or commas.
 
-Remote endpoint ports default to 1–65535. This restricts the browser's signaling
-source port and media ports; it does not set PVT's automatically selected listener
-port. Browsers normally allocate ephemeral ports, so narrow ranges can prevent
-connections. Changing address or port policy disconnects existing sessions.
-Pairing keys and the selected controller are still required independently of
-network admission.
+The live table identifies devices by browser, system, remote type, address and
+stable identity. Each browser tab has its own connection; opening another tab
+with the same profile does not disconnect an existing tab. Full identity and
+extension version are available in the device tooltip. Older extensions’ browser
+headers supply descriptive metadata when available. Saved devices retain the last
+reported browser/system and endpoint; names are not used as their identity.
 
-The title bar lists authenticated remote identities and roles. The status-bar
-connection button and **Pop out live connection tracker** open the live table.
-It shows identity, role and edit access, browser/user agent, extension version,
-platform, signaling endpoint, media endpoints, connection state, elapsed time,
-round-trip time where available, reported media packet loss, and DTLS traffic.
-Connected media endpoints are taken from nominated ICE pairs; while negotiating,
-allowed candidates are shown. Traffic is measured in kbit/s and cumulative bytes;
-packet loss comes from receiver feedback, and absent measurements show a dash.
-Browser details are authenticated but self-reported, not proof of device identity.
-Older clients can connect without this new descriptive metadata.
+Response time is shown in ms, traffic rate in kb/s or Mb/s, and cumulative sent
+and received media/transport data in B, KB, MB or GB. Missing measurements show a
+dash. Packet loss comes from receiver feedback. These are live measurements,
+not an exported support report. Browser information is self-reported and does not
+replace public-key authentication.
 
-**Disconnect and pause** prevents automatic reconnection across restarts.
-**Resume selected device** in the Remotes tab permits it again. Removing a paired
-identity revokes its keys. Pausing also denies queued desktop commands immediately.
+Connections automatically recover after interruption. Legacy desktop and browser
+pause settings are removed on load. Short ICE interruptions get time to recover;
+failed connections and repeated unanswered commands trigger automatic retries.
 
 ## Portrait and spatial photos
 
@@ -94,5 +94,5 @@ color and mask alignment, cutout alpha, CPU/Metal photo-render parity, tiled-dep
 alignment, setup and binary codecs, project round trips,
 attachment copying/pruning, additive geometry, neutral depth settings, and GUI
 import/edit/duplicate/remove/undo/redo. Remote tests cover explicit private ranges,
-IPv6, custom ranges, ports, unauthenticated rejection, persistent pause, ICE
-peer-reflexive admission, and a real WebRTC connection.
+IPv6, custom ranges, unauthenticated rejection, legacy-pause migration, ICE
+peer-reflexive admission, reconnects, simultaneous tabs and real WebRTC media.

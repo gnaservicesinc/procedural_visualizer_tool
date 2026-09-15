@@ -48,9 +48,9 @@ def endpoint(value, relay=False):
 
 def profile(value, expected=None):
     if not isinstance(value, dict) or value.get("version") != 1 or value.get("type") not in ("pvthost", "pvtremote"):
-        raise ValueError("Unsupported pairing file")
+        raise ValueError("Expected a Remote file (.pvtremote) or PVT host file (.pvthost)")
     if expected and value["type"] != expected:
-        raise ValueError("Wrong pairing file type")
+        raise ValueError(f"Wrong file type: expected .{expected}")
     uuid.UUID(value["id"])
     if not isinstance(value.get("label"), str) or not 1 <= len(value["label"]) <= 120:
         raise ValueError("Name must contain 1–120 characters")
@@ -61,6 +61,11 @@ def profile(value, expected=None):
         if value.get("role") not in ("display", "control"):
             raise ValueError("Invalid remote role")
         clean["role"] = value["role"]
+        if isinstance(value.get("client"), dict):
+            clean["client"] = {k: " ".join(str(value["client"].get(k, "")).split())[:200]
+                               for k in ("browser", "version", "platform")}
+        if isinstance(value.get("last_endpoint"), str):
+            clean["last_endpoint"] = value["last_endpoint"][:200]
     else:
         urls = value.get("endpoints", [])
         if not isinstance(urls, list) or len(urls) > 16:

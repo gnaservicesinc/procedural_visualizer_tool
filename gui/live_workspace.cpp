@@ -510,17 +510,6 @@ struct LiveWorkspace::Impl {
 
     pvt::audio::LiveAudioCapture audio;
     bool background_output = false;
-    QStringList remote_names;
-    int remote_control = 0;
-    void appendRemoteTarget(std::vector<LiveTargetDescriptor>& targets) const {
-        if (remote_names.isEmpty()) return;
-        targets.push_back({QStringLiteral("runtime.active_control_remote"),
-            QCoreApplication::translate("LiveWorkspace", "Active Control Remote: %1")
-                .arg(remote_names.join(QStringLiteral(" / "))),
-            QCoreApplication::translate("LiveWorkspace", "Remotes"),
-            LiveTargetKind::Integer, 0.0,
-            static_cast<double>(remote_names.size() - 1), static_cast<double>(remote_control), [](pvt::ProjectConfig&, double) { return false; }});
-    }
     DeviceSleepGuard sleep_guard;
     LiveMidiRouter midi;
     LiveOscRouter osc;
@@ -2032,7 +2021,6 @@ void LiveWorkspace::Impl::rebuildTargetCache() {
     project_cache_valid = true;
     project_cache_revision = document_revision_provider ? document_revision_provider() : 0U;
     target_cache = buildLiveTargetRegistry(project_cache);
-    appendRemoteTarget(target_cache);
     QSet<QString> edited;
     target_index.reserve(static_cast<qsizetype>(target_cache.size()));
     for (int index = 0; index < static_cast<int>(target_cache.size()); ++index) {
@@ -4224,7 +4212,6 @@ void LiveWorkspace::Impl::editMapping(int index) {
     auto registry = project_provider
         ? buildLiveTargetRegistry(project_provider())
         : std::vector<LiveTargetDescriptor>{};
-    appendRemoteTarget(registry);
     QHash<QString, QTreeWidgetItem*> target_sections;
     QTreeWidgetItem* first_target = nullptr;
     for (const auto& target : registry) {
@@ -4629,11 +4616,6 @@ double LiveWorkspace::Impl::transformedValue(
 void LiveWorkspace::Impl::performMapping(
     const pvt::LiveControlMapping& mapping, int mappingIndex, double value, bool fire) {
     if (!fire) return;
-    if (mapping.target == pvt::LiveMappingTarget::Setting
-        && mapping.target_path == "runtime.active_control_remote") {
-        if (std::isfinite(value)) emit q->remoteControlSelected(static_cast<int>(std::clamp(std::round(value), 0.0, static_cast<double>(std::max(0, static_cast<int>(remote_names.size()) - 1)))));
-        return;
-    }
     if (mapping.target == pvt::LiveMappingTarget::Setting) {
         const QString path = qtext(mapping.target_path);
         if (!target_index.contains(path)) return;
@@ -5736,11 +5718,6 @@ void LiveWorkspace::setBackgroundOutput(bool background) {
     impl_->background_output = background;
     if (background) impl_->stage.dismiss();
     else if (isRealtimeOutputActive()) impl_->applyVisibleOutputPolicy();
-}
-void LiveWorkspace::setRemoteControlTargets(const QStringList& names, int current) {
-    impl_->remote_names = names;
-    impl_->remote_control = current;
-    impl_->rebuildTargetCache();
 }
 void LiveWorkspace::enableRemoteAudio(bool enabled) { impl_->audio.enable_remote_audio(enabled); }
 bool LiveWorkspace::readRemoteAudio(std::uint8_t* pcm) { return impl_->audio.read_remote_audio(pcm); }

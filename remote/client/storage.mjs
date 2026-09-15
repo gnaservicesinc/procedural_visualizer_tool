@@ -3,7 +3,9 @@ const prefix = 'pvt.host.';
 export class ProfileStore {
   constructor(api, role) { this.api = api; this.role = role; }
   async load() {
-    const saved = await this.api.storage.local.get(['identity', 'hosts', 'syncEnabled', 'selected', 'paused']);
+    const saved = await this.api.storage.local.get(['identity', 'hosts', 'syncEnabled', 'selected']);
+    // Old explicit pauses must never suppress automatic reconnection.
+    await this.api.storage.local.remove(['paused']);
     if (!saved.identity) {
       saved.identity = await newIdentity(this.role);
       await this.api.storage.local.set({identity: saved.identity});

@@ -1,5 +1,7 @@
 # Remote setup repair verification — 2026-09-15
 
+Current regression repair results and report dispositions: [REGRESSION_REVIEW.md](REGRESSION_REVIEW.md).
+
 Supported scope: PVT and its remotes run on the same computer, share a nearby
 network, or use an already-routed managed network whose administrator applies
 the generated rules. A hosted public-internet connection service, NAT traversal,
@@ -8,16 +10,16 @@ release requirements.
 
 | Requirement | Implemented behavior | Evidence / remaining acceptance |
 | --- | --- | --- |
-| Pair once without technical prompts | Existing mutual pairing files; multi-file desktop import; automatic enable and first-controller selection; no interpreter, hostname, connection-port, signaling or media-server fields | Native manager test exercises a two-file selection and asserts the technical port controls are absent; actual file dialogs import/export/remove |
+| Pair once without technical prompts | Existing mutual pairing files; multi-file desktop import; automatic enable and access for every imported controller; no interpreter, hostname, connection-port, signaling or media-server fields | Native manager test exercises a two-file selection and asserts the technical port controls are absent; actual file dialogs import/export/remove |
 | Keep settings predictable | Remote choices apply as they are entered; one outer OK/Cancel button row; Cancel restores the opening worker configuration, enabled state, background state and close behavior | Native manager test changes live settings, observes the worker update, cancels, and verifies rollback; no nested Apply button is present |
 | Connect across managed networks | Plain-language help appears only beyond nearby networks; custom ranges appear only for the custom choice; generated administrator handoff lists actual stable PVT ports and routed TCP/UDP needs; local setup files cover Windows, macOS and Ubuntu | Pure generator checks cover all three systems and stable identity-derived ports; manager visibility checks cover nearby/custom/private choices |
 | No separate runtime installation | Frozen shared worker alongside PVT; no production PATH/interpreter fallback; desktop packaging requires it | macOS worker self-test passes with an empty environment and unusable PATH; native GUI integration uses bundled executable; release package results are recorded below |
 | Keep normal project authoring | Existing Live targets, validation, document edits, undo/redo and persistence | Native remote smoke passes controller/display permissions, stale revisions, edit/undo/redo/save/load and hidden rendering |
-| Remember pairing and recover | Saved selection, automatic connect on open/import, bounded retry, worker restart, explicit persistent Disconnect | Real Chromium audio/video test covers tab reload, desktop disable/enable recovery, and pause/reload/resume; native subprocess crash test passes |
+| Remember pairing and recover | Saved selection, automatic connect on open/import, bounded retry, worker restart, migration of legacy pauses | Real Chromium audio/video test covers tab reload, desktop disable/enable recovery, legacy-pause migration and sustained same-profile tabs; native subprocess crash test passes |
 | Automatic local discovery | Stable identity-derived name/port alternatives, interface enumeration and multicast refresh | Browser test uses the stable `.local` name; unit tests simulate interface/address replacement and occupied port |
 | Same machine without external network | Loopback remains available without discovery | Unit test simulates no external interfaces and listener conflict; standalone loopback authentication/codec test passes; no physical network interface was disabled |
 
-macOS 27 update checks: the 49-test native suite passed; lower deployment targets
+Earlier macOS 27 update checks (before this regression repair): the 49-test native suite passed; lower deployment targets
 are rejected at configuration; the direct VideoToolbox backend passed H264
 encoding, color, resolution-change and keyframe recovery checks. Real Chromium
 received H264 frames and passed stable-name connection, reload, interruption

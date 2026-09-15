@@ -1,7 +1,11 @@
-function clientInfo() {
+export function clientInfo() {
   const runtime = globalThis.browser?.runtime || globalThis.chrome?.runtime;
-  return {browser: navigator.userAgent, platform: navigator.platform,
-    version: runtime?.getManifest?.().version || "unknown"};
+  const ua = navigator.userAgent;
+  const match = ua.match(/(Edg)\/([\d.]+)/) || ua.match(/(Firefox|Chrome|Version)\/([\d.]+)/);
+  const name = {Edg: 'Edge', Firefox: 'Firefox', Chrome: 'Chrome', Version: 'Safari'};
+  return {browser: match ? `${name[match[1]]} ${match[2]}` : ua || 'Browser not reported',
+    platform: navigator.userAgentData?.platform || (/Mac/.test(navigator.platform) ? 'macOS' : /Win/.test(navigator.platform) ? 'Windows' : navigator.platform) || 'System not reported',
+    version: runtime?.getManifest?.().version || 'unknown'};
 }
 
 import {Cipher, unb64} from './protocol.mjs';
@@ -10,6 +14,7 @@ export class Connection {
     this.identity = identity; this.host = host; this.cipher = new Cipher(identity);
     this.onStatus = onStatus || (() => {}); this.onStream = onStream || (() => {});
     this.iceServers = iceServers; this.pending = new Map(); this.chunks = new Map(); this.closed = false;
+    this.responseTimeouts = 0;
     this.session = crypto.randomUUID(); this.stream = new MediaStream();
   }
   async connect() {
@@ -36,12 +41,13 @@ export class Connection {
     }
   }
   reconnect() {
-    if (this.closed || this.reconnecting) return;
+    if (this.closed) return;
+    if (this.reconnecting) { this.retryRequested = true; return; }
     this.reconnecting = true;
     this.cleanup();
     this.onStatus('Waiting for PVT · reconnecting automatically');
     // Let the previous event finish before opening a replacement connection.
-    Promise.resolve().then(() => this.connect()).finally(() => { this.reconnecting = false; });
+    Promise.resolve().then(() => this.connect()).finally(() => { this.reconnecting = false; if (this.retryRequested) { this.retryRequested = false; this.reconnect(); } });
   }
   async attempt({url, relay}) {
     this.onStatus('Connecting to PVT…');
@@ -51,7 +57,7 @@ export class Connection {
     this.authenticated = false;
     const pc = new RTCPeerConnection({iceServers: this.iceServers}); this.pc = pc;
     this.channel = pc.createDataChannel('pvt-control', {ordered: true});
-    this.channel.onmessage = event => { try { this.result(JSON.parse(event.data)); } catch { this.disconnect(); } };
+    this.channel.onmessage = event => { try { this.result(JSON.parse(event.data)); } catch { this.reconnect(); } };
     if (this.identity.public.role === 'display') {
       pc.addTransceiver('video', {direction: 'recvonly'});
       pc.addTransceiver('audio', {direction: 'recvonly'});
@@ -69,7 +75,16 @@ export class Connection {
       };
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'connected' && this.channel.readyState === 'open') success();
-        if (['failed', 'closed', 'disconnected'].includes(pc.connectionState)) {
+        clearTimeout(this.disconnectedTimer);
+        if (pc.connectionState === 'disconnected') {
+          // ICE can recover short route changes without tearing down media.
+          this.disconnectedTimer = setTimeout(() => {
+            if (this.pc === pc && pc.connectionState === 'disconnected') {
+              if (connected) this.reconnect(); else fail(Error('WebRTC connection lost'));
+            }
+          }, 8000);
+        }
+        if (['failed', 'closed'].includes(pc.connectionState)) {
           if (!connected) fail(Error('WebRTC connection failed'));
           else { this.reconnect(); }
         }
@@ -99,6 +114,7 @@ export class Connection {
             this.result(message);
           } else {
             const payload = await this.cipher.open(this.host, message);
+            if (this.closed || this.ws !== ws) return;
             if (payload.op === 'hello' && payload.challenge === this.challenge && !this.authenticated) {
               this.authenticated = true;
               await this.offer(ws, pc);
@@ -123,7 +139,7 @@ export class Connection {
     const message = {op: 'command', id: crypto.randomUUID(), action, ...fields};
     if (this.pending.size >= 16) return Promise.reject(Error('Too many pending controls'));
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(message.id); this.chunks.delete(message.id); reject(Error('PVT did not respond')); }, 6500);
+      const timer = setTimeout(() => { this.pending.delete(message.id); this.chunks.delete(message.id); reject(Error('PVT did not respond')); if (++this.responseTimeouts >= 2) this.reconnect(); }, 6500);
       this.pending.set(message.id, {resolve, reject, timer});
       try {
         const raw = JSON.stringify(message);
@@ -155,10 +171,13 @@ export class Connection {
     }
     const request = this.pending.get(message.id);
     if (!request) return;
+    this.responseTimeouts = 0;
     this.pending.delete(message.id); clearTimeout(request.timer);
     if (message.ok) request.resolve(message); else request.reject(Error(message.error || 'Command rejected'));
   }
   cleanup() {
+    clearTimeout(this.disconnectedTimer);
+    this.responseTimeouts = 0;
     this.cancelAttempt?.(); this.cancelAttempt = null;
     if (this.ws) { this.ws.onclose = this.ws.onerror = this.ws.onmessage = null; this.ws.close(); }
     if (this.channel) this.channel.onclose = this.channel.onmessage = this.channel.onopen = null;

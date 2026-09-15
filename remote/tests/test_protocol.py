@@ -53,7 +53,6 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
         self.other = Cipher(new_identity('pvtremote', 'control'))
         self.display = Cipher(new_identity('pvtremote', 'display'))
         self.host.config['remotes'] = [self.control.public, self.other.public, self.display.public]
-        self.host.config['active_control'] = self.control.public['id']
         self.host.emit = lambda message: None
 
     async def asyncTearDown(self):
@@ -66,26 +65,29 @@ class HostTests(unittest.IsolatedAsyncioTestCase):
         response = await self.host.command(self.control.public, {'id':'1', 'action':'set'})
         self.assertFalse(response['ok'])
 
-    async def test_control_exclusivity_and_display_background(self):
+    async def test_all_imported_controllers_and_display_background(self):
         self.host.enabled = True
         def emit(message):
             if message.get('event') == 'command':
                 self.host.pending[message['token']].set_result({'ok':True})
         self.host.emit = emit
-        for remote in [self.other, self.display]:
+        for remote in [self.display]:
             reply = await self.host.command(remote.public, {'id':'1', 'action':'set'})
             self.assertFalse(reply['ok'])
-        reply = await self.host.command(self.control.public, {'id':'2', 'action':'set'})
-        self.assertTrue(reply['ok'])
+        for controller in [self.control, self.other]:
+            reply = await self.host.command(controller.public, {'id':'2', 'action':'set'})
+            self.assertTrue(reply['ok'])
         reply = await self.host.command(self.display.public, {'id':'3', 'action':'background'})
         self.assertTrue(reply['ok'])
         self.host.config['remotes'].remove(self.control.public)
         reply = await self.host.command(self.control.public, {'id':'4', 'action':'set'})
         self.assertFalse(reply['ok'])
 
-    async def test_midi_cannot_select_unknown_or_display_profile(self):
+    async def test_legacy_selection_is_discarded(self):
         for remote in ['not-imported', self.display.public['id']]:
-            with self.assertRaises(ValueError): self.host.validate_config(dict(self.host.config, active_control=remote))
+            config = dict(self.host.config, active_control=remote)
+            self.host.validate_config(config)
+            self.assertNotIn('active_control', config)
 
     async def test_authenticated_websocket_and_replay(self):
         from websockets.asyncio.client import connect
@@ -120,15 +122,13 @@ class HandoffTests(unittest.IsolatedAsyncioTestCase):
                 closed = False
                 async def close(self): self.closed = True
             peer = Peer()
-            host.sessions[display['id']] = {'pc':peer}
+            host.sessions['session'] = {'pc':peer, 'peer':display}
             await host.input({'op':'configure','enabled':True,'config':{'active_control':b['id']}})
             self.assertFalse(peer.closed)
-            self.assertEqual(host.config['active_control'],b['id'])
-            response = await host.command(a, {'id':'late','action':'set'})
-            self.assertFalse(response['ok'])
+            self.assertNotIn('active_control', host.config)
             await host.input({'op':'configure','enabled':True,'config':{'remotes':[a,b]}})
             self.assertTrue(peer.closed)
-            self.assertNotIn(display['id'],host.sessions)
+            self.assertNotIn('session',host.sessions)
             await host.disable()
 
 
@@ -187,7 +187,7 @@ class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(host.enabled)
             self.assertIsNone(host.server)
 
-    async def test_legacy_pairing_migration_preserves_keys_and_controller(self):
+    async def test_legacy_pairing_migration_preserves_keys_and_removes_selection(self):
         with tempfile.TemporaryDirectory() as temp:
             host = Host(temp)
             remote = new_identity('pvtremote', 'control')['public']
@@ -197,7 +197,7 @@ class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(loaded.config['lan'])
             self.assertFalse(loaded.enabled)
             self.assertEqual(loaded.config['remotes'], [remote])
-            self.assertEqual(loaded.config['active_control'], remote['id'])
+            self.assertNotIn('active_control', loaded.config)
             self.assertEqual(loaded.cipher.public, host.cipher.public)
 
     async def test_address_change_republishes_stable_identity(self):
