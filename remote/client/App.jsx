@@ -16,6 +16,7 @@ export function App({role, icon}) {
   const [status, setStatus] = useState('Disconnected');
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(false);
+  const [connectionRequested, setConnectionRequested] = useState(true);
   const [hostState, setHostState] = useState(null);
   const [settings, setSettings] = useState(false);
   const [muted, setMuted] = useState(true);
@@ -50,14 +51,15 @@ export function App({role, icon}) {
   }, [connected]);
   const disconnect = () => {
     connection.current?.disconnect(); connection.current = null;
+    if (video.current) video.current.srcObject = null;
     setConnected(false); setHostState(null); setStatus('Disconnected');
   };
   const selectHost = id => {
-    disconnect(); setSelected(id);
+    disconnect(); setSelected(id); setConnectionRequested(true);
     run(() => browser.storage.local.set({selected: id}));
   };
   useEffect(() => {
-    if (!selectedHost || !data) return;
+    if (!selectedHost || !data || !connectionRequested) return;
     const current = new Connection(data.identity, selectedHost, {
       onStatus: text => {
         if (connection.current !== current) return;
@@ -69,7 +71,7 @@ export function App({role, icon}) {
     connection.current = current;
     current.connect().catch(() => { if (connection.current === current) setError('PVT could not connect.'); });
     return () => { current.disconnect(); if (connection.current === current) connection.current = null; };
-  }, [hostConnectionKey, data?.identity]);
+  }, [hostConnectionKey, data?.identity, connectionRequested]);
   const saveSettings = async (hosts, syncEnabled) => {
     // Use the existing profile store for validation, pinned identities and sync.
     if (syncEnabled && !data.syncEnabled) hosts = await store.current.mergeSyncedHosts(hosts, true);
@@ -114,6 +116,11 @@ export function App({role, icon}) {
       <label>Host <select value={selected} onChange={event => selectHost(event.target.value)} aria-label="Active host">
         {!data?.hosts.length && <option value="">Import a PVT host file</option>}{data?.hosts.map(host => <option key={host.id} value={host.id}>{host.label}</option>)}
       </select></label>
+      <button disabled={!selectedHost} onClick={() => {
+        setError('');
+        if (connectionRequested) { setConnectionRequested(false); disconnect(); }
+        else setConnectionRequested(true);
+      }}>{connectionRequested ? 'Disconnect' : 'Connect'}</button>
       <label className="switch"><input type="checkbox" disabled={!connected} checked={hostState?.background || false} onChange={event => run(() => command('background', {value: event.target.checked}))}/> Host in background</label>
     </div>
     {error && <div className="error" role="alert">{error}<button onClick={() => setError('')} aria-label="Dismiss error">×</button></div>}

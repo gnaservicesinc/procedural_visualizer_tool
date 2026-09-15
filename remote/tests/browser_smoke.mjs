@@ -109,6 +109,17 @@ try {
     await page.getByRole('option',{name:configured.profile.label,exact:true}).waitFor({state:'attached'});
     await page.getByRole('button',{name:'Done',exact:true}).click();
     await page.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:60000});
+    // An intentional disconnect stops the transport and stays disconnected in this tab.
+    await page.getByRole('button', {name:'Disconnect', exact:true}).click();
+    await page.getByRole('status').filter({hasText:/^Disconnected$/}).waitFor();
+    await page.waitForFunction(() => window.peerConnections.every(pc => pc.connectionState === 'closed'));
+    const openedBefore = await page.evaluate(() => window.openedConnections.length);
+    await page.waitForTimeout(3500);
+    assert.equal(await page.evaluate(() => window.openedConnections.length), openedBefore);
+    assert.equal(await page.getByRole('status').textContent(), 'Disconnected');
+    assert.equal(await page.evaluate(() => document.querySelector('video')?.srcObject ?? null), null);
+    await page.getByRole('button', {name:'Connect', exact:true}).click();
+    await page.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:45000});
     assert.equal(await page.getByRole('alert').count(),0);
     if (useLan) assert.ok((await page.evaluate(() => window.openedConnections[0])).includes('.local:'));
   }
@@ -286,7 +297,7 @@ try {
     }
   } finally {clearInterval(interval);}
   assert.deepEqual(browserErrors, []);
-  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','reload reconnect','interruption recovery','legacy pause migration', 'sustained same-profile multi-tab media','control request','responsive layout','3637-control hierarchy and bounded pagination','global search and locate','settings save/discard/reload guards in both roles','invalid save retains draft','audio and fullscreen','zero unexpected browser errors'],expectedNetworkErrors:expectedNetworkErrors.length,screenshots:temporary}));
+  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','manual disconnect stops transport and media in both roles', 'explicit reconnect', 'reload reconnect','interruption recovery','legacy pause migration', 'sustained same-profile multi-tab media','control request','responsive layout','3637-control hierarchy and bounded pagination','global search and locate','settings save/discard/reload guards in both roles','invalid save retains draft','audio and fullscreen','zero unexpected browser errors'],expectedNetworkErrors:expectedNetworkErrors.length,screenshots:temporary}));
 } catch (error) {
   console.error('Worker diagnostics:', stderr);
   for (const page of context?.pages() || []) {

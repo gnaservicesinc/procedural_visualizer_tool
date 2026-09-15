@@ -15312,7 +15312,7 @@ Notes :</translation>
     <message>
         <location line="+23"/>
         <source>Extension update required: PVT-RC and PVT-RD 0.2.2 are unsupported because Disconnect is missing. Do not use these extensions until updated to 0.2.3 or later.</source>
-        <translation type="unfinished"></translation>
+        <translation>Mise à jour des extensions requise : PVT-RC et PVT-RD 0.2.2 ne sont pas pris en charge, car la déconnexion est absente. Ne les utilisez pas avant leur mise à jour vers la version 0.2.3 ou ultérieure.</translation>
     </message>
     <message>
         <location line="+4"/>
@@ -15327,7 +15327,7 @@ Notes :</translation>
     <message>
         <location line="+27"/>
         <source>Unsupported extension — do not use until updated to 0.2.3 or later</source>
-        <translation type="unfinished"></translation>
+        <translation>Extension non prise en charge — ne pas utiliser avant la mise à jour vers la version 0.2.3 ou ultérieure</translation>
     </message>
     <message>
         <location line="+6"/>
@@ -15387,32 +15387,32 @@ Notes :</translation>
     <message>
         <location line="+10"/>
         <source>Update both browser extensions to 0.2.3 or later before use. Version 0.2.2 removed Disconnect and is unsupported. Do not use it until updated. Firefox downloads are available from the release page while store review is pending.</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettez les deux extensions à jour vers la version 0.2.3 ou ultérieure avant utilisation. La version 0.2.2 a supprimé la déconnexion et n’est pas prise en charge. Ne l’utilisez pas avant sa mise à jour. Les téléchargements Firefox sont disponibles sur la page des versions en attendant la validation de la boutique.</translation>
     </message>
     <message>
         <location line="+4"/>
         <source>Update Remote Control for Chrome</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre à jour Remote Control pour Chrome</translation>
     </message>
     <message>
         <location line="+2"/>
         <source>Update Remote Display for Chrome</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre à jour Remote Display pour Chrome</translation>
     </message>
     <message>
         <location line="+7"/>
         <source>Could not open the browser. Open this address in your browser: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible d’ouvrir le navigateur. Ouvrez cette adresse dans votre navigateur : %1</translation>
     </message>
     <message>
         <location line="+9"/>
         <source>Update Remote Control for Firefox</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre à jour Remote Control pour Firefox</translation>
     </message>
     <message>
         <location line="+2"/>
         <source>Update Remote Display for Firefox</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre à jour Remote Display pour Firefox</translation>
     </message>
     <message>
         <location line="+12"/>
