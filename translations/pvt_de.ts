@@ -904,12 +904,7 @@
         <translation>Aktive Fernsteuerung: %1</translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>Networking &amp; Remotes</source>
-        <translation>Netzwerk und Fernsteuerungen</translation>
-    </message>
-    <message>
-        <location line="+332"/>
+        <location line="+334"/>
         <location line="+2505"/>
         <source>STANDBY</source>
         <translation>BEREIT</translation>
@@ -2384,7 +2379,12 @@
         <translation>LIVE-STEUERUNG</translation>
     </message>
     <message>
-        <location line="+2"/>
+        <location line="-322"/>
+        <source>Remotes</source>
+        <translation>Fernsteuerungen</translation>
+    </message>
+    <message>
+        <location line="+324"/>
         <source>Choose audio sources, route your mix, and start video output</source>
         <translation>Audioquellen wählen, Mix routen und Videoausgabe starten</translation>
     </message>
@@ -6992,7 +6992,13 @@ Gespeicherte Versionen: %3. Versionen sind unveränderlich; Wiederherstellen ers
         <translation>Einstellungen konfigurieren, die für alle Projekte gelten und nach einem Neustart erhalten bleiben.</translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+4"/>
+        <location filename="../gui/main_window_remote.cpp" line="+132"/>
+        <source>Remotes…</source>
+        <translation>Fernsteuerungen…</translation>
+    </message>
+    <message>
+        <location line="+10"/>
         <source>Layers &amp;&amp; Groups Panel</source>
         <translation>Panel Ebenen &amp;&amp; Gruppen</translation>
     </message>
@@ -8382,13 +8388,7 @@ Projekt-UUID: %2
         <translation>Live-Steuerung ein- oder ausblenden. Das Öffnen dieses Fensters startet keine Ausgabe und ändert die Wiedergabe nicht.</translation>
     </message>
     <message>
-        <location line="+22"/>
-        <location filename="../gui/main_window_remote.cpp" line="+132"/>
-        <source>Networking &amp; Remotes…</source>
-        <translation>Netzwerk und Fernsteuerungen…</translation>
-    </message>
-    <message>
-        <location line="+2519"/>
+        <location line="+2541"/>
         <source>The selected source project no longer contains that layer.</source>
         <translation>Das ausgewählte Quellprojekt enthält diese Ebene nicht mehr.</translation>
     </message>
@@ -12728,8 +12728,8 @@ Führen Sie es direkt für das relative Standardziel aus oder übergeben Sie ein
     </message>
     <message>
         <location filename="../gui/main_window_remote.cpp" line="-105"/>
-        <source>Live remote connections</source>
-        <translation>Live-Remote-Verbindungen</translation>
+        <source>Connected Remotes</source>
+        <translation>Verbundene Fernsteuerungen</translation>
     </message>
     <message>
         <location line="+53"/>
@@ -15223,7 +15223,7 @@ Hinweise:</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+125"/>
+        <location filename="../gui/remote_bridge.cpp" line="+129"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Der Fernsteuerungsprozess hat das Nachrichtenlimit überschritten.</translation>
     </message>
@@ -15233,28 +15233,13 @@ Hinweise:</translation>
         <translation>Remote-Einstellungen konnten nicht gespeichert werden. Prüfen Sie Kopplungsdatei und Adressbereiche.</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>Networking &amp; Remotes enabled</source>
-        <translation>Netzwerk und Fernsteuerungen aktiviert</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Networking &amp; Remotes disabled</source>
-        <translation>Netzwerk und Fernsteuerungen deaktiviert</translation>
-    </message>
-    <message>
-        <location line="+67"/>
-        <location line="+141"/>
+        <location line="+68"/>
+        <location line="+156"/>
         <source>None</source>
         <translation>Keine</translation>
     </message>
     <message>
-        <location line="-111"/>
-        <source>Networking &amp; Remotes</source>
-        <translation>Netzwerk und Fernsteuerungen</translation>
-    </message>
-    <message>
-        <location line="+11"/>
+        <location line="-109"/>
         <source>Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates.</source>
         <translation>Installieren Sie die Browser-Erweiterungen aus dem Chrome Web Store und koppeln Sie sie anschließend unten. Chrome übernimmt die Installation und genehmigte Updates.</translation>
     </message>
@@ -15274,119 +15259,15 @@ Hinweise:</translation>
         <translation>Der Browser konnte nicht geöffnet werden. Öffnen Sie diese Adresse in Chrome: %1</translation>
     </message>
     <message>
-        <location line="+9"/>
-        <source>Enable Networking &amp; Remotes</source>
-        <translation>Netzwerk und Fernsteuerungen aktivieren</translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+11"/>
         <source>Close window to system tray / menu bar</source>
         <translation>Fenster in den Infobereich / die Menüleiste schließen</translation>
     </message>
     <message>
-        <location line="+4"/>
-        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote’s Hosts &amp; settings. Save changes there if prompted. Paired devices reconnect automatically while PVT is running.</source>
-        <translation>Einmal koppeln: Speichern Sie die Kopplungsdatei aus Remote Display oder Remote Control und öffnen Sie sie hier. Speichern Sie dann die Kopplungsdatei von PVT und öffnen Sie sie unter Hosts &amp; Einstellungen der Fernsteuerung. Speichern Sie dort die Änderungen, wenn Sie dazu aufgefordert werden. Gekoppelte Geräte verbinden sich automatisch erneut, solange PVT läuft.</translation>
-    </message>
-    <message>
-        <location line="+9"/>
-        <source>Active Control Remote</source>
-        <translation>Aktive Fernsteuerung</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>My subnets and this computer</source>
-        <translation>Meine Subnetze und dieser Computer</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Private networks (IPv4 and IPv6)</source>
-        <translation>Private Netzwerke (IPv4 und IPv6)</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Any IP address</source>
-        <translation>Beliebige IP-Adresse</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Custom IP addresses / ranges</source>
-        <translation>Benutzerdefinierte IP-Adressen / Bereiche</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Allow connections from</source>
-        <translation>Verbindungen zulassen von</translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Separate IPs, CIDR subnets, or start-end ranges with spaces or commas. Private networks includes RFC 1918, IPv6 unique-local (fc00::/7), link-local (fe80::/10), and loopback. Relay connections require Any IP.</source>
-        <translation>Trennen Sie IPs, CIDR-Subnetze oder Start-Ende-Bereiche durch Leerzeichen oder Kommas. Private Netzwerke umfassen RFC 1918, IPv6 Unique-Local (fc00::/7), Link-Local (fe80::/10) und Loopback. Relay-Verbindungen erfordern beliebige IPs.</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Custom ranges</source>
-        <translation>Eigene Bereiche</translation>
-    </message>
-    <message>
-        <location line="+6"/>
-        <source>through</source>
-        <translation>bis</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Remote endpoint ports</source>
-        <translation>Ports der Remote-Endpunkte</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Applies to remote signaling and media source ports. Browsers normally choose these automatically; keep the full range unless your network requires a restriction.</source>
-        <translation>Gilt für die Quellports von Remote-Signalisierung und Medien. Browser wählen diese normalerweise automatisch; behalten Sie den vollen Bereich bei, sofern Ihr Netzwerk keine Einschränkung erfordert.</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Pop out live connection tracker…</source>
-        <translation>Live-Verbindungsübersicht auslagern…</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Resume selected device</source>
-        <translation>Ausgewähltes Gerät fortsetzen</translation>
-    </message>
-    <message>
-        <location line="+6"/>
-        <source>Import .pvtremote…</source>
-        <translation>.pvtremote importieren…</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Remove remote</source>
-        <translation>Fernsteuerung entfernen</translation>
-    </message>
-    <message>
-        <location line="+2"/>
-        <source>Export .pvthost…</source>
-        <translation>.pvthost exportieren…</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Toggle background mode</source>
-        <translation>Hintergrundmodus umschalten</translation>
-    </message>
-    <message>
-        <location line="+122"/>
-        <source>%1 %2 [%3]</source>
-        <translation>%1 %2 [%3]</translation>
-    </message>
-    <message>
-        <location line="+0"/>
+        <location line="+89"/>
+        <location line="+258"/>
         <source>Control</source>
         <translation>Steuerung</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>View</source>
-        <translation>Ansicht</translation>
     </message>
     <message>
         <location line="+3"/>
@@ -15394,64 +15275,9 @@ Hinweise:</translation>
         <translation> ● Remotes: %1</translation>
     </message>
     <message>
-        <location line="+12"/>
-        <source>Live remote connections</source>
-        <translation>Live-Remote-Verbindungen</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Authenticated devices. Browser details are self-reported; the identity distinguishes pairings. Media endpoints are allowed ICE candidates, not a claim that every candidate is in use. — means no measurement is available. Pause disconnects a device and prevents automatic reconnection until resumed in Remotes.</source>
-        <translation>Authentifizierte Geräte. Browserdetails sind Eigenangaben; die Identität unterscheidet Kopplungen. Medienendpunkte sind zulässige ICE-Kandidaten; nicht alle müssen verwendet werden. — bedeutet, dass kein Messwert verfügbar ist. Pausieren trennt das Gerät und verhindert die automatische Wiederverbindung, bis es unter Remotes fortgesetzt wird.</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Device / identity</source>
-        <translation>Gerät / Identität</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Role / access</source>
-        <translation>Rolle / Zugriff</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Browser / extension / OS</source>
-        <translation>Browser / Erweiterung / Betriebssystem</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Signaling endpoint</source>
-        <translation>Signalisierungsendpunkt</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Media candidates</source>
-        <translation>Medienkandidaten</translation>
-    </message>
-    <message>
-        <location line="+0"/>
+        <location line="+18"/>
         <source>Status</source>
         <translation>Status</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Connected</source>
-        <translation>Verbunden</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>RTT ms</source>
-        <translation>RTT ms</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Lost packets</source>
-        <translation>Verlorene Pakete</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Traffic kbit/s / sent / received</source>
-        <translation>Datenverkehr kbit/s / gesendet / empfangen</translation>
     </message>
     <message>
         <location line="+6"/>
@@ -15459,85 +15285,308 @@ Hinweise:</translation>
         <translation>Ausgewähltes Gerät trennen und pausieren</translation>
     </message>
     <message>
-        <location line="+9"/>
-        <source> · Can edit</source>
-        <translation> · Darf bearbeiten</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source> · View / status</source>
-        <translation> · Ansicht / Status</translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+12"/>
         <source>%1 s</source>
         <translation>%1 s</translation>
     </message>
     <message>
-        <location line="-451"/>
+        <location line="-636"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation>Fernsteuerungen sind vorübergehend nicht verfügbar. PVT versucht es automatisch erneut.</translation>
     </message>
     <message>
-        <location line="+120"/>
+        <location line="+112"/>
+        <source>Remotes enabled</source>
+        <translation>Fernsteuerungen aktiviert</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Remotes disabled</source>
+        <translation>Fernsteuerungen deaktiviert</translation>
+    </message>
+    <message>
+        <location line="+11"/>
         <source>Waiting for a connection. PVT will reconnect automatically.</source>
         <translation>Warten auf eine Verbindung. PVT stellt die Verbindung automatisch wieder her.</translation>
     </message>
     <message>
-        <location line="+131"/>
+        <location line="+86"/>
+        <source>Remotes</source>
+        <translation>Fernsteuerungen</translation>
+    </message>
+    <message>
+        <location line="+39"/>
+        <source>Enable Remotes</source>
+        <translation>Fernsteuerungen aktivieren</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Pair once: save the pairing file from each Remote Display or Remote Control, then add all of those files here. Save PVT’s pairing file and open it in each remote. Paired remotes reconnect automatically while PVT is running.</source>
+        <translation>Einmal koppeln: Speichern Sie die Kopplungsdatei von jeder Remote-Anzeige bzw. Remote-Steuerung und fügen Sie alle diese Dateien hier hinzu. Speichern Sie die Kopplungsdatei von PVT und öffnen Sie sie in jeder Fernsteuerung. Gekoppelte Fernsteuerungen verbinden sich automatisch neu, solange PVT ausgeführt wird.</translation>
+    </message>
+    <message>
+        <location line="+6"/>
         <source>Paired devices</source>
         <translation>Gekoppelte Geräte</translation>
     </message>
     <message>
-        <location line="+41"/>
-        <source>Preparing pairing…</source>
-        <translation>Kopplung wird vorbereitet…</translation>
-    </message>
-    <message>
-        <location line="+29"/>
-        <location line="+23"/>
-        <source> · Paused</source>
-        <translation> · Pausiert</translation>
-    </message>
-    <message>
-        <location line="-10"/>
-        <source>Import remote</source>
-        <translation>Fernsteuerung importieren</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>PVT remote (*.pvtremote)</source>
-        <translation>PVT-Fernsteuerung (*.pvtremote)</translation>
+        <location line="+3"/>
+        <source>Remote allowed to control PVT</source>
+        <translation>Fernsteuerung, die PVT steuern darf</translation>
     </message>
     <message>
         <location line="+3"/>
-        <source>Cannot read pairing file (16 KiB maximum).</source>
-        <translation>Kopplungsdatei kann nicht gelesen werden (maximal 16 KiB).</translation>
-    </message>
-    <message>
-        <location line="+2"/>
-        <source>Invalid pairing file or remote limit reached.</source>
-        <translation>Ungültige Kopplungsdatei oder Fernsteuerungslimit erreicht.</translation>
+        <source>This computer and nearby networks</source>
+        <translation>Dieser Computer und nahe gelegene Netzwerke</translation>
     </message>
     <message>
         <location line="+1"/>
-        <source>Remove the existing identity before replacing its keys.</source>
-        <translation>Vor dem Ersetzen der Schlüssel die vorhandene Identität entfernen.</translation>
+        <source>Any private network</source>
+        <translation>Beliebiges privates Netzwerk</translation>
     </message>
     <message>
-        <location line="+28"/>
-        <source>Export host</source>
-        <translation>Host exportieren</translation>
+        <location line="+1"/>
+        <source>Anywhere</source>
+        <translation>Überall</translation>
     </message>
     <message>
-        <location line="+0"/>
-        <source>PVT host (*.pvthost)</source>
-        <translation>PVT-Host (*.pvthost)</translation>
+        <location line="+1"/>
+        <source>Only the addresses or ranges below</source>
+        <translation>Nur die unten aufgeführten Adressen oder Bereiche</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Allow Connections With Remotes On</source>
+        <translation>Verbindungen mit Fernsteuerungen zulassen in</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>For example: 192.168.1.20, 10.0.0.10-10.0.0.40</source>
+        <translation>Zum Beispiel: 192.168.1.20, 10.0.0.10-10.0.0.40</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Enter individual addresses or a start-to-end range, separated by spaces or commas. A network administrator can also enter a whole network address.</source>
+        <translation>Geben Sie einzelne Adressen oder einen Start-bis-Ende-Bereich durch Leerzeichen oder Kommas getrennt ein. Ein Netzwerkadministrator kann auch die Adresse eines gesamten Netzwerks eingeben.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Addresses or ranges</source>
+        <translation>Adressen oder Bereiche</translation>
     </message>
     <message>
         <location line="+6"/>
-        <source>Pairing file saved. Open it in Remote Display or Remote Control to finish setup.</source>
-        <translation>Kopplungsdatei gespeichert. Öffnen Sie sie in Remote Display oder Remote Control, um die Einrichtung abzuschließen.</translation>
+        <source>These remotes may be on another network. A firewall or router between the computers may need permission before they can connect. PVT can save the exact instructions for the person who manages the network, or a setup file for this computer that asks for administrator approval when it is run.</source>
+        <translation>Diese Fernsteuerungen befinden sich möglicherweise in einem anderen Netzwerk. Eine Firewall oder ein Router zwischen den Computern muss die Verbindung eventuell zulassen. PVT kann genaue Anweisungen für die Person speichern, die das Netzwerk verwaltet, oder eine Einrichtungsdatei für diesen Computer, die beim Ausführen um Administratorfreigabe bittet.</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Save firewall setup…</source>
+        <translation>Firewall-Einrichtung speichern…</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Save network-admin instructions…</source>
+        <translation>Anweisungen für Netzwerkadministration speichern…</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Connection details for support…</source>
+        <translation>Verbindungsdetails für den Support…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Reconnect selected remote</source>
+        <translation>Ausgewählte Fernsteuerung erneut verbinden</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Add Remote pairing files…</source>
+        <translation>Kopplungsdateien für Fernsteuerungen hinzufügen…</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Remove selected remote</source>
+        <translation>Ausgewählte Fernsteuerung entfernen</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Save PVT pairing file…</source>
+        <translation>PVT-Kopplungsdatei speichern…</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Run Remotes in the background</source>
+        <translation>Fernsteuerungen im Hintergrund ausführen</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Getting Remotes ready…</source>
+        <translation>Fernsteuerungen werden vorbereitet…</translation>
+    </message>
+    <message>
+        <location line="+28"/>
+        <location line="+258"/>
+        <source>Display</source>
+        <translation>Anzeige</translation>
+    </message>
+    <message>
+        <location line="-257"/>
+        <source> — </source>
+        <translation> — </translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source> — Paused</source>
+        <translation> — Pausiert</translation>
+    </message>
+    <message>
+        <location line="+68"/>
+        <source>Enter at least one address or range.</source>
+        <translation>Geben Sie mindestens eine Adresse oder einen Bereich ein.</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>Add Remote pairing files</source>
+        <translation>Kopplungsdateien für Fernsteuerungen hinzufügen</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PVT Remote pairing files (*.pvtremote)</source>
+        <translation>PVT-Kopplungsdateien für Fernsteuerungen (*.pvtremote)</translation>
+    </message>
+    <message>
+        <location line="+31"/>
+        <source>That pairing file could not be added, or it is already paired.</source>
+        <translation>Diese Kopplungsdatei konnte nicht hinzugefügt werden oder ist bereits gekoppelt.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>None of the selected pairing files could be added, or they are already paired.</source>
+        <translation>Keine der ausgewählten Kopplungsdateien konnte hinzugefügt werden oder sie sind bereits gekoppelt.</translation>
+    </message>
+    <message numerus="yes">
+        <location line="+9"/>
+        <source>Added %n Remote(s).</source>
+        <translation>
+            <numerusform>%n Fernsteuerung hinzugefügt.</numerusform>
+            <numerusform>%n Fernsteuerungen hinzugefügt.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Added %1 Remote(s); skipped %2 file(s) that were invalid, already paired, or beyond the 64-remote limit.</source>
+        <translation>%1 Fernsteuerung(en) hinzugefügt; %2 Datei(en) wurden übersprungen, weil sie ungültig oder bereits gekoppelt waren oder die Grenze von 64 Fernsteuerungen überschritten wurde.</translation>
+    </message>
+    <message>
+        <location line="+17"/>
+        <source>Save PVT pairing file</source>
+        <translation>PVT-Kopplungsdatei speichern</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PVT pairing file (*.pvthost)</source>
+        <translation>PVT-Kopplungsdatei (*.pvthost)</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>PVT pairing file saved. Open it in each Remote Display or Remote Control to finish setup.</source>
+        <translation>PVT-Kopplungsdatei gespeichert. Öffnen Sie sie in jeder Remote-Anzeige bzw. Remote-Steuerung, um die Einrichtung abzuschließen.</translation>
+    </message>
+    <message>
+        <location line="+15"/>
+        <source>Save network-admin instructions</source>
+        <translation>Anweisungen für Netzwerkadministration speichern</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Text file (*.txt)</source>
+        <translation>Textdatei (*.txt)</translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <source>Network instructions saved.</source>
+        <translation>Netzwerkanweisungen gespeichert.</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>Save firewall setup</source>
+        <translation>Firewall-Einrichtung speichern</translation>
+    </message>
+    <message>
+        <location line="+18"/>
+        <source>Firewall setup saved. Run it on the PVT computer; it will ask for administrator approval.</source>
+        <translation>Firewall-Einrichtung gespeichert. Führen Sie sie auf dem PVT-Computer aus; sie bittet um Administratorfreigabe.</translation>
+    </message>
+    <message>
+        <location line="+49"/>
+        <source>%1: %2</source>
+        <translation>%1: %2</translation>
+    </message>
+    <message>
+        <location line="+15"/>
+        <source>Remote connection details</source>
+        <translation>Verbindungsdetails der Fernsteuerung</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Use these details when troubleshooting with your network administrator or PVT support. A dash means no measurement is available. Pausing a remote disconnects it until you reconnect it from Remotes.</source>
+        <translation>Verwenden Sie diese Details bei der Fehlersuche mit Ihrer Netzwerkadministration oder dem PVT-Support. Ein Gedankenstrich bedeutet, dass keine Messung verfügbar ist. Wenn Sie eine Fernsteuerung pausieren, wird ihre Verbindung getrennt, bis Sie sie unter „Fernsteuerungen“ erneut verbinden.</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Remote</source>
+        <translation>Fernsteuerung</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>What it can do</source>
+        <translation>Berechtigung</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Browser and system</source>
+        <translation>Browser und System</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>First connection</source>
+        <translation>Erste Verbindung</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Live stream path</source>
+        <translation>Live-Stream-Pfad</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Time connected</source>
+        <translation>Verbindungsdauer</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Response time</source>
+        <translation>Reaktionszeit</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Interruptions</source>
+        <translation>Unterbrechungen</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Data use</source>
+        <translation>Datennutzung</translation>
+    </message>
+    <message>
+        <location line="+15"/>
+        <source>Control PVT</source>
+        <translation>PVT steuern</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>View PVT</source>
+        <translation>PVT anzeigen</translation>
     </message>
 </context>
 <context>

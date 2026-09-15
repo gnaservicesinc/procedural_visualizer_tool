@@ -597,6 +597,8 @@ if(PVT_BUILD_QT_GUI)
         gui/main_window_photo.cpp
         gui/remote_bridge.cpp
         gui/remote_bridge.h
+        gui/remote_firewall_support.cpp
+        gui/remote_firewall_support.h
         gui/main_window.h
         gui/live_midi.h
         ${PVT_GUI_MIDI_SOURCES}
@@ -1108,7 +1110,8 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME pvt_photos COMMAND pvt_photo_tests)
         add_executable(pvt_remote_bridge_tests
-            tests/remote_bridge_test.cpp gui/remote_bridge.cpp gui/remote_bridge.h)
+            tests/remote_bridge_test.cpp gui/remote_bridge.cpp gui/remote_bridge.h
+            gui/remote_firewall_support.cpp gui/remote_firewall_support.h)
         set_target_properties(pvt_remote_bridge_tests PROPERTIES AUTOMOC ON)
         target_compile_features(pvt_remote_bridge_tests PRIVATE cxx_std_17)
         target_include_directories(pvt_remote_bridge_tests PRIVATE gui)

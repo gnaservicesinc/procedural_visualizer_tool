@@ -11,7 +11,7 @@ connection starts until the desktop preference is enabled.
 - [Remote Control (PVT-RC)](https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde)
 - [Remote Display (PVT-RD)](https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda)
 
-PVT's Settings → Networking & Remotes includes both store actions. They open
+PVT's Settings → Remotes includes both store actions. They open
 the system browser; complete installation in Chrome. Google reviews extension
 updates separately from desktop releases. No Apple notarization is required
 for this Chrome integration.
@@ -24,7 +24,8 @@ installation and are never embedded in a shared store package. Exporting a
 ## Pair once
 
 1. In Remote Display or Remote Control, save the `.pvtremote` pairing file.
-2. In PVT, open **Settings → Networking & Remotes** and import that file.
+2. In PVT, open **Settings → Remotes** and add that file. You can select pairing
+   files from several remotes at once.
    Importing enables remotes. The first imported controller becomes active.
 3. Save PVT's `.pvthost` pairing file and open it in the remote, then choose
    **Save changes**.
@@ -33,7 +34,8 @@ The remote connects automatically. Keep PVT running and the remote tab open.
 Saved pairings and the selected PVT survive restarts; temporary interruptions
 retry automatically. Disconnect pauses automatic connections until Connect is
 selected again. Remove a paired device in the normal manager to revoke it.
-Network and runtime configuration are not part of setup.
+Connection details are handled automatically. If the remotes are on another
+network, PVT can save local-firewall setup and exact network-admin instructions.
 
 ## Extension workspace (0.2.0)
 
@@ -87,7 +89,7 @@ Structural changes, file paths, asset uploads, exports and arbitrary scripting
 are intentionally outside the scalar control protocol.
 
 The existing MIDI Control Map target picker includes **Active Control Remote**
-under Networking & Remotes. Slot 0 means None; subsequent slots follow the imported
+under Remotes. Slot 0 means None; subsequent slots follow the imported
 control-profile order. The picker displays the names in that order. Revisit mappings
 when removing profiles, since subsequent slots shift. A mapping can only select
 an existing control profile. It cannot import, remove, or invent identities.

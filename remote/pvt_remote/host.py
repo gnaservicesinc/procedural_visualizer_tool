@@ -96,7 +96,7 @@ class Host:
             save_private(identity_path, self.identity)
         self.cipher = Cipher(self.identity)
         self.config_path = self.directory / "remotes.json"
-        self.config = dict(remotes=[], active_control="", signaling_url="", port=self.automatic_ports()[0], lan=True, ice_servers=[], address_scope="subnet", custom_networks="", remote_port_min=1, remote_port_max=65535, paused_remotes=[])
+        self.config = dict(remotes=[], active_control="", signaling_url="", port=self.automatic_ports()[0], lan=True, ice_servers=[], address_scope="subnet", custom_networks="", paused_remotes=[])
         if self.config_path.exists():
             self.config.update(json.loads(self.config_path.read_text()))
         # Migrate previous opt-in LAN settings to automatic reachability.
@@ -134,6 +134,11 @@ class Host:
         sys.stdout.flush()
 
     def validate_config(self, config):
+        # Older releases exposed a browser-source port filter. Browser and media
+        # ports are selected automatically, so retaining an invisible old limit
+        # would make otherwise allowed remotes fail unpredictably.
+        config.pop("remote_port_min", None)
+        config.pop("remote_port_max", None)
         label = config.get("label", "PVT host")
         if not isinstance(label, str) or not 1 <= len(label.strip()) <= 120:
             raise ValueError("Host name must contain 1–120 characters")
@@ -163,12 +168,13 @@ class Host:
             raise ValueError("Choose an allowed address range")
         networks = config.get("custom_networks", "")
         if not isinstance(networks, str) or len(networks) > 4096:
-            raise ValueError("Custom networks must be at most 4096 characters")
-        self.parse_networks(networks)
-        if config["address_scope"] == "custom" and not self.parse_networks(networks):
-            raise ValueError("Enter at least one IP, subnet, or start-end range")
-        if any(type(config.get(k)) is not int for k in ("remote_port_min", "remote_port_max")) or not 1 <= config["remote_port_min"] <= config["remote_port_max"] <= 65535:
-            raise ValueError("Remote ports must be an increasing range from 1 to 65535")
+            raise ValueError("The address list is too long")
+        try:
+            parsed_networks = self.parse_networks(networks)
+        except (ValueError, TypeError) as error:
+            raise ValueError("One of the allowed addresses or ranges is not valid") from error
+        if config["address_scope"] == "custom" and not parsed_networks:
+            raise ValueError("Enter at least one address or start-to-end range")
         paused = config.get("paused_remotes", [])
         if not isinstance(paused, list) or len(paused) > MAX_PROFILES or any(not isinstance(x, str) for x in paused):
             raise ValueError("Invalid paused devices")
@@ -186,14 +192,12 @@ class Host:
                 result.append(ipaddress.ip_network(value, strict=False))
         return result
 
-    def address_allowed(self, address, port=None):
+    def address_allowed(self, address):
         try:
             ip = ipaddress.ip_address(address.split("%", 1)[0])
             if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
                 ip = ip.ipv4_mapped
             if ip.is_unspecified or ip.is_multicast:
-                return False
-            if port is not None and not self.config["remote_port_min"] <= port <= self.config["remote_port_max"]:
                 return False
             scope = self.config["address_scope"]
             if scope == "any":
@@ -239,13 +243,13 @@ class Host:
                 # peer. Never resolve an arbitrary name from untrusted SDP.
                 if address.endswith(".local") and source:
                     address = source
-                if self.address_allowed(address, candidate.port):
+                if self.address_allowed(address):
                     candidate.ip = address
                     candidates.append(candidate)
             media.ice_candidates = candidates
             media.ice_candidates_complete = True
         if not any(m.ice_candidates for m in description.media):
-            raise ValueError("No media endpoint is inside the allowed IP and port ranges")
+            raise ValueError("The remote is outside the allowed address ranges")
         return str(description)
 
     def guard_ice(self, pc):
@@ -259,7 +263,7 @@ class Host:
             connection = transport._connection
             original_request = connection.request_received
             def request(message, addr, protocol, raw, original=original_request):
-                if self.address_allowed(addr[0], addr[1]):
+                if self.address_allowed(addr[0]):
                     original(message, addr, protocol, raw)
             connection.request_received = request
             original_data = connection.data_received
@@ -276,7 +280,7 @@ class Host:
                         continue
                     receive = protocol.datagram_received
                     def received(data, addr, original=receive):
-                        if self.address_allowed(addr[0], addr[1]):
+                        if self.address_allowed(addr[0]):
                             original(data, addr)
                     protocol.datagram_received = received
                     protocol.pvt_filtered = True
@@ -464,7 +468,7 @@ class Host:
         self.image = None
 
     async def connection(self, ws):
-        if not self.address_allowed(ws.remote_address[0], ws.remote_address[1]):
+        if not self.address_allowed(ws.remote_address[0]):
             await ws.close(1008, "Endpoint outside allowed ranges")
             return
         if len(self.sockets) >= 32:
@@ -682,7 +686,7 @@ class Host:
                 return True
             wanted = message.get("enabled", self.enabled)
             restart = any(candidate.get(key) != self.config.get(key)
-                          for key in ("port", "lan", "signaling_url", "ice_servers", "address_scope", "custom_networks", "remote_port_min", "remote_port_max"))
+                          for key in ("port", "lan", "signaling_url", "ice_servers", "address_scope", "custom_networks"))
             previous = {p["id"]: p for p in self.config["remotes"]}
             self.config = candidate  # Permission checks see the handoff immediately.
             revoked = {key for key, old in previous.items() if self.peer(key) != old} | set(candidate["paused_remotes"])

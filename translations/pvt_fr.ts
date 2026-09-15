@@ -904,12 +904,7 @@
         <translation>Télécommande active : %1</translation>
     </message>
     <message>
-        <location line="+2"/>
-        <source>Networking &amp; Remotes</source>
-        <translation>Réseau et télécommandes</translation>
-    </message>
-    <message>
-        <location line="+332"/>
+        <location line="+334"/>
         <location line="+2505"/>
         <source>STANDBY</source>
         <translation>EN ATTENTE</translation>
@@ -2384,7 +2379,12 @@
         <translation>COMMANDES LIVE</translation>
     </message>
     <message>
-        <location line="+2"/>
+        <location line="-322"/>
+        <source>Remotes</source>
+        <translation>Télécommandes</translation>
+    </message>
+    <message>
+        <location line="+324"/>
         <source>Choose audio sources, route your mix, and start video output</source>
         <translation>Choisissez les sources audio, routez votre mix et démarrez la sortie vidéo</translation>
     </message>
@@ -6992,7 +6992,13 @@ Versions enregistrées : %3. Les versions sont immuables ; un rétablissement cr
         <translation>Configurer les préférences communes à tous les projets et conservées au redémarrage.</translation>
     </message>
     <message>
-        <location line="+14"/>
+        <location line="+4"/>
+        <location filename="../gui/main_window_remote.cpp" line="+132"/>
+        <source>Remotes…</source>
+        <translation>Télécommandes…</translation>
+    </message>
+    <message>
+        <location line="+10"/>
         <source>Layers &amp;&amp; Groups Panel</source>
         <translation>Panneau Calques &amp;&amp; groupes</translation>
     </message>
@@ -8382,13 +8388,7 @@ UUID du projet : %2
         <translation>Afficher ou masquer les commandes Live. Ouvrir ce panneau ne démarre pas la sortie et ne modifie pas la lecture.</translation>
     </message>
     <message>
-        <location line="+22"/>
-        <location filename="../gui/main_window_remote.cpp" line="+132"/>
-        <source>Networking &amp; Remotes…</source>
-        <translation>Réseau et télécommandes…</translation>
-    </message>
-    <message>
-        <location line="+2519"/>
+        <location line="+2541"/>
         <source>The selected source project no longer contains that layer.</source>
         <translation>Le projet source sélectionné ne contient plus ce calque.</translation>
     </message>
@@ -12728,8 +12728,8 @@ Exécutez-le directement pour la sortie relative par défaut, ou passez un fichi
     </message>
     <message>
         <location filename="../gui/main_window_remote.cpp" line="-105"/>
-        <source>Live remote connections</source>
-        <translation>Connexions distantes en direct</translation>
+        <source>Connected Remotes</source>
+        <translation>Télécommandes connectées</translation>
     </message>
     <message>
         <location line="+53"/>
@@ -15223,7 +15223,7 @@ Notes :</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+125"/>
+        <location filename="../gui/remote_bridge.cpp" line="+129"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Le processus distant a dépassé la limite des messages.</translation>
     </message>
@@ -15233,28 +15233,13 @@ Notes :</translation>
         <translation>Impossible d’enregistrer les réglages distants. Vérifiez le fichier d’association et les plages d’adresses.</translation>
     </message>
     <message>
-        <location line="+1"/>
-        <source>Networking &amp; Remotes enabled</source>
-        <translation>Réseau et télécommandes activés</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Networking &amp; Remotes disabled</source>
-        <translation>Réseau et télécommandes désactivés</translation>
-    </message>
-    <message>
-        <location line="+67"/>
-        <location line="+141"/>
+        <location line="+68"/>
+        <location line="+156"/>
         <source>None</source>
         <translation>Aucune</translation>
     </message>
     <message>
-        <location line="-111"/>
-        <source>Networking &amp; Remotes</source>
-        <translation>Réseau et télécommandes</translation>
-    </message>
-    <message>
-        <location line="+11"/>
+        <location line="-109"/>
         <source>Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates.</source>
         <translation>Installez les extensions depuis le Chrome Web Store, puis associez-les ci-dessous. Chrome gère leur installation et les mises à jour approuvées.</translation>
     </message>
@@ -15274,119 +15259,15 @@ Notes :</translation>
         <translation>Impossible d’ouvrir le navigateur. Ouvrez cette adresse dans Chrome : %1</translation>
     </message>
     <message>
-        <location line="+9"/>
-        <source>Enable Networking &amp; Remotes</source>
-        <translation>Activer le réseau et les télécommandes</translation>
-    </message>
-    <message>
-        <location line="+2"/>
+        <location line="+11"/>
         <source>Close window to system tray / menu bar</source>
         <translation>Fermer la fenêtre dans la zone de notification / barre de menus</translation>
     </message>
     <message>
-        <location line="+4"/>
-        <source>Pair once: save the pairing file from Remote Display or Remote Control and open it here. Then save PVT’s pairing file and open it in the remote’s Hosts &amp; settings. Save changes there if prompted. Paired devices reconnect automatically while PVT is running.</source>
-        <translation>Associez les appareils une seule fois : enregistrez le fichier d’association depuis Remote Display ou Remote Control, puis ouvrez-le ici. Enregistrez ensuite le fichier d’association de PVT et ouvrez-le dans Hôtes et paramètres de l’extension. Enregistrez les modifications si cela vous est demandé. Les appareils associés se reconnectent automatiquement tant que PVT est en cours d’exécution.</translation>
-    </message>
-    <message>
-        <location line="+9"/>
-        <source>Active Control Remote</source>
-        <translation>Télécommande active</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>My subnets and this computer</source>
-        <translation>Mes sous-réseaux et cet ordinateur</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Private networks (IPv4 and IPv6)</source>
-        <translation>Réseaux privés (IPv4 et IPv6)</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Any IP address</source>
-        <translation>Toute adresse IP</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Custom IP addresses / ranges</source>
-        <translation>Adresses IP / plages personnalisées</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Allow connections from</source>
-        <translation>Autoriser les connexions depuis</translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Separate IPs, CIDR subnets, or start-end ranges with spaces or commas. Private networks includes RFC 1918, IPv6 unique-local (fc00::/7), link-local (fe80::/10), and loopback. Relay connections require Any IP.</source>
-        <translation>Séparez les IP, sous-réseaux CIDR ou plages début-fin par des espaces ou des virgules. Les réseaux privés incluent RFC 1918, IPv6 local unique (fc00::/7), lien local (fe80::/10) et la boucle locale. Les connexions relayées exigent Toute adresse IP.</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Custom ranges</source>
-        <translation>Plages personnalisées</translation>
-    </message>
-    <message>
-        <location line="+6"/>
-        <source>through</source>
-        <translation>à</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Remote endpoint ports</source>
-        <translation>Ports des points de terminaison distants</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Applies to remote signaling and media source ports. Browsers normally choose these automatically; keep the full range unless your network requires a restriction.</source>
-        <translation>S’applique aux ports source de signalisation et des médias distants. Les navigateurs les choisissent normalement automatiquement ; conservez la plage complète sauf restriction imposée par votre réseau.</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Pop out live connection tracker…</source>
-        <translation>Détacher le suivi des connexions en direct…</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Resume selected device</source>
-        <translation>Réactiver l’appareil sélectionné</translation>
-    </message>
-    <message>
-        <location line="+6"/>
-        <source>Import .pvtremote…</source>
-        <translation>Importer un fichier .pvtremote…</translation>
-    </message>
-    <message>
-        <location line="+1"/>
-        <source>Remove remote</source>
-        <translation>Supprimer la télécommande</translation>
-    </message>
-    <message>
-        <location line="+2"/>
-        <source>Export .pvthost…</source>
-        <translation>Exporter un fichier .pvthost…</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Toggle background mode</source>
-        <translation>Basculer le mode arrière-plan</translation>
-    </message>
-    <message>
-        <location line="+122"/>
-        <source>%1 %2 [%3]</source>
-        <translation>%1 %2 [%3]</translation>
-    </message>
-    <message>
-        <location line="+0"/>
+        <location line="+89"/>
+        <location line="+258"/>
         <source>Control</source>
         <translation>Contrôle</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>View</source>
-        <translation>Affichage</translation>
     </message>
     <message>
         <location line="+3"/>
@@ -15394,64 +15275,9 @@ Notes :</translation>
         <translation> ● Connexions distantes : %1</translation>
     </message>
     <message>
-        <location line="+12"/>
-        <source>Live remote connections</source>
-        <translation>Connexions distantes en direct</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Authenticated devices. Browser details are self-reported; the identity distinguishes pairings. Media endpoints are allowed ICE candidates, not a claim that every candidate is in use. — means no measurement is available. Pause disconnects a device and prevents automatic reconnection until resumed in Remotes.</source>
-        <translation>Appareils authentifiés. Les détails du navigateur sont déclaratifs ; l’identité distingue les associations. Les points de terminaison médias sont des candidats ICE autorisés, pas nécessairement tous utilisés. — indique une mesure indisponible. La pause déconnecte l’appareil et empêche sa reconnexion automatique jusqu’à sa réactivation dans Connexions distantes.</translation>
-    </message>
-    <message>
-        <location line="+3"/>
-        <source>Device / identity</source>
-        <translation>Appareil / identité</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Role / access</source>
-        <translation>Rôle / accès</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Browser / extension / OS</source>
-        <translation>Navigateur / extension / système</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Signaling endpoint</source>
-        <translation>Point de signalisation</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Media candidates</source>
-        <translation>Candidats médias</translation>
-    </message>
-    <message>
-        <location line="+0"/>
+        <location line="+18"/>
         <source>Status</source>
         <translation>État</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Connected</source>
-        <translation>Connecté</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>RTT ms</source>
-        <translation>RTT ms</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Lost packets</source>
-        <translation>Paquets perdus</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>Traffic kbit/s / sent / received</source>
-        <translation>Trafic kbit/s / envoyé / reçu</translation>
     </message>
     <message>
         <location line="+6"/>
@@ -15459,85 +15285,308 @@ Notes :</translation>
         <translation>Déconnecter et suspendre l’appareil sélectionné</translation>
     </message>
     <message>
-        <location line="+9"/>
-        <source> · Can edit</source>
-        <translation> · Peut modifier</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source> · View / status</source>
-        <translation> · Affichage / état</translation>
-    </message>
-    <message>
-        <location line="+3"/>
+        <location line="+12"/>
         <source>%1 s</source>
         <translation>%1 s</translation>
     </message>
     <message>
-        <location line="-451"/>
+        <location line="-636"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation>Les télécommandes sont temporairement indisponibles. PVT réessaiera automatiquement.</translation>
     </message>
     <message>
-        <location line="+120"/>
+        <location line="+112"/>
+        <source>Remotes enabled</source>
+        <translation>Télécommandes activées</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Remotes disabled</source>
+        <translation>Télécommandes désactivées</translation>
+    </message>
+    <message>
+        <location line="+11"/>
         <source>Waiting for a connection. PVT will reconnect automatically.</source>
         <translation>En attente d’une connexion. PVT se reconnectera automatiquement.</translation>
     </message>
     <message>
-        <location line="+131"/>
+        <location line="+86"/>
+        <source>Remotes</source>
+        <translation>Télécommandes</translation>
+    </message>
+    <message>
+        <location line="+39"/>
+        <source>Enable Remotes</source>
+        <translation>Activer les télécommandes</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Pair once: save the pairing file from each Remote Display or Remote Control, then add all of those files here. Save PVT’s pairing file and open it in each remote. Paired remotes reconnect automatically while PVT is running.</source>
+        <translation>Associez-les une seule fois : enregistrez le fichier d’association de chaque Remote Display ou Remote Control, puis ajoutez tous ces fichiers ici. Enregistrez le fichier d’association de PVT et ouvrez-le dans chaque télécommande. Les télécommandes associées se reconnectent automatiquement tant que PVT est en cours d’exécution.</translation>
+    </message>
+    <message>
+        <location line="+6"/>
         <source>Paired devices</source>
         <translation>Appareils associés</translation>
     </message>
     <message>
-        <location line="+41"/>
-        <source>Preparing pairing…</source>
-        <translation>Préparation de l’association…</translation>
-    </message>
-    <message>
-        <location line="+29"/>
-        <location line="+23"/>
-        <source> · Paused</source>
-        <translation> · En pause</translation>
-    </message>
-    <message>
-        <location line="-10"/>
-        <source>Import remote</source>
-        <translation>Importer une télécommande</translation>
-    </message>
-    <message>
-        <location line="+0"/>
-        <source>PVT remote (*.pvtremote)</source>
-        <translation>Télécommande PVT (*.pvtremote)</translation>
+        <location line="+3"/>
+        <source>Remote allowed to control PVT</source>
+        <translation>Télécommande autorisée à contrôler PVT</translation>
     </message>
     <message>
         <location line="+3"/>
-        <source>Cannot read pairing file (16 KiB maximum).</source>
-        <translation>Impossible de lire le fichier d’association (16 Kio maximum).</translation>
-    </message>
-    <message>
-        <location line="+2"/>
-        <source>Invalid pairing file or remote limit reached.</source>
-        <translation>Fichier d’association non valide ou limite des télécommandes atteinte.</translation>
+        <source>This computer and nearby networks</source>
+        <translation>Cet ordinateur et les réseaux proches</translation>
     </message>
     <message>
         <location line="+1"/>
-        <source>Remove the existing identity before replacing its keys.</source>
-        <translation>Supprimez l’identité existante avant de remplacer ses clés.</translation>
+        <source>Any private network</source>
+        <translation>N’importe quel réseau privé</translation>
     </message>
     <message>
-        <location line="+28"/>
-        <source>Export host</source>
-        <translation>Exporter l’hôte</translation>
+        <location line="+1"/>
+        <source>Anywhere</source>
+        <translation>N’importe où</translation>
     </message>
     <message>
-        <location line="+0"/>
-        <source>PVT host (*.pvthost)</source>
-        <translation>Hôte PVT (*.pvthost)</translation>
+        <location line="+1"/>
+        <source>Only the addresses or ranges below</source>
+        <translation>Uniquement les adresses ou plages ci-dessous</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Allow Connections With Remotes On</source>
+        <translation>Autoriser les connexions avec les télécommandes sur</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>For example: 192.168.1.20, 10.0.0.10-10.0.0.40</source>
+        <translation>Par exemple : 192.168.1.20, 10.0.0.10-10.0.0.40</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Enter individual addresses or a start-to-end range, separated by spaces or commas. A network administrator can also enter a whole network address.</source>
+        <translation>Saisissez des adresses individuelles ou une plage de début à fin, séparées par des espaces ou des virgules. Un administrateur réseau peut également saisir l’adresse d’un réseau entier.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Addresses or ranges</source>
+        <translation>Adresses ou plages</translation>
     </message>
     <message>
         <location line="+6"/>
-        <source>Pairing file saved. Open it in Remote Display or Remote Control to finish setup.</source>
-        <translation>Fichier d’association enregistré. Ouvrez-le dans Remote Display ou Remote Control pour terminer la configuration.</translation>
+        <source>These remotes may be on another network. A firewall or router between the computers may need permission before they can connect. PVT can save the exact instructions for the person who manages the network, or a setup file for this computer that asks for administrator approval when it is run.</source>
+        <translation>Ces télécommandes peuvent se trouver sur un autre réseau. Un pare-feu ou un routeur entre les ordinateurs peut devoir autoriser leur connexion. PVT peut enregistrer des instructions précises pour la personne qui gère le réseau, ou un fichier de configuration pour cet ordinateur qui demande l’autorisation d’un administrateur lors de son exécution.</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Save firewall setup…</source>
+        <translation>Enregistrer la configuration du pare-feu…</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Save network-admin instructions…</source>
+        <translation>Enregistrer les instructions pour l’administrateur réseau…</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Connection details for support…</source>
+        <translation>Détails de connexion pour l’assistance…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Reconnect selected remote</source>
+        <translation>Reconnecter la télécommande sélectionnée</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Add Remote pairing files…</source>
+        <translation>Ajouter des fichiers d’association de télécommandes…</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Remove selected remote</source>
+        <translation>Supprimer la télécommande sélectionnée</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Save PVT pairing file…</source>
+        <translation>Enregistrer le fichier d’association PVT…</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Run Remotes in the background</source>
+        <translation>Exécuter les télécommandes en arrière-plan</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Getting Remotes ready…</source>
+        <translation>Préparation des télécommandes…</translation>
+    </message>
+    <message>
+        <location line="+28"/>
+        <location line="+258"/>
+        <source>Display</source>
+        <translation>Affichage</translation>
+    </message>
+    <message>
+        <location line="-257"/>
+        <source> — </source>
+        <translation> — </translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source> — Paused</source>
+        <translation> — En pause</translation>
+    </message>
+    <message>
+        <location line="+68"/>
+        <source>Enter at least one address or range.</source>
+        <translation>Saisissez au moins une adresse ou une plage.</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>Add Remote pairing files</source>
+        <translation>Ajouter des fichiers d’association de télécommandes</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PVT Remote pairing files (*.pvtremote)</source>
+        <translation>Fichiers d’association de télécommandes PVT (*.pvtremote)</translation>
+    </message>
+    <message>
+        <location line="+31"/>
+        <source>That pairing file could not be added, or it is already paired.</source>
+        <translation>Ce fichier d’association n’a pas pu être ajouté ou est déjà associé.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>None of the selected pairing files could be added, or they are already paired.</source>
+        <translation>Aucun des fichiers d’association sélectionnés n’a pu être ajouté ou ils sont déjà associés.</translation>
+    </message>
+    <message numerus="yes">
+        <location line="+9"/>
+        <source>Added %n Remote(s).</source>
+        <translation>
+            <numerusform>%n télécommande ajoutée.</numerusform>
+            <numerusform>%n télécommandes ajoutées.</numerusform>
+        </translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Added %1 Remote(s); skipped %2 file(s) that were invalid, already paired, or beyond the 64-remote limit.</source>
+        <translation>%1 télécommande(s) ajoutée(s) ; %2 fichier(s) ignoré(s), car ils étaient non valides, déjà associés ou dépassaient la limite de 64 télécommandes.</translation>
+    </message>
+    <message>
+        <location line="+17"/>
+        <source>Save PVT pairing file</source>
+        <translation>Enregistrer le fichier d’association PVT</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>PVT pairing file (*.pvthost)</source>
+        <translation>Fichier d’association PVT (*.pvthost)</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>PVT pairing file saved. Open it in each Remote Display or Remote Control to finish setup.</source>
+        <translation>Fichier d’association PVT enregistré. Ouvrez-le dans chaque Remote Display ou Remote Control pour terminer la configuration.</translation>
+    </message>
+    <message>
+        <location line="+15"/>
+        <source>Save network-admin instructions</source>
+        <translation>Enregistrer les instructions pour l’administrateur réseau</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Text file (*.txt)</source>
+        <translation>Fichier texte (*.txt)</translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <source>Network instructions saved.</source>
+        <translation>Instructions réseau enregistrées.</translation>
+    </message>
+    <message>
+        <location line="+14"/>
+        <source>Save firewall setup</source>
+        <translation>Enregistrer la configuration du pare-feu</translation>
+    </message>
+    <message>
+        <location line="+18"/>
+        <source>Firewall setup saved. Run it on the PVT computer; it will ask for administrator approval.</source>
+        <translation>Configuration du pare-feu enregistrée. Exécutez-la sur l’ordinateur PVT ; elle demandera l’autorisation d’un administrateur.</translation>
+    </message>
+    <message>
+        <location line="+49"/>
+        <source>%1: %2</source>
+        <translation>%1 : %2</translation>
+    </message>
+    <message>
+        <location line="+15"/>
+        <source>Remote connection details</source>
+        <translation>Détails de connexion de la télécommande</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Use these details when troubleshooting with your network administrator or PVT support. A dash means no measurement is available. Pausing a remote disconnects it until you reconnect it from Remotes.</source>
+        <translation>Utilisez ces détails lors du dépannage avec votre administrateur réseau ou l’assistance PVT. Un tiret signifie qu’aucune mesure n’est disponible. La mise en pause d’une télécommande la déconnecte jusqu’à ce que vous la reconnectiez depuis « Télécommandes ».</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Remote</source>
+        <translation>Télécommande</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>What it can do</source>
+        <translation>Ce qu’elle peut faire</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Browser and system</source>
+        <translation>Navigateur et système</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>First connection</source>
+        <translation>Première connexion</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Live stream path</source>
+        <translation>Chemin du flux en direct</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Time connected</source>
+        <translation>Durée de connexion</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Response time</source>
+        <translation>Temps de réponse</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Interruptions</source>
+        <translation>Interruptions</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Data use</source>
+        <translation>Utilisation des données</translation>
+    </message>
+    <message>
+        <location line="+15"/>
+        <source>Control PVT</source>
+        <translation>Contrôler PVT</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>View PVT</source>
+        <translation>Afficher PVT</translation>
     </message>
 </context>
 <context>

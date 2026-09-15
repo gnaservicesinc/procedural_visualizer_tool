@@ -517,7 +517,7 @@ struct LiveWorkspace::Impl {
         targets.push_back({QStringLiteral("runtime.active_control_remote"),
             QCoreApplication::translate("LiveWorkspace", "Active Control Remote: %1")
                 .arg(remote_names.join(QStringLiteral(" / "))),
-            QCoreApplication::translate("LiveWorkspace", "Networking & Remotes"),
+            QCoreApplication::translate("LiveWorkspace", "Remotes"),
             LiveTargetKind::Integer, 0.0,
             static_cast<double>(remote_names.size() - 1), static_cast<double>(remote_control), [](pvt::ProjectConfig&, double) { return false; }});
     }

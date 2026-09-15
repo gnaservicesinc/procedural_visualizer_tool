@@ -1,14 +1,29 @@
 # Procedural Visualizer implementation ledger
 
-Last updated: 2026-09-13
+Last updated: 2026-09-15
 
 This is the hand-off point for humans and future coding agents. This repository
 is the canonical working tree. Any loose C files retained outside it are legacy
 snapshots, not inputs to the current build.
 
+## Remote setup quality-of-life follow-up
+
+Settings → Remotes accepts several `.pvtremote` pairing files in one selection.
+The panel uses artist-facing labels, hides address-entry controls until the
+custom choice is selected, and no longer exposes or preserves the obsolete
+browser-source port restriction. Changes take effect as they are entered; the
+single outer Cancel action restores the complete opening Remote state.
+
+For remotes on another routed network, the same panel shows plain-language
+firewall help and can save either a network-administrator handoff containing
+the exact identity-derived PVT connection ports and live-stream policy, or a
+local setup file for Windows, macOS, or Ubuntu that requests administrator
+approval when run. PVT still owns address admission, pairing, automatic port
+selection, persistence, and reconnect behavior.
+
 ## 19.1.9 Chrome Web Store integration
 
-Networking & Remotes now opens the published Chrome listings for PVT-RC and
+Remotes now opens the published Chrome listings for PVT-RC and
 PVT-RD through the existing manager. Paired-device setup continues to use the
 same public profiles and private per-installation identities. No Apple
 notarization requirement or browser trust bypass is introduced.

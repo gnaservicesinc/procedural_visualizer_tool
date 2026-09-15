@@ -24,7 +24,7 @@
 void MainWindow::initializeRemotes() {
     remote_bridge_ = new RemoteBridge(this);
     connect(remote_bridge_, &RemoteBridge::connectionsChanged, this, &MainWindow::updateWindowTitle);
-    auto* connections = new QPushButton(tr("Live remote connections"), this);
+    auto* connections = new QPushButton(tr("Connected Remotes"), this);
     connections->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
     connections->hide(); statusBar()->addPermanentWidget(connections);
     connect(connections, &QPushButton::clicked, this, [this] { remote_bridge_->showTracker(this); });
@@ -129,7 +129,7 @@ bool MainWindow::setRemoteBackground(bool background) {
         remote_tray_->setToolTip(tr("Procedural Visualizer Tool"));
         auto* menu = new QMenu(this);
         menu->addAction(tr("Show PVT"), this, [this] { setRemoteBackground(false); });
-        menu->addAction(tr("Networking & Remotes…"), this, [this] { setRemoteBackground(false); showApplicationSettings(true); });
+        menu->addAction(tr("Remotes…"), this, [this] { setRemoteBackground(false); showApplicationSettings(true); });
         menu->addAction(tr("Quit PVT…"), this, [this] {
             setRemoteBackground(false);
             remote_quit_ = true;
@@ -207,20 +207,18 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
     remote_bridge_->start();
     if (!spin([&] { return ready; })) return fail(QStringLiteral("Remote worker did not start."));
     if (remote_bridge_->enabled()) return fail(QStringLiteral("Networking started without opt-in."));
-    // Apply while a new worker is still starting, with the existing pairing
-    // draft retained from the previous process.
+    // Change the normal setting while a worker is starting. The saved pairing
+    // state from the previous process must remain intact.
     remote_bridge_->stop();
     bool manager_applied = false;
     QTimer::singleShot(0, &guard, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
         auto* enable = dialog->findChild<QCheckBox*>(QStringLiteral("remoteNetworkingEnabled"));
-        auto* buttons = dialog->findChild<QDialogButtonBox*>(QStringLiteral("remoteManagerButtons"));
-        if (!enable || !buttons) { dialog->reject(); return; }
+        if (!enable) { dialog->reject(); return; }
         enable->setChecked(true);
-        buttons->button(QDialogButtonBox::Apply)->click();
-        manager_applied = true;
-        dialog->reject();
+        manager_applied = spin([&] { return remote_bridge_->enabled(); });
+        dialog->accept();
     });
     remote_bridge_->showManager(this);
     if (!manager_applied || !spin([&] { return remote_bridge_->enabled(); }))
@@ -290,14 +288,13 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         if (!dialog) return;
         auto* list = dialog->findChild<QListWidget*>();
         auto* enable = dialog->findChild<QCheckBox*>(QStringLiteral("remoteNetworkingEnabled"));
-        auto* buttons = dialog->findChild<QDialogButtonBox*>(QStringLiteral("remoteManagerButtons"));
         QPushButton *remove = nullptr, *import = nullptr, *export_host = nullptr;
         for (auto* button : dialog->findChildren<QPushButton*>()) {
-            if (button->text().contains(".pvtremote")) import = button;
-            else if (button->text().contains(".pvthost")) export_host = button;
+            if (button->objectName() == "remoteImport") import = button;
+            else if (button->objectName() == "remoteExportHost") export_host = button;
             else if (button->objectName() == "remoteRemove") remove = button;
         }
-        if (!list || !enable || !buttons || !remove || !import || !export_host) { dialog->reject(); return; }
+        if (!list || !enable || !remove || !import || !export_host) { dialog->reject(); return; }
         pairing_stage = QStringLiteral("remove display");
         list->setCurrentRow(1);
         remove->click();
@@ -305,7 +302,6 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         if (remote_bridge_->authorized(display, "background")) { dialog->reject(); return; }
         pairing_stage = QStringLiteral("disable networking");
         enable->setChecked(false);
-        buttons->button(QDialogButtonBox::Apply)->click();
         if (!spin([&] { return import->isEnabled() && !remote_bridge_->enabled(); })) { dialog->reject(); return; }
         const auto choose = [&](const QString& path) {
             // Cocoa may process events while constructing the file dialog,

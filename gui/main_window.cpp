@@ -8083,7 +8083,7 @@ void MainWindow::createToolbar() {
     settings_action_->setIcon(
         style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     settings_menu->addAction(settings_action_);
-    auto* remotes_action = settings_menu->addAction(tr("Networking & Remotes…"));
+    auto* remotes_action = settings_menu->addAction(tr("Remotes…"));
     remotes_action->setObjectName(QStringLiteral("remoteManagerAction"));
     connect(remotes_action, &QAction::triggered, this, [this] {
         showApplicationSettings(true);

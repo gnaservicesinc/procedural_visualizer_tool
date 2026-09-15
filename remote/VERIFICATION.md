@@ -1,12 +1,16 @@
-# Remote setup repair verification — 2026-09-12
+# Remote setup repair verification — 2026-09-15
 
-Supported scope: PVT and its remotes share a network, or run on the same computer
-without an external network. A hosted connection service, external NAT/firewall
-certification and independent cryptographic review are not release requirements.
+Supported scope: PVT and its remotes run on the same computer, share a nearby
+network, or use an already-routed managed network whose administrator applies
+the generated rules. A hosted public-internet connection service, NAT traversal,
+independent firewall certification and independent cryptographic review are not
+release requirements.
 
 | Requirement | Implemented behavior | Evidence / remaining acceptance |
 | --- | --- | --- |
-| Pair once without technical prompts | Existing mutual pairing files; automatic enable and first-controller selection; no interpreter, hostname, port, signaling, LAN permission or ICE fields | Native manager test asserts no editable text/network fields; actual file dialogs import/export/remove; generated manager screenshot inspected |
+| Pair once without technical prompts | Existing mutual pairing files; multi-file desktop import; automatic enable and first-controller selection; no interpreter, hostname, connection-port, signaling or media-server fields | Native manager test exercises a two-file selection and asserts the technical port controls are absent; actual file dialogs import/export/remove |
+| Keep settings predictable | Remote choices apply as they are entered; one outer OK/Cancel button row; Cancel restores the opening worker configuration, enabled state, background state and close behavior | Native manager test changes live settings, observes the worker update, cancels, and verifies rollback; no nested Apply button is present |
+| Connect across managed networks | Plain-language help appears only beyond nearby networks; custom ranges appear only for the custom choice; generated administrator handoff lists actual stable PVT ports and routed TCP/UDP needs; local setup files cover Windows, macOS and Ubuntu | Pure generator checks cover all three systems and stable identity-derived ports; manager visibility checks cover nearby/custom/private choices |
 | No separate runtime installation | Frozen shared worker alongside PVT; no production PATH/interpreter fallback; desktop packaging requires it | macOS worker self-test passes with an empty environment and unusable PATH; native GUI integration uses bundled executable; release package results are recorded below |
 | Keep normal project authoring | Existing Live targets, validation, document edits, undo/redo and persistence | Native remote smoke passes controller/display permissions, stale revisions, edit/undo/redo/save/load and hidden rendering |
 | Remember pairing and recover | Saved selection, automatic connect on open/import, bounded retry, worker restart, explicit persistent Disconnect | Real Chromium audio/video test covers tab reload, desktop disable/enable recovery, and pause/reload/resume; native subprocess crash test passes |
@@ -25,8 +29,9 @@ link dependency is absent from the current macOS SDK.
 
 Earlier local checks:
 
-- 19 protocol, host and relay unit tests pass, including legacy pairing migration,
-  failed-import rollback, stable discovery updates and automatic port fallback.
+- Protocol, host and relay unit tests cover legacy pairing migration, removal of
+  obsolete remote-source port limits, failed-import rollback, stable discovery
+  updates and automatic connection-port fallback.
 - Both extension repositories pass all 6 protocol/storage tests and generate
   Chrome, Firefox and Safari bundles from the same shared client hashes.
 - Focused native CTest passes bundled-worker, Remote Manager (including worker

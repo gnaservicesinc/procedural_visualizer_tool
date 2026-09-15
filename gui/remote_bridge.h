@@ -44,6 +44,7 @@ signals:
     void backgroundRequested(bool enabled);
 
 private:
+    QString workerExecutablePath() const;
     void send(const QJsonObject& message);
     void receive();
     void configure(const QJsonObject& config, bool enabled);

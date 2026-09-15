@@ -11,12 +11,19 @@ Implemented in the three local repositories:
   generated Firefox/Safari targets; WebExtension storage API polyfill.
 - Mutual public-file pairing, Ed25519 signatures, X25519/AES-GCM encrypted
   signaling, challenge authentication, replay rejection and transport bounds.
-- Multi-host import/edit/remove/switch, local identity, opt-in public-profile
+- Multi-host import/edit/remove/switch, including selecting several Remote
+  pairing files in one desktop import, local identity, opt-in public-profile
   browser sync with preference restoration, view/disable/clear controls.
 - Real WebRTC video/audio and data channels, authenticated loopback WebSocket
   control, automatic LAN discovery with stable identity names and interface refresh.
 - Existing opaque relay protocol preserved for provisioned deployments.
 - Desktop Remote Manager exposed in Settings and Application Settings.
+- Artist-facing Remote settings apply as they are entered, while Cancel restores
+  the complete opening state. Address ranges appear only for the matching
+  choice; obsolete browser-source port controls and saved limits are removed.
+- When Remotes are allowed beyond nearby networks, the manager offers a
+  platform-specific local-firewall setup file and an exact routed-firewall
+  handoff for Windows, macOS, and Ubuntu administrators.
 - Single active control identity with immediate permission enforcement,
   multiple displays, revocation, and selection in the normal MIDI Control Map.
 - Shared Live scalar target registry for remote editing with normal validation,
