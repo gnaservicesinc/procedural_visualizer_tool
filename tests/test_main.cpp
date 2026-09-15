@@ -683,7 +683,7 @@ void test_parameter_lfos() {
     animated.parameter_lfos.front().delay_fraction = 0.125;
     animated.parameter_lfos.front().skip_cycles = 2;
     CHECK(pvt::detail::serialize_setup_config(animated, serialized, &error));
-    CHECK(serialized.find("PVT_SETUP\t27\n") == 0U);
+    CHECK(serialized.find("PVT_SETUP\t28\n") == 0U);
     pvt::RenderConfig loaded;
     CHECK(pvt::detail::deserialize_setup_config(serialized, loaded, &error));
     CHECK(loaded.parameter_lfos.size() == 1U);
@@ -1883,7 +1883,7 @@ void test_live_control_model_and_setup_codec() {
     std::string serialized;
     std::string error;
     CHECK(pvt::detail::serialize_setup_config(setup, serialized, &error));
-    CHECK(serialized.rfind("PVT_SETUP\t27\n", 0U) == 0U);
+    CHECK(serialized.rfind("PVT_SETUP\t28\n", 0U) == 0U);
     CHECK(serialized.find("live.endpoints.0.name\tKeys%20and%20clock\n")
           != std::string::npos);
     CHECK(serialized.find("live.clock_inputs.1.source\taudio_stream\n")
@@ -5853,7 +5853,7 @@ void test_raw_config_snapshot() {
     // Layout 1 is the exact unchanged prefix, without the five-enum suffix.
     pvt::RenderConfig legacy;
     CHECK(pvt::detail::deserialize_raw_config(
-        numeric.substr(0, numeric.size() - 5 * sizeof(pvt::MusicOnsetDetection)),
+        numeric.substr(0, numeric.size() - 5 * sizeof(pvt::MusicOnsetDetection) - 2 * sizeof(std::uint32_t) - 3 * sizeof(double)),
         strings, legacy, &error));
     CHECK(legacy.width == config.width);
     CHECK(legacy.clock.audio_processing.music_onset_detection == pvt::MusicOnsetDetection::Hybrid);
@@ -6598,7 +6598,7 @@ void test_setup_round_trip_and_transaction(const fs::path& directory) {
     const auto current_version_bytes = read_bytes(first);
     CHECK(std::string(current_version_bytes.begin(),
                       current_version_bytes.end())
-        .rfind("PVT_SETUP\t27\n", 0U) == 0U);
+        .rfind("PVT_SETUP\t28\n", 0U) == 0U);
     std::string version_twenty_four(current_version_bytes.begin(),
                                     current_version_bytes.end());
     version_twenty_four.replace(0U, std::string("PVT_SETUP\t26").size(),

@@ -3299,6 +3299,12 @@ bool load_snapshot(const detail::BundleFileSet& files,
                     error,
                     "Environment-map configuration and its embedded attachment disagree.");
             }
+            for (std::size_t i = 0; i < layer.render.starting_image.derived_images.size(); ++i) {
+                const auto& derived = layer.render.starting_image.derived_images[i];
+                const auto* attachment = attachment_for(derived_image_attachment_id(layer.uuid, i));
+                if (!attachment || attachment->sha256 != derived.sha256 || attachment->basename != derived.basename)
+                    return fail(error, "Derived photo image and embedded attachment disagree.");
+            }
             const StartingImageConfig& source = layer.render.starting_image;
             const ProjectAttachment* image =
                 attachment_for(starting_image_attachment_id(layer.uuid));
@@ -3479,6 +3485,12 @@ bool load_snapshot(const detail::BundleFileSet& files,
                 surface.environment_map.basename = environment->basename;
             }
             StartingImageConfig& source = layer.render.starting_image;
+            for (std::size_t i = 0; i < source.derived_images.size(); ++i) {
+                if (const auto* image = attachment_for(derived_image_attachment_id(layer.uuid, i))) {
+                    source.derived_images[i].sha256 = image->sha256;
+                    source.derived_images[i].basename = image->basename;
+                }
+            }
             if (const ProjectAttachment* image = attachment_for(
                     starting_image_attachment_id(layer.uuid))) {
                 source.sha256 = image->sha256;
@@ -3644,6 +3656,14 @@ bool materialize_snapshot_attachments(
                     "Environment-map attachment disappeared during materialization.");
             }
             environment.path = found->local_path;
+        }
+        for (std::size_t i = 0; i < layer.render.starting_image.derived_images.size(); ++i) {
+            auto& image = layer.render.starting_image.derived_images[i];
+            const auto id = derived_image_attachment_id(layer.uuid, i);
+            const auto found = std::find_if(attachments.begin(), attachments.end(),
+                [&](const ProjectAttachment& attachment) { return attachment.reference_id == id; });
+            if (found == attachments.end()) return fail(error, "Derived photo image disappeared during materialization.");
+            image.path = found->local_path;
         }
         if (!layer.render.starting_image.sha256.empty()) {
             const std::string reference_id =
@@ -4723,6 +4743,10 @@ std::string environment_map_attachment_id(const std::string& layer_uuid) {
     return "layer." + layer_uuid + ".surface.environment";
 }
 
+std::string derived_image_attachment_id(const std::string& layer_uuid, std::size_t index) {
+    return "layer." + layer_uuid + ".photo.image." + std::to_string(index);
+}
+
 std::string starting_image_attachment_id(const std::string& layer_uuid) {
     return "layer." + layer_uuid + ".source.image";
 }
@@ -4848,7 +4872,8 @@ bool make_independent_project_copy(const ProjectConfig& project,
             !project.canvas.clock.music.source_sha256.empty()
             || std::any_of(project.layers.begin(), project.layers.end(),
                            [](const LayerConfig& layer) {
-                               return !layer.render.starting_image.sha256.empty()
+                               return !layer.render.starting_image.derived_images.empty()
+                                      || !layer.render.starting_image.sha256.empty()
                                       || !layer.render.surface.obj_sha256.empty()
                                       || !layer.render.surface
                                               .plane_displacement.sha256.empty()
@@ -5009,6 +5034,8 @@ bool make_independent_project_copy(const ProjectDocument& source,
             if (layer.render.surface.environment_map.enabled) {
                 layer.render.surface.environment_map.enabled = false;
             }
+            layer.render.starting_image.derived_images.clear();
+            layer.render.starting_image.depth_enabled = false;
             layer.render.starting_image.sha256.clear();
             layer.render.starting_image.basename.clear();
             if (layer.render.starting_image.enabled) {
@@ -5067,6 +5094,8 @@ bool make_independent_project_copy(const ProjectDocument& source,
                     attachment.reference_id = new_environment_id;
                 } else if (attachment.reference_id == old_music_id) {
                     attachment.reference_id = new_music_id;
+                } else if (attachment.reference_id.rfind("layer." + source.project.layers[index].uuid + ".photo.image.", 0) == 0) {
+                    attachment.reference_id.replace(6, source.project.layers[index].uuid.size(), candidate.project.layers[index].uuid);
                 } else if (attachment.reference_id == old_image_id) {
                     attachment.reference_id = new_image_id;
                 }
@@ -5717,6 +5746,31 @@ bool sync_project_attachment_references(ProjectDocument& document,
             }),
         document.attachments.end());
 
+    std::set<std::string> expected_photo_references;
+    for (auto& layer : document.project.layers) {
+        for (std::size_t i = 0; i < layer.render.starting_image.derived_images.size(); ++i) {
+            auto& image = layer.render.starting_image.derived_images[i];
+            const auto id = derived_image_attachment_id(layer.uuid, i);
+            expected_photo_references.insert(id);
+            const auto* existing = find_project_attachment(document, id);
+            if (existing && !image.sha256.empty() && existing->sha256 == image.sha256
+                && existing->basename == image.basename && !existing->local_path.empty()
+                && (image.path.empty() || equivalent_path(image.path, existing->local_path))) {
+                image.path = existing->local_path;
+                continue;
+            }
+            ProjectAttachment attached;
+            if (!attach_project_file(document, id, image.path, &attached, error)) return false;
+            image.path = attached.local_path; image.sha256 = attached.sha256; image.basename = attached.basename;
+        }
+    }
+    document.attachments.erase(std::remove_if(document.attachments.begin(), document.attachments.end(),
+        [&](const ProjectAttachment& attachment) {
+            return attachment.reference_id.rfind("layer.", 0) == 0
+                && attachment.reference_id.find(".photo.image.") != std::string::npos
+                && !expected_photo_references.count(attachment.reference_id);
+        }), document.attachments.end());
+
     std::set<std::string> expected_starting_image_references;
     for (LayerConfig& layer : document.project.layers) {
         StartingImageConfig& source = layer.render.starting_image;
@@ -5930,7 +5984,7 @@ public:
                  surface.environment_map.sha256,
                  surface.environment_map.basename},
                 {starting_image.path, starting_image.sha256,
-                 starting_image.basename}});
+                 starting_image.basename}, starting_image.derived_images});
         }
     }
 
@@ -5957,6 +6011,7 @@ public:
                     layer.render.starting_image.sha256,
                     layer.render.starting_image.basename,
                     layer_sources_[index].starting_image);
+            layer.render.starting_image.derived_images = std::move(layer_sources_[index].derived_images);
         }
         document_.attachments = std::move(attachments_);
         document_.attachment_cache = std::move(attachment_cache_);
@@ -5983,6 +6038,7 @@ private:
         SourceIdentity displacement;
         SourceIdentity environment;
         SourceIdentity starting_image;
+        std::vector<DerivedImage> derived_images;
     };
 
     static void restore(std::string& path,

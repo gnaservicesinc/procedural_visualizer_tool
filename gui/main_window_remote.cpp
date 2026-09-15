@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QStyle>
+#include <QStatusBar>
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QUndoStack>
@@ -22,6 +23,15 @@
 
 void MainWindow::initializeRemotes() {
     remote_bridge_ = new RemoteBridge(this);
+    connect(remote_bridge_, &RemoteBridge::connectionsChanged, this, &MainWindow::updateWindowTitle);
+    auto* connections = new QPushButton(tr("Live remote connections"), this);
+    connections->setIcon(style()->standardIcon(QStyle::SP_ComputerIcon));
+    connections->hide(); statusBar()->addPermanentWidget(connections);
+    connect(connections, &QPushButton::clicked, this, [this] { remote_bridge_->showTracker(this); });
+    connect(remote_bridge_, &RemoteBridge::connectionsChanged, connections, [this, connections] {
+        const auto summary = remote_bridge_->connectionSummary();
+        connections->setVisible(!summary.isEmpty()); connections->setToolTip(summary);
+    });
     remote_bridge_->setStateProvider([this] {
         QJsonArray targets;
         for (const auto& target : buildLiveTargetRegistry(project_)) {
@@ -119,7 +129,7 @@ bool MainWindow::setRemoteBackground(bool background) {
         remote_tray_->setToolTip(tr("Procedural Visualizer Tool"));
         auto* menu = new QMenu(this);
         menu->addAction(tr("Show PVT"), this, [this] { setRemoteBackground(false); });
-        menu->addAction(tr("Networking & Remotes…"), this, [this] { setRemoteBackground(false); remote_bridge_->showManager(this); });
+        menu->addAction(tr("Networking & Remotes…"), this, [this] { setRemoteBackground(false); showApplicationSettings(true); });
         menu->addAction(tr("Quit PVT…"), this, [this] {
             setRemoteBackground(false);
             remote_quit_ = true;
@@ -206,7 +216,7 @@ bool MainWindow::runRemoteSmokeChecks(QString* error) {
         if (!dialog) return;
         auto* enable = dialog->findChild<QCheckBox*>(QStringLiteral("remoteNetworkingEnabled"));
         auto* buttons = dialog->findChild<QDialogButtonBox*>(QStringLiteral("remoteManagerButtons"));
-        if (!enable || !buttons || !dialog->findChildren<QLineEdit*>().isEmpty()) { dialog->reject(); return; }
+        if (!enable || !buttons) { dialog->reject(); return; }
         enable->setChecked(true);
         buttons->button(QDialogButtonBox::Apply)->click();
         manager_applied = true;

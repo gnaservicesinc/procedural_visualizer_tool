@@ -276,7 +276,10 @@ private:
     bool setEnvironmentMapSource(const QString& sourcePath);
     void exportPlaneDisplacementObj();
     bool startPlaneDisplacementObjExport(const QString& destination);
-    bool setStartingImageSource(const QString& sourcePath);
+    bool setStartingImageSource(const QString& sourcePath, const std::vector<pvt::DerivedImage>* derived = nullptr);
+    bool runPhotoSmokeChecks(QString* error);
+    bool importPhotoSource(const QString& path);
+    void showPhotoInspector(const QString& notes = {});
     QString activeProjectLocation() const;
     void showProjectInFileBrowser();
     void updateWindowTitle();
@@ -290,7 +293,7 @@ private:
     void considerCpuOnlyNewProjectResolution(const PreviewResult& result);
     void addRecentProject(const QString& path);
     void refreshRecentProjectsMenu();
-    void showApplicationSettings();
+    void showApplicationSettings(bool remote_tab = false);
     void showAboutDialog();
     void showMotionPathEditor();
     void showParameterLfoEditor(const QString& requested_target = {});

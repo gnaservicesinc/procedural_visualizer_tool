@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QImage>
 #include <QTimer>
 #include <functional>
@@ -18,6 +19,9 @@ public:
     void start();
     void stop();
     void showManager(QWidget* parent);
+    QWidget* createManager(QWidget* parent);
+    void showTracker(QWidget* parent);
+    QString connectionSummary() const;
     void sendFrame(const QImage& image);
     void sendAudio(const QByteArray& pcm);
     void setStateProvider(std::function<QJsonObject()> provider);
@@ -36,12 +40,14 @@ signals:
                           const QJsonObject& command);
     void statusChanged(const QString& status);
     void configurationChanged();
+    void connectionsChanged();
     void backgroundRequested(bool enabled);
 
 private:
     void send(const QJsonObject& message);
     void receive();
     void configure(const QJsonObject& config, bool enabled);
+    void setPaused(const QString& remote, bool paused);
     QProcess process_;
     QTimer restart_timer_;
     QTimer state_timer_;
@@ -50,6 +56,7 @@ private:
     void flushFrame();
     QByteArray input_;
     QJsonObject config_;
+    QJsonArray connections_;
     std::optional<QJsonObject> pending_config_;
     QJsonObject profile_;
     std::function<QJsonObject()> state_provider_;

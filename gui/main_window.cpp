@@ -1,4 +1,5 @@
 #include "remote_bridge.h"
+#include "../src/photo_depth.h"
 #include "main_window.h"
 #include "../src/render_asset_cache.h"
 #include "live_audio_capture.h"
@@ -4730,9 +4731,12 @@ QWidget* MainWindow::createLayerSettingsPage() {
     starting_image_path_->setReadOnly(true);
     starting_image_path_->setPlaceholderText(tr("No embedded image selected"));
     starting_image_browse_ = new QPushButton(tr("Choose…"));
+    auto* photo_images = new QPushButton(tr("Photo images / depth…"));
+    connect(photo_images, &QPushButton::clicked, this, [this] { showPhotoInspector(); });
     starting_image_clear_ = new QPushButton(tr("Clear"));
     source_row_layout->addWidget(starting_image_path_, 1);
     source_row_layout->addWidget(starting_image_browse_);
+    source_row_layout->addWidget(photo_images);
     source_row_layout->addWidget(starting_image_clear_);
     starting_image_fit_ = new QComboBox;
     for (const auto fit : {pvt::StartingImageFit::Stretch,
@@ -4742,7 +4746,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
         add_enum_item(starting_image_fit_,
                       renderer_label(pvt::starting_image_fit_name(fit)), fit);
     }
-    source_form->addRow(tr("Embedded image (PNG / OpenEXR)"), source_row);
+    source_form->addRow(tr("Embedded image / photo"), source_row);
     source_form->addRow(tr("Fit"), starting_image_fit_);
     starting_image_palette_dither_ = new QCheckBox(
         tr("Dither when quantizing this image to the starting palette"));
@@ -5997,7 +6001,7 @@ QWidget* MainWindow::createLayerSettingsPage() {
                                           layer.render.starting_image.basename)));
         }
         if (!reusable.empty()) {
-            labels.push_back(tr("Load a different PNG or OpenEXR from disk…"));
+            labels.push_back(tr("Load a different image or photo from disk…"));
             bool accepted = false;
             const QString selection = QInputDialog::getItem(
                 this, tr("Choose starting image asset"),
@@ -6007,38 +6011,15 @@ QWidget* MainWindow::createLayerSettingsPage() {
             if (selected >= 0
                 && static_cast<std::size_t>(selected) < reusable.size()) {
                 if (document_ == nullptr) return;
-                auto before = captureActiveState();
                 const auto& source = *reusable[static_cast<std::size_t>(selected)];
-                QString alias_error;
-                const std::string target_reference =
-                    pvt::starting_image_attachment_id(active_layer_uuid_);
-                if (!alias_project_attachment(
-                        *document_, pvt::starting_image_attachment_id(source.uuid),
-                        target_reference, &alias_error)) {
-                    QMessageBox::critical(this, tr("Could not reuse image"), alias_error);
-                    return;
-                }
-                config_.starting_image.enabled = true;
-                config_.starting_image.sha256 = source.render.starting_image.sha256;
-                config_.starting_image.basename = source.render.starting_image.basename;
-                config_.starting_image.path =
-                    pvt::project_attachment_path(*document_, target_reference);
-                syncActiveRender();
-                syncProjectGlobals();
-                document_->project = project_;
-                loadGlobalEditors();
-                schedulePreview();
-                recordActiveStateChange(tr("Reuse embedded starting image"),
-                                        std::move(before));
-                status_->setText(tr("Reused %1 without duplicating its bytes.")
-                                     .arg(QString::fromStdString(
-                                         config_.starting_image.basename)));
+                (void)setStartingImageSource(QString::fromStdString(source.render.starting_image.path),
+                                              &source.render.starting_image.derived_images);
                 return;
             }
         }
         const QString selected = QFileDialog::getOpenFileName(
             this, tr("Choose starting image"), usableDialogDirectory(),
-            tr("High-precision image (*.png *.exr)"));
+            tr("Image / portrait / spatial photo (*.png *.exr *.heic *.heif *.jpg *.jpeg)"));
         if (!selected.isEmpty()) {
             rememberDialogLocation(selected);
             if (!config_.starting_image.sha256.empty()
@@ -8105,7 +8086,7 @@ void MainWindow::createToolbar() {
     auto* remotes_action = settings_menu->addAction(tr("Networking & Remotes…"));
     remotes_action->setObjectName(QStringLiteral("remoteManagerAction"));
     connect(remotes_action, &QAction::triggered, this, [this] {
-        if (remote_bridge_) remote_bridge_->showManager(this);
+        showApplicationSettings(true);
     });
     toolbar->addSeparator();
     toolbar->addAction(settings_action_);
@@ -10561,6 +10542,12 @@ bool MainWindow::stageNewLayerFromDefaults(
             layer.render.starting_image.sha256 = attached.sha256;
             layer.render.starting_image.basename = attached.basename;
         }
+        for (std::size_t i = 0; i < layer.render.starting_image.derived_images.size(); ++i) {
+            auto& image = layer.render.starting_image.derived_images[i];
+            if (!transfer_attachment(pvt::derived_image_attachment_id(source_uuid, i),
+                                     pvt::derived_image_attachment_id(layer.uuid, i), attached)) return false;
+            image.path = attached.local_path; image.sha256 = attached.sha256; image.basename = attached.basename;
+        }
         if (!layer.render.layer_clock.clock.music.source_sha256.empty()) {
             if (!transfer_attachment(
                     pvt::layer_music_attachment_id(source_uuid),
@@ -11240,7 +11227,7 @@ void MainWindow::duplicateLayer() {
     const bool copy_image = !layer.render.starting_image.sha256.empty();
     std::unique_ptr<pvt::ProjectDocument> staged_document;
     if (copy_obj || copy_height || copy_environment || copy_music
-        || copy_image) {
+        || copy_image || !layer.render.starting_image.derived_images.empty()) {
         if (document_ == nullptr) {
             QMessageBox::critical(this, tr("Could not duplicate layer"),
                                   tr("The project attachment registry is unavailable."));
@@ -11398,6 +11385,15 @@ void MainWindow::duplicateLayer() {
         layer.render.starting_image.sha256 = duplicate_attachment.sha256;
         layer.render.starting_image.basename = duplicate_attachment.basename;
     }
+    for (std::size_t i = 0; i < layer.render.starting_image.derived_images.size(); ++i) {
+        auto& image = layer.render.starting_image.derived_images[i];
+        pvt::ProjectAttachment attached;
+        std::string error;
+        if (!pvt::attach_project_file(*staged_document, pvt::derived_image_attachment_id(layer.uuid, i), image.path, &attached, &error)) {
+            QMessageBox::critical(this, tr("Could not duplicate photo"), QString::fromStdString(error)); return;
+        }
+        image.path = attached.local_path; image.sha256 = attached.sha256; image.basename = attached.basename;
+    }
     if (staged_document != nullptr) {
         document_ = std::move(staged_document);
     }
@@ -11462,6 +11458,12 @@ void MainWindow::removeLayer() {
                 QMessageBox::critical(this, tr("Could not remove layer"),
                                       QString::fromStdString(detach_error));
                 return;
+            }
+        }
+        for (std::size_t i = 0; i < layer->render.starting_image.derived_images.size(); ++i) {
+            std::string error;
+            if (!pvt::detach_project_file(*staged_document, pvt::derived_image_attachment_id(layer->uuid, i), &error)) {
+                QMessageBox::critical(this, tr("Could not remove photo"), QString::fromStdString(error)); return;
             }
         }
         document_ = std::move(staged_document);
@@ -12040,7 +12042,7 @@ bool MainWindow::startPlaneDisplacementObjExport(const QString& destination) {
         return false;
     }
     try {
-        const auto displacement = config_.surface.plane_displacement;
+        const auto displacement = pvt::detail::photo_surface(config_.starting_image, config_.surface).plane_displacement;
         const int width = config_.width;
         const int height = config_.height;
         const auto attachment_cache = document_ ? document_->attachment_cache : nullptr;
@@ -12141,7 +12143,9 @@ bool MainWindow::startPlaneDisplacementObjExport(const QString& destination) {
     return true;
 }
 
-bool MainWindow::setStartingImageSource(const QString& source_path) {
+bool MainWindow::setStartingImageSource(const QString& source_path, const std::vector<pvt::DerivedImage>* derived) {
+    const auto extension = QFileInfo(source_path).suffix().toLower();
+    if (extension == "heic" || extension == "heif" || extension == "jpg" || extension == "jpeg") return importPhotoSource(source_path);
     if (populating_ || activeLayer() == nullptr) return false;
     if (document_ == nullptr) {
         document_ = std::make_unique<pvt::ProjectDocument>(
@@ -12160,17 +12164,20 @@ bool MainWindow::setStartingImageSource(const QString& source_path) {
     }
 
     auto before = captureActiveState();
+    auto staged = std::make_unique<pvt::ProjectDocument>(*document_);
+    auto candidate = config_.starting_image;
+    const auto images = derived ? *derived : std::vector<pvt::DerivedImage>{};
     const std::string reference_id =
         pvt::starting_image_attachment_id(active_layer_uuid_);
     std::string attachment_error;
     if (source_path.isEmpty()) {
-        if (!pvt::detach_project_file(*document_, reference_id,
+        if (!pvt::detach_project_file(*staged, reference_id,
                                       &attachment_error)) {
             QMessageBox::critical(this, tr("Could not clear starting image"),
                                   QString::fromStdString(attachment_error));
             return false;
         }
-        config_.starting_image = {};
+        candidate = {};
     } else {
         const QString resolved = QDir::isAbsolutePath(source_path)
             ? QDir::cleanPath(source_path)
@@ -12184,27 +12191,45 @@ bool MainWindow::setStartingImageSource(const QString& source_path) {
         }
         pvt::ProjectAttachment attached;
         if (!pvt::attach_project_file(
-                *document_, reference_id, resolved.toStdString(), &attached,
+                *staged, reference_id, resolved.toStdString(), &attached,
                 &attachment_error)) {
             QMessageBox::critical(this, tr("Could not embed starting image"),
                                   QString::fromStdString(attachment_error));
             return false;
         }
-        config_.starting_image.enabled = true;
-        config_.starting_image.path = attached.local_path;
-        config_.starting_image.sha256 = attached.sha256;
-        config_.starting_image.basename = attached.basename;
+        candidate.enabled = true;
+        candidate.path = attached.local_path;
+        candidate.sha256 = attached.sha256;
+        candidate.basename = attached.basename;
     }
 
+    for (std::size_t i = 0; i < config_.starting_image.derived_images.size(); ++i)
+        if (!pvt::detach_project_file(*staged, pvt::derived_image_attachment_id(active_layer_uuid_, i), &attachment_error)) return false;
+    candidate.derived_images = images;
+    for (std::size_t i = 0; i < candidate.derived_images.size(); ++i) {
+        auto& image = candidate.derived_images[i];
+        pvt::ProjectAttachment attached;
+        if (!pvt::attach_project_file(*staged, pvt::derived_image_attachment_id(active_layer_uuid_, i), image.path, &attached, &attachment_error)) {
+            QMessageBox::critical(this, tr("Could not embed photo image"), QString::fromStdString(attachment_error)); return false;
+        }
+        image.path = attached.local_path; image.sha256 = attached.sha256; image.basename = attached.basename;
+    }
+    if (!derived || std::none_of(images.begin(), images.end(), [](const auto& image) { return image.kind == "depth"; })) {
+        candidate.depth_enabled = false;
+        candidate.depth_lighting = false;
+        candidate.depth_tilt_x = candidate.depth_tilt_y = 0.0;
+    }
+    config_.starting_image = candidate;
+    document_ = std::move(staged);
     syncActiveRender();
     syncProjectGlobals();
     document_->project = project_;
     document_->dirty = true;
     {
         const QSignalBlocker enabled_blocker(starting_image_enabled_);
-        starting_image_enabled_->setChecked(config_.starting_image.enabled);
+        starting_image_enabled_->setChecked(candidate.enabled);
         starting_image_path_->setText(
-            QString::fromStdString(config_.starting_image.basename));
+            QString::fromStdString(candidate.basename));
     }
     preview_->setConfiguration(config_);
     updateOutputEditorValidity();
@@ -12216,7 +12241,7 @@ bool MainWindow::setStartingImageSource(const QString& source_path) {
     status_->setText(source_path.isEmpty()
         ? tr("Cleared the active layer's starting image.")
         : tr("Embedded %1 as the active layer's starting image.")
-              .arg(QString::fromStdString(config_.starting_image.basename)));
+              .arg(QString::fromStdString(candidate.basename)));
     return true;
 }
 
@@ -12540,6 +12565,7 @@ void MainWindow::updateWindowTitle() {
             : tr("%1 — %2[*] — PVT %3")
                   .arg(QDir::toNativeSeparators(location), name,
                        QStringLiteral(PVT_PROGRAM_VERSION)));
+    if (remote_bridge_) setWindowTitle(windowTitle() + remote_bridge_->connectionSummary());
     if (show_project_in_browser_action_ != nullptr) {
         show_project_in_browser_action_->setEnabled(!location.isEmpty());
     }
@@ -12985,7 +13011,7 @@ void MainWindow::saveUserSettings() {
     }
 }
 
-void MainWindow::showApplicationSettings() {
+void MainWindow::showApplicationSettings(bool remote_tab) {
     if (undo_stack_ == nullptr) return;
     const int current_undo_limit = undo_stack_->undoLimit();
     const PerformanceSettings current_performance = performance_settings_;
@@ -12994,14 +13020,13 @@ void MainWindow::showApplicationSettings() {
                                      current_recent_limit,
                                      hasCustomNewProjectDefaults(), this);
     if (auto* tabs = dialog.findChild<QTabWidget*>(QStringLiteral("applicationSettingsTabs"))) {
-        auto* page = new QWidget;
-        auto* layout = new QVBoxLayout(page);
-        auto* manager = new QPushButton(tr("Open Networking & Remotes…"));
-        layout->addWidget(manager); layout->addStretch();
-        tabs->addTab(page, tr("Remotes"));
-        connect(manager, &QPushButton::clicked, &dialog, [this, &dialog] {
-            if (remote_bridge_) remote_bridge_->showManager(&dialog);
-        });
+        if (remote_bridge_) {
+            auto* scroll = new QScrollArea(tabs);
+            scroll->setWidgetResizable(true);
+            scroll->setWidget(remote_bridge_->createManager(&dialog));
+            tabs->addTab(scroll, tr("Remotes"));
+        }
+        if (remote_tab) tabs->setCurrentIndex(tabs->count() - 1);
     }
     configure_readable_layouts(&dialog);
     if (dialog.exec() != QDialog::Accepted) return;
@@ -26379,6 +26404,7 @@ bool MainWindow::runSmokeChecks(QString* error) {
         }
         return false;
     }
+    if (!runPhotoSmokeChecks(error)) return false;
     // Leave screenshot-mode smoke runs in the same calm, name-first state a
     // user sees after creating a project.
     setWorkflowStage(0);

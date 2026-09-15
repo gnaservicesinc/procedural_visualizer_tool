@@ -23,6 +23,12 @@ void prune_render_asset_caches(const ProjectConfig& project) noexcept {
             const auto& render = layer.render;
             if (render.starting_image.enabled && !render.starting_image.path.empty()) {
                 images.insert(render.starting_image.path);
+                if (render.starting_image.depth_enabled) {
+                    for (const auto& image : render.starting_image.derived_images)
+                        if (image.kind == "depth" && !image.path.empty()) heights.insert(image.path);
+                    if (render.starting_image.depth_lighting && render.surface.environment_map.enabled)
+                        images.insert(render.surface.environment_map.path);
+                }
             }
             const auto& surface = render.surface;
             if (!surface.enabled) continue;

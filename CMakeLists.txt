@@ -190,6 +190,8 @@ add_library(ProceduralVisualizerTool
     src/render_asset_cache.h
     src/packed_mask.h
     src/scope_exit.h
+    src/photo_depth.cpp
+    src/photo_depth.h
     src/source_image.cpp
     src/source_image.h
     src/windows_file_install.h
@@ -544,9 +546,9 @@ if(PVT_BUILD_QT_GUI)
     set(PVT_GUI_MIDI_SOURCES gui/live_midi_stub.cpp)
     if(APPLE)
         enable_language(OBJCXX)
-        set(PVT_GUI_VIDEO_SOURCES gui/macos_video_export.mm)
+        set(PVT_GUI_VIDEO_SOURCES gui/macos_video_export.mm gui/photo_import_mac.mm)
         set(PVT_GUI_MIDI_SOURCES gui/live_midi_mac.mm)
-        set_source_files_properties(gui/macos_video_export.mm PROPERTIES
+        set_source_files_properties(gui/macos_video_export.mm gui/photo_import_mac.mm PROPERTIES
             COMPILE_OPTIONS "-fobjc-arc")
     endif()
 
@@ -590,6 +592,9 @@ if(PVT_BUILD_QT_GUI)
         gui/flexible_spin_box.h
         gui/main_window.cpp
         gui/main_window_remote.cpp
+        gui/photo_import.cpp
+        gui/photo_import.h
+        gui/main_window_photo.cpp
         gui/remote_bridge.cpp
         gui/remote_bridge.h
         gui/main_window.h
@@ -662,6 +667,8 @@ if(PVT_BUILD_QT_GUI)
     if(APPLE)
         target_link_libraries(ProceduralVisualizerToolGui PRIVATE
             "-framework AVFoundation"
+            "-framework CoreImage"
+            "-framework ImageIO"
             "-framework AudioToolbox"
             "-framework CoreMIDI"
             "-framework CoreMedia"
@@ -829,6 +836,8 @@ if(BUILD_TESTING)
             ProceduralVisualizerTool::ProceduralVisualizerTool
             PNG::PNG
             "-framework AVFoundation"
+            "-framework CoreImage"
+            "-framework ImageIO"
             "-framework AudioToolbox"
             "-framework CoreMedia"
             "-framework CoreVideo"
@@ -1090,6 +1099,14 @@ if(BUILD_TESTING)
     endif()
 
     if(PVT_BUILD_QT_GUI)
+        add_executable(pvt_photo_tests tests/photo_test.cpp gui/photo_import.cpp)
+        target_link_libraries(pvt_photo_tests PRIVATE ProceduralVisualizerBundle ProceduralVisualizerTool Qt6::Gui)
+        if(APPLE)
+            target_sources(pvt_photo_tests PRIVATE gui/photo_import_mac.mm tests/photo_fixture_mac.mm)
+            set_source_files_properties(tests/photo_fixture_mac.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+            target_link_libraries(pvt_photo_tests PRIVATE "-framework AVFoundation" "-framework CoreImage" "-framework ImageIO" "-framework CoreVideo")
+        endif()
+        add_test(NAME pvt_photos COMMAND pvt_photo_tests)
         add_executable(pvt_remote_bridge_tests
             tests/remote_bridge_test.cpp gui/remote_bridge.cpp gui/remote_bridge.h)
         set_target_properties(pvt_remote_bridge_tests PROPERTIES AUTOMOC ON)

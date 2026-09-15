@@ -3,6 +3,7 @@
 #include "obj_surface.h"
 #include "path_utf8.h"
 #include "source_image.h"
+#include "photo_depth.h"
 #include "render_asset_cache.h"
 #include "render_memory.h"
 
@@ -29,6 +30,11 @@ struct CachedMesh {
     // Geometry contains the sampled heights already. Keep only an identity
     // token so mesh variants cannot pin evicted decoded height maps.
     std::weak_ptr<const HeightImage> height_image;
+    std::weak_ptr<const HeightImage> photo_depth;
+    double photo_amount = 0;
+    StartingImageFit photo_fit = StartingImageFit::Cover;
+    int photo_width = 0;
+    int photo_height = 0;
     int render_width = 0;
     int render_height = 0;
     int pixels_per_node = 0;
@@ -47,6 +53,11 @@ struct CachedMesh {
 struct PendingMesh {
     std::string path;
     std::shared_ptr<const HeightImage> height_image;
+    std::shared_ptr<const HeightImage> photo_depth;
+    double photo_amount = 0;
+    StartingImageFit photo_fit = StartingImageFit::Cover;
+    int photo_width = 0;
+    int photo_height = 0;
     int render_width = 0;
     int render_height = 0;
     int pixels_per_node = 0;
@@ -178,8 +189,11 @@ bool cache_key_matches(const CachedMesh& cached,
                        const std::shared_ptr<const HeightImage>& height_image,
                        const PlaneDisplacementConfig& config,
                        int render_width,
-                       int render_height) {
-    return cached.height_image.lock() == height_image
+                       int render_height, const std::shared_ptr<const HeightImage>& photo_depth) {
+    return cached.photo_depth.lock() == photo_depth && cached.photo_amount == config.photo_depth_amount
+           && cached.photo_fit == config.photo_depth_fit
+           && cached.photo_width == config.photo_source_width && cached.photo_height == config.photo_source_height
+           && cached.height_image.lock() == height_image
            && cached.render_width == render_width
            && cached.render_height == render_height
            && cached.pixels_per_node == config.pixels_per_node
@@ -194,8 +208,11 @@ bool pending_key_matches(const PendingMesh& pending,
                          const PlaneDisplacementConfig& config,
                          int render_width,
                          int render_height,
-                         std::uint64_t cache_generation) {
-    return pending.height_image == height_image
+                         std::uint64_t cache_generation, const std::shared_ptr<const HeightImage>& photo_depth) {
+    return pending.photo_depth == photo_depth && pending.photo_amount == config.photo_depth_amount
+           && pending.photo_fit == config.photo_depth_fit
+           && pending.photo_width == config.photo_source_width && pending.photo_height == config.photo_source_height
+           && pending.height_image == height_image
            && pending.render_width == render_width
            && pending.render_height == render_height
            && pending.pixels_per_node == config.pixels_per_node
@@ -211,7 +228,7 @@ bool build_mesh(const HeightImage& height_image,
                 int render_height,
                 std::shared_ptr<const ObjMesh>& destination,
                 const std::atomic_bool* cancel,
-                std::string* error) {
+                std::string* error, const std::shared_ptr<const HeightImage>& photo_depth) {
     std::size_t columns = 0U;
     std::size_t rows = 0U;
     std::size_t estimated_bytes = 0U;
@@ -245,12 +262,14 @@ bool build_mesh(const HeightImage& height_image,
                                      ? static_cast<double>(column)
                                            / static_cast<double>(columns - 1U)
                                      : 0.5;
-                const double height = map_displacement(
+                double height = map_displacement(
                     sample_height(
                         height_image,
                         u * static_cast<double>(height_image.width - 1),
                         v * static_cast<double>(height_image.height - 1)),
                     config);
+                if (photo_depth) height += (fitted_photo_height(*photo_depth, config.photo_depth_fit,
+                    render_width, render_height, u, v, config.photo_source_width, config.photo_source_height) - .5) * config.photo_depth_amount;
                 const std::size_t index = row * columns + column;
                 mesh->positions[index] = {
                     (2.0 * u - 1.0) * half_width,
@@ -298,8 +317,8 @@ bool build_mesh(const HeightImage& height_image,
             }
         }
 
-        mesh->bounds_min = {-half_width, -1.0, config.minimum};
-        mesh->bounds_max = {half_width, 1.0, config.maximum};
+        mesh->bounds_min = {-half_width, -1.0, config.minimum - config.photo_depth_amount * .5};
+        mesh->bounds_max = {half_width, 1.0, config.maximum + config.photo_depth_amount * .5};
         mesh->normalization_center = {};
         // Preserve the authored displacement scale instead of renormalizing it
         // every time the map extrema change. The plane's longest 2D axis alone
@@ -379,12 +398,13 @@ bool displacement_mesh_requirements(int render_width,
 }
 
 bool load_displacement_plane_mesh(
-    const PlaneDisplacementConfig& displacement,
+    const PlaneDisplacementConfig& authored_displacement,
     int render_width,
     int render_height,
     std::shared_ptr<const ObjMesh>& destination,
     const std::atomic_bool* cancel,
     std::string* error) {
+    auto displacement = authored_displacement;
     clear_error(error);
     if (displacement.path.empty()) {
         return fail(error, "A displacement height-map image has not been selected.");
@@ -400,10 +420,23 @@ bool load_displacement_plane_mesh(
         }
         return false;
     }
+    std::shared_ptr<const HeightImage> photo_depth;
+    if (!displacement.photo_depth_path.empty() && !load_height_image_source(displacement.photo_depth_path, photo_depth, cancel, error)) return false;
+    if (photo_depth && !displacement.photo_depth_source_path.empty()) {
+        std::shared_ptr<const Image> source;
+        if (!load_starting_image_source(displacement.photo_depth_source_path, source, cancel, error)) return false;
+        displacement.photo_source_width = source->width;
+        displacement.photo_source_height = source->height;
+    }
     std::string lease_key;
     if (render_memory_reader) {
         lease_key = render_asset_key('D', displacement.path);
         append_render_asset_key(lease_key, height_image.get());
+        append_render_asset_key(lease_key, photo_depth.get());
+        append_render_asset_key(lease_key, displacement.photo_depth_amount);
+        append_render_asset_key(lease_key, static_cast<int>(displacement.photo_depth_fit));
+        append_render_asset_key(lease_key, displacement.photo_source_width);
+        append_render_asset_key(lease_key, displacement.photo_source_height);
         append_render_asset_key(lease_key, render_width);
         append_render_asset_key(lease_key, render_height);
         append_render_asset_key(lease_key, displacement.pixels_per_node);
@@ -430,7 +463,7 @@ bool load_displacement_plane_mesh(
                 [&](const CachedMesh& candidate) {
                     return cache_key_matches(
                         candidate, height_image, displacement,
-                        render_width, render_height);
+                        render_width, render_height, photo_depth);
                 });
             if (found != mesh_cache.end()) {
                 found->last_used = ++mesh_cache_clock;
@@ -445,12 +478,17 @@ bool load_displacement_plane_mesh(
                     return pending_key_matches(
                         *candidate, height_image, displacement,
                         render_width, render_height,
-                        mesh_cache_generation);
+                        mesh_cache_generation, photo_depth);
                 });
             if (building == pending_meshes.end()) {
                 pending = std::make_shared<PendingMesh>();
                 pending->path = displacement.path;
                 pending->height_image = height_image;
+                pending->photo_depth = photo_depth;
+                pending->photo_amount = displacement.photo_depth_amount;
+                pending->photo_fit = displacement.photo_depth_fit;
+                pending->photo_width = displacement.photo_source_width;
+                pending->photo_height = displacement.photo_source_height;
                 pending->render_width = render_width;
                 pending->render_height = render_height;
                 pending->pixels_per_node = displacement.pixels_per_node;
@@ -498,7 +536,7 @@ bool load_displacement_plane_mesh(
             std::string build_error;
             const bool generated_ok = build_mesh(
                 *height_image, displacement, render_width, render_height,
-                generated, cancel, &build_error);
+                generated, cancel, &build_error, photo_depth);
             const std::size_t generated_bytes =
                 generated_ok ? generated->estimated_bytes() : 0U;
             {
@@ -508,7 +546,7 @@ bool load_displacement_plane_mesh(
                     && pending->cache_generation
                            == mesh_cache_generation) {
                     mesh_cache.push_back(
-                        {displacement.path, height_image, render_width, render_height,
+                        {displacement.path, height_image, photo_depth, displacement.photo_depth_amount, displacement.photo_depth_fit, displacement.photo_source_width, displacement.photo_source_height, render_width, render_height,
                          displacement.pixels_per_node,
                          displacement.minimum, displacement.maximum,
                          displacement.midpoint, generated,

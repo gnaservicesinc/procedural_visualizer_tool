@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
         if (!dialog) return;
         auto* enabled = dialog->findChild<QCheckBox*>("remoteNetworkingEnabled");
         auto* buttons = dialog->findChild<QDialogButtonBox*>("remoteManagerButtons");
-        if (!enabled || !buttons || !dialog->findChildren<QLineEdit*>().isEmpty() || !dialog->findChildren<QSpinBox*>().isEmpty()) { dialog->reject(); return; }
+        if (!enabled || !buttons) { dialog->reject(); return; }
         auto* control_store = dialog->findChild<QPushButton*>("remoteControlStore");
         auto* display_store = dialog->findChild<QPushButton*>("remoteDisplayStore");
         if (control_store && display_store) {
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
     QTimer::singleShot(0, &app, [&] {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         if (!dialog) return;
-        retained = dialog->findChildren<QLineEdit*>().isEmpty() && dialog->findChildren<QSpinBox*>().isEmpty()
+        retained = dialog->findChild<QLineEdit*>("remoteCustomNetworks")
             && bridge.controlNames().contains("Saved control");
         dialog->reject();
     });

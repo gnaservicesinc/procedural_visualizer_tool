@@ -8,6 +8,7 @@
 #include "obj_surface.h"
 #include "post_process_alpha.h"
 #include "source_image.h"
+#include "photo_depth.h"
 #include "render_memory.h"
 
 #include <algorithm>
@@ -3621,6 +3622,27 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
     // Only ProjectConfigValidator may reuse a successful canvas check. Keep
     // each guard in its original position so standalone diagnostic order is
     // unchanged. Saved layer clocks, bindings, graphs and estimates stay local.
+    const auto& photo = config.starting_image;
+    if (photo.derived_images.size() > 32U || (photo.photo_flags & ~3U) != 0U || !std::isfinite(photo.depth_amount)
+        || photo.depth_amount < 0.0 || photo.depth_amount > 1.0
+        || !std::isfinite(photo.depth_tilt_x) || std::abs(photo.depth_tilt_x) > 10.0
+        || !std::isfinite(photo.depth_tilt_y) || std::abs(photo.depth_tilt_y) > 10.0)
+        return invalid_result("Photo depth amount or tilt is outside its supported range.");
+    bool has_photo_depth = false;
+    for (const auto& image : photo.derived_images) {
+        has_photo_depth |= image.kind == "depth";
+        if ((image.kind != "depth" && image.kind != "mask" && image.kind != "color")
+            || image.name.empty() || image.name.size() > 240U
+            || (!image.path.empty() && !valid_path_text(image.path, kMaximumPathBytes, false))
+            || (image.path.empty() && image.sha256.empty())
+            || (!image.sha256.empty() && !valid_lower_hex_digest(image.sha256))
+            || (image.sha256.empty() != image.basename.empty())
+            || (!image.basename.empty() && !valid_music_basename(image.basename))
+            || image.basename.size() > kMaximumAttachmentBasenameBytes)
+            return invalid_result("Derived photo image metadata is invalid.");
+    }
+    if (photo.depth_enabled && !has_photo_depth)
+        return invalid_result("Photo depth requires an extracted or derived depth map.");
     if (validate_canvas) {
         if (view.width < 16 || view.width > kMaximumDimension
             || view.height < 16 || view.height > kMaximumDimension) {
@@ -4663,6 +4685,12 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
     // Decoded image storage follows allocation identity: the same path can
     // have independent color, linear, and height interpretations. Missing
     // assets retain their existing transactional render-time error behavior.
+    if (photo.enabled && photo.depth_enabled) {
+        std::size_t photo_frame_bytes = 0;
+        if (!checked_multiply(static_cast<std::size_t>(validation_width), static_cast<std::size_t>(validation_height), photo_frame_bytes)
+            || !checked_multiply(photo_frame_bytes, 4U * sizeof(float), photo_frame_bytes)
+            || !checked_add(peak_bytes, photo_frame_bytes, peak_bytes)) return invalid_result("Photo working memory estimate overflowed.");
+    }
     if (inspect_assets) {
         detail::SharedRenderMemory standalone;
         auto& ledger = shared_memory ? *shared_memory : standalone;
@@ -4676,6 +4704,20 @@ ValidationResult validate_impl(const RenderValidationView& view, bool include_ex
         if (config.starting_image.enabled
             && detail::load_starting_image_source(config.starting_image.path, decoded, nullptr, &ignored)
             && !retain_image(decoded)) return invalid_result("The source image memory estimate overflowed.");
+        if (photo.enabled && photo.depth_enabled) {
+            for (const auto& derived : photo.derived_images) if (derived.kind == "depth") {
+                std::shared_ptr<const detail::HeightImage> depth;
+                std::size_t bytes = 0;
+                if (detail::load_height_image_source(derived.path, depth, nullptr, &ignored)
+                    && (!checked_multiply(depth->samples.capacity(), sizeof(double), bytes)
+                        || !checked_add(bytes, sizeof(detail::HeightImage), bytes) || !ledger.retain(depth, bytes)))
+                    return invalid_result("Photo depth memory estimate overflowed.");
+                break;
+            }
+            if (photo.depth_lighting && surface.environment_map.enabled
+                && detail::load_environment_map_source(surface.environment_map.path, surface.environment_map.encoding, decoded, nullptr, &ignored)
+                && !retain_image(decoded)) return invalid_result("Photo environment memory estimate overflowed.");
+        }
         if (surface.enabled && (surface.mapping == SurfaceMapping::Plane || surface.curvature > 0.0)
             && surface.environment_map.enabled && surface.lighting > 0.0 && surface.environment_map.mix > 0.0
             && detail::load_environment_map_source(surface.environment_map.path,
@@ -8356,6 +8398,7 @@ bool render_frame_at_timeline_sample_cancellable(
                     current, cancel, error)) {
                 return false;
             }
+            if (!detail::apply_photo_depth(render.starting_image, render.surface, current, cancel, error)) return false;
             // Image placement and source-color generation are composable: the
             // fitted image chooses where colors live, then the optional starting
             // palette constrains those source colors before any effects.
@@ -8451,7 +8494,8 @@ bool render_frame_at_timeline_sample_cancellable(
                 // included by central peak-memory validation.
                 scratch = Image{};
             }
-            if (!apply_surface_mapping(current, scratch, render.surface,
+            const auto surface = detail::photo_surface(render.starting_image, render.surface);
+            if (!apply_surface_mapping(current, scratch, surface,
                                        loop_phase, error, cancel)) {
                 return false;
             }
@@ -8812,6 +8856,7 @@ bool prepare_starting_image_for_backend(const RenderConfig& config,
                                    config.height, candidate, cancel, error)) {
             return false;
         }
+        if (!apply_photo_depth(config.starting_image, config.surface, candidate, cancel, error)) return false;
         apply_starting_image_controls(config, loop_phase, candidate, cancel);
         destination = std::move(candidate);
         set_error(error, std::string{});

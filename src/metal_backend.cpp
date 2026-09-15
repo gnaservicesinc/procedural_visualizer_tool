@@ -5,6 +5,7 @@
 #include "metal_kernels_source.h"
 #include "obj_surface.h"
 #include "source_image.h"
+#include "photo_depth.h"
 
 #define METALCPP_SYMBOL_VISIBILITY_HIDDEN
 #define NS_PRIVATE_IMPLEMENTATION
@@ -1465,10 +1466,10 @@ bool render_prepared_frame_metal(const RenderConfig& config,
     bool source_preprocessed = false;
     std::size_t starting_image_bytes = 0U;
     if (config.starting_image.enabled) {
-        source_preprocessed = config.palette.enabled
+        source_preprocessed = config.starting_image.depth_enabled || (config.palette.enabled
             && config.starting_image.palette_dither_enabled
             && config.starting_image.palette_dither_method
-                   == DitherMethod::FloydSteinberg;
+                   == DitherMethod::FloydSteinberg);
         if (source_preprocessed) {
             preprocessed_starting_image = std::make_shared<Image>();
             if (!prepare_starting_image_for_backend(
@@ -1878,7 +1879,7 @@ bool render_prepared_frame_metal(const RenderConfig& config,
                   source, mapped, config.surface.obj_path,
                   config.surface, prepared.loop_phase, error, cancel)
             : apply_displacement_plane_mapping(
-                  source, mapped, config.surface, prepared.loop_phase,
+                  source, mapped, photo_surface(config.starting_image, config.surface), prepared.loop_phase,
                   error, cancel);
         if (!mapped_ok) {
             return false;

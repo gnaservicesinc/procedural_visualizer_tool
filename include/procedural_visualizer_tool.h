@@ -24,7 +24,7 @@
 
 namespace pvt {
 
-constexpr std::uint32_t kSetupFormatVersion = 27;
+constexpr std::uint32_t kSetupFormatVersion = 28;
 // Author-facing collections are displayed and indexed by Qt APIs whose count
 // type is int.  Do not impose smaller policy caps: allocation failure and the
 // checked render-memory arithmetic are the real limits below this API bound.
@@ -1407,6 +1407,14 @@ struct PlaneDisplacementConfig {
     std::string path;
     std::string sha256;
     std::string basename;
+    // Derived render-time detail; authored photo settings live in StartingImageConfig.
+    // Never serialized into the authored plane configuration.
+    std::string photo_depth_path;
+    std::string photo_depth_source_path;
+    int photo_source_width = 0;
+    int photo_source_height = 0;
+    double photo_depth_amount = 0.0;
+    StartingImageFit photo_depth_fit = StartingImageFit::Cover;
 };
 
 // Environment maps use a Y-up equirectangular layout. Auto honors PNG color
@@ -1518,6 +1526,15 @@ struct SurfaceConfig {
 // starting palette is enabled, the fitted image is source-quantized to it and
 // then flows through Texture effects, surface mapping, transforms,
 // mapped-object effects, and final quantization like any other source.
+struct DerivedImage {
+    // depth, mask, or color. Names describe actual extracted/derived content.
+    std::string kind;
+    std::string name;
+    std::string path;
+    std::string sha256;
+    std::string basename;
+};
+
 struct StartingImageConfig {
     enum : std::uint32_t {
         EnabledFlag = 1U << 0U,
@@ -1538,6 +1555,14 @@ struct StartingImageConfig {
     // is quantized to that palette before effects. Dithering is optional and is
     // distinct from final PNG export dithering.
     DitherMethod palette_dither_method = DitherMethod::BlueNoise;
+    std::vector<DerivedImage> derived_images;
+    union {
+        std::uint32_t photo_flags = 0U;
+        struct { std::uint32_t depth_enabled : 1; std::uint32_t depth_lighting : 1; };
+    };
+    double depth_amount = 0.15;
+    double depth_tilt_x = 0.0;
+    double depth_tilt_y = 0.0;
 };
 
 struct LiveEndpointConfig {

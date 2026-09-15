@@ -16,6 +16,11 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QListWidget>
+#include <QLineEdit>
+#include <QSpinBox>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <memory>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSettings>
@@ -32,12 +37,14 @@ RemoteBridge::RemoteBridge(QObject* parent) : QObject(parent) {
     });
     connect(&process_, &QProcess::errorOccurred, this, [this] {
         enabled_ = ready_ = false;
+        connections_ = {}; emit connectionsChanged();
         emit statusChanged(tr("Remotes are temporarily unavailable. PVT will try again automatically."));
         if (requested_enabled_) restart_timer_.start();
         emit configurationChanged();
     });
     connect(&process_, &QProcess::finished, this, [this] {
         enabled_ = ready_ = false;
+        connections_ = {}; emit connectionsChanged();
         state_timer_.stop();
         if (requested_enabled_) restart_timer_.start();
         emit configurationChanged();
@@ -58,7 +65,7 @@ RemoteBridge::RemoteBridge(QObject* parent) : QObject(parent) {
     requested_enabled_ = QSettings().value("remotes/enabled", false).toBool();
     if (requested_enabled_) QTimer::singleShot(0, this, &RemoteBridge::start);
 }
-RemoteBridge::~RemoteBridge() { stop(); }
+RemoteBridge::~RemoteBridge() { blockSignals(true); stop(); }
 void RemoteBridge::setStateProvider(std::function<QJsonObject()> provider) { state_provider_ = std::move(provider); }
 bool RemoteBridge::minimizeOnClose() const { return QSettings().value("remotes/minimizeOnClose", false).toBool(); }
 void RemoteBridge::start() {
@@ -97,6 +104,7 @@ void RemoteBridge::stop() {
     const bool wanted = requested_enabled_;
     requested_enabled_ = false;
     enabled_ = ready_ = false;
+    connections_ = {}; emit connectionsChanged();
     state_timer_.stop();
     if (process_.state() != QProcess::NotRunning) {
         process_.write("{\"op\":\"shutdown\"}\n");
@@ -138,8 +146,11 @@ void RemoteBridge::receive() {
             if (event == "rejected") {
                 requested_enabled_ = enabled_;
                 QSettings().setValue("remotes/enabled", enabled_);
-                emit statusChanged(tr("Pairing changes could not be saved. Check the pairing file and try again."));
+                emit statusChanged(object.value("error").toString(tr("Remote settings could not be saved. Check the pairing file and address ranges.")));
             } else emit statusChanged(enabled_ ? tr("Networking & Remotes enabled") : tr("Networking & Remotes disabled"));
+        } else if (event == "connections") {
+            connections_ = object.value("connections").toArray();
+            emit connectionsChanged();
         } else if (event == "command") {
             emit commandRequested(object.value("token").toString(), object.value("remote").toString(), object.value("command").toObject());
         } else if (event == "status") {
@@ -172,7 +183,7 @@ void RemoteBridge::configure(const QJsonObject& config, bool enabled) {
     pending_config_.reset();
 }
 bool RemoteBridge::authorized(const QString& remote, const QString& action) const {
-    if (!enabled_) return false;
+    if (!enabled_ || config_.value("paused_remotes").toArray().contains(remote)) return false;
     for (const auto& item : config_.value("remotes").toArray()) {
         const auto p = item.toObject();
         if (p.value("id").toString() != remote) continue;
@@ -234,8 +245,16 @@ void RemoteBridge::selectControl(int slot) {
 void RemoteBridge::showManager(QWidget* parent) {
     QDialog dialog(parent);
     dialog.setWindowTitle(tr("Networking & Remotes"));
-    dialog.resize(620, 480);
+    dialog.resize(820, 720);
     auto* layout = new QVBoxLayout(&dialog);
+    layout->addWidget(createManager(&dialog));
+    dialog.exec();
+}
+
+QWidget* RemoteBridge::createManager(QWidget* parent) {
+    auto* page = new QWidget(parent);
+    auto* layout = new QVBoxLayout(page);
+    layout->setAlignment(Qt::AlignTop);
     auto* store_intro = new QLabel(tr("Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates."));
     store_intro->setWordWrap(true);
     layout->addWidget(store_intro);
@@ -247,14 +266,14 @@ void RemoteBridge::showManager(QWidget* parent) {
     store_row->addWidget(get_control);
     store_row->addWidget(get_display);
     layout->addLayout(store_row);
-    const auto open_store = [&](const QString& url) {
+    const auto open_store = [=](const QString& url) {
         if (!QDesktopServices::openUrl(QUrl(url)))
             store_intro->setText(tr("Could not open the browser. Open this address in Chrome: %1").arg(url));
     };
-    connect(get_control, &QPushButton::clicked, &dialog, [&] {
+    connect(get_control, &QPushButton::clicked, page, [=] {
         open_store(QStringLiteral("https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde"));
     });
-    connect(get_display, &QPushButton::clicked, &dialog, [&] {
+    connect(get_display, &QPushButton::clicked, page, [=] {
         open_store(QStringLiteral("https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda"));
     });
     auto* form = new QFormLayout;
@@ -269,10 +288,39 @@ void RemoteBridge::showManager(QWidget* parent) {
     layout->addWidget(instructions);
     layout->addLayout(form);
     auto* list = new QListWidget;
+    list->setMinimumHeight(90); list->setMaximumHeight(150);
     layout->addWidget(new QLabel(tr("Paired devices")));
     layout->addWidget(list);
     auto* active = new QComboBox;
     form->addRow(tr("Active Control Remote"), active);
+    auto* scope = new QComboBox;
+    scope->setObjectName("remoteAddressScope");
+    scope->addItem(tr("My subnets and this computer"), "subnet");
+    scope->addItem(tr("Private networks (IPv4 and IPv6)"), "private");
+    scope->addItem(tr("Any IP address"), "any");
+    scope->addItem(tr("Custom IP addresses / ranges"), "custom");
+    form->addRow(tr("Allow connections from"), scope);
+    auto* networks = new QLineEdit;
+    networks->setObjectName("remoteCustomNetworks");
+    networks->setPlaceholderText("192.168.1.0/24, 10.0.0.10-10.0.0.40, fd12:3456::/48");
+    networks->setToolTip(tr("Separate IPs, CIDR subnets, or start-end ranges with spaces or commas. Private networks includes RFC 1918, IPv6 unique-local (fc00::/7), link-local (fe80::/10), and loopback. Relay connections require Any IP."));
+    form->addRow(tr("Custom ranges"), networks);
+    auto* port_min = new QSpinBox;
+    auto* port_max = new QSpinBox;
+    port_min->setRange(1, 65535); port_max->setRange(1, 65535);
+    port_min->setValue(1); port_max->setValue(65535);
+    auto* ports = new QHBoxLayout;
+    ports->addWidget(port_min); ports->addWidget(new QLabel(tr("through"))); ports->addWidget(port_max);
+    form->addRow(tr("Remote endpoint ports"), ports);
+    port_min->setToolTip(tr("Applies to remote signaling and media source ports. Browsers normally choose these automatically; keep the full range unless your network requires a restriction."));
+    auto* tracker = new QPushButton(tr("Pop out live connection tracker…"));
+    layout->addWidget(tracker);
+    connect(tracker, &QPushButton::clicked, page, [=] { showTracker(page->window()); });
+    auto* resume = new QPushButton(tr("Resume selected device"));
+    layout->addWidget(resume);
+    connect(resume, &QPushButton::clicked, page, [=] {
+        if (auto* item = list->currentItem()) setPaused(item->data(Qt::UserRole).toString(), false);
+    });
     auto* row = new QHBoxLayout;
     auto* import = new QPushButton(tr("Import .pvtremote…"));
     auto* remove = new QPushButton(tr("Remove remote"));
@@ -285,70 +333,80 @@ void RemoteBridge::showManager(QWidget* parent) {
     auto* status = new QLabel(tr("Preparing pairing…"));
     status->setWordWrap(true);
     layout->addWidget(status);
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Apply | QDialogButtonBox::Close);
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Apply);
     buttons->setObjectName(QStringLiteral("remoteManagerButtons"));
     layout->addWidget(buttons);
-    QJsonArray profiles;
-    QSet<QString> edited_fields;
-    bool loading = false;
-    const auto reload = [&] {
+    struct Draft { QJsonArray profiles; QSet<QString> edited_fields; bool loading = false; };
+    auto draft = std::make_shared<Draft>();
+    const auto reload = [=] {
         export_host->setEnabled(ready_ && enabled_ && !configuring_);
         import->setEnabled(config_loaded_ && !configuring_);
         remove->setEnabled(config_loaded_ && !configuring_);
         active->setEnabled(config_loaded_ && !configuring_);
         // Worker status and startup must not replace an in-progress draft.
-        loading = true;
-        if (!edited_fields.contains("enabled")) enable->setChecked(enabled_);
-        if (!edited_fields.contains("remotes")) profiles = config_.value("remotes").toArray();
-        const auto active_id = edited_fields.contains("active_control")
+        draft->loading = true;
+        if (!draft->edited_fields.contains("enabled")) enable->setChecked(enabled_);
+        if (!draft->edited_fields.contains("remotes")) draft->profiles = config_.value("remotes").toArray();
+        const auto active_id = draft->edited_fields.contains("active_control")
             ? active->currentData().toString() : config_.value("active_control").toString();
+        if (!draft->edited_fields.contains("address_scope")) scope->setCurrentIndex(std::max(0, scope->findData(config_.value("address_scope").toString("subnet"))));
+        if (!draft->edited_fields.contains("custom_networks")) networks->setText(config_.value("custom_networks").toString());
+        if (!draft->edited_fields.contains("remote_port_min")) port_min->setValue(config_.value("remote_port_min").toInt(1));
+        if (!draft->edited_fields.contains("remote_port_max")) port_max->setValue(config_.value("remote_port_max").toInt(65535));
+        networks->setEnabled(scope->currentData() == "custom");
+        const auto selected = list->currentItem() ? list->currentItem()->data(Qt::UserRole).toString() : QString();
         list->clear(); active->clear(); active->addItem(tr("None"), "");
-        for (const auto& item : profiles) {
+        for (const auto& item : draft->profiles) {
             const auto p = item.toObject();
-            list->addItem(p.value("label").toString() + " · " + p.value("role").toString());
+            list->addItem(p.value("label").toString() + " · " + p.value("role").toString() + " · " + p.value("id").toString().left(8)
+                + (config_.value("paused_remotes").toArray().contains(p.value("id")) ? tr(" · Paused") : QString()));
+            list->item(list->count() - 1)->setData(Qt::UserRole, p.value("id").toString());
             if (p.value("role") == "control") active->addItem(p.value("label").toString(), p.value("id").toString());
         }
+        for (int i = 0; i < list->count(); ++i) if (list->item(i)->data(Qt::UserRole) == selected) list->setCurrentRow(i);
         active->setCurrentIndex(std::max(0, active->findData(active_id)));
         buttons->button(QDialogButtonBox::Apply)->setEnabled(!configuring_);
         export_host->setEnabled(ready_ && enabled_ && !configuring_);
-        loading = false;
+        draft->loading = false;
     };
-    connect(this, &RemoteBridge::configurationChanged, &dialog, reload);
+    connect(this, &RemoteBridge::configurationChanged, page, reload);
     connect(this, &RemoteBridge::statusChanged, status, &QLabel::setText);
-    connect(import, &QPushButton::clicked, &dialog, [&] {
-        const auto path = QFileDialog::getOpenFileName(&dialog, tr("Import remote"), {}, tr("PVT remote (*.pvtremote)"));
+    connect(import, &QPushButton::clicked, page, [=] {
+        const auto path = QFileDialog::getOpenFileName(page, tr("Import remote"), {}, tr("PVT remote (*.pvtremote)"));
         if (path.isEmpty()) return;
         QFile file(path);
         if (!file.open(QIODevice::ReadOnly) || file.size() > 16384) { status->setText(tr("Cannot read pairing file (16 KiB maximum).")); return; }
         const auto p = QJsonDocument::fromJson(file.readAll()).object();
-        if (p.value("type") != "pvtremote" || p.value("version").toInt() != 1 || profiles.size() >= 64) { status->setText(tr("Invalid pairing file or remote limit reached.")); return; }
-        for (const auto& existing : profiles) if (existing.toObject().value("id") == p.value("id")) { status->setText(tr("Remove the existing identity before replacing its keys.")); return; }
-        profiles.append(p);
-        edited_fields.remove("remotes");
-        list->addItem(p.value("label").toString() + " · " + p.value("role").toString());
+        if (p.value("type") != "pvtremote" || p.value("version").toInt() != 1 || draft->profiles.size() >= 64) { status->setText(tr("Invalid pairing file or remote limit reached.")); return; }
+        for (const auto& existing : draft->profiles) if (existing.toObject().value("id") == p.value("id")) { status->setText(tr("Remove the existing identity before replacing its keys.")); return; }
+        draft->profiles.append(p);
+        draft->edited_fields.remove("remotes");
+        list->addItem(p.value("label").toString() + " · " + p.value("role").toString() + " · " + p.value("id").toString().left(8)
+                + (config_.value("paused_remotes").toArray().contains(p.value("id")) ? tr(" · Paused") : QString()));
+            list->item(list->count() - 1)->setData(Qt::UserRole, p.value("id").toString());
         if (p.value("role") == "control") {
             active->addItem(p.value("label").toString(), p.value("id").toString());
             if (active->currentData().toString().isEmpty()) active->setCurrentIndex(active->count() - 1);
         }
         enable->setChecked(true);
-        edited_fields.remove("enabled");
-        edited_fields.remove("active_control");
-        configure({{"remotes", profiles}, {"active_control", active->currentData().toString()}}, true);
+        draft->edited_fields.remove("enabled");
+        draft->edited_fields.remove("active_control");
+        configure({{"remotes", draft->profiles}, {"active_control", active->currentData().toString()}}, true);
         export_host->setEnabled(false);
     });
-    connect(remove, &QPushButton::clicked, &dialog, [&] {
+    connect(remove, &QPushButton::clicked, page, [=] {
         const int index = list->currentRow();
         if (index < 0) return;
-        edited_fields.remove("remotes");
-        const auto id = profiles[index].toObject().value("id").toString();
-        profiles.removeAt(index); delete list->takeItem(index);
+        draft->edited_fields.remove("remotes");
+        const auto id = draft->profiles[index].toObject().value("id").toString();
+        draft->profiles.removeAt(index); delete list->takeItem(index);
         const int choice = active->findData(id);
         if (choice >= 0) active->removeItem(choice);
-        edited_fields.remove("active_control");
-        configure({{"remotes", profiles}, {"active_control", active->currentData().toString()}}, enable->isChecked());
+        draft->edited_fields.remove("active_control");
+        configure({{"remotes", draft->profiles}, {"active_control", active->currentData().toString()}}, enable->isChecked());
     });
-    connect(export_host, &QPushButton::clicked, &dialog, [&] {
-        const auto path = QFileDialog::getSaveFileName(&dialog, tr("Export host"), "PVT.pvthost", tr("PVT host (*.pvthost)"));
+    connect(export_host, &QPushButton::clicked, page, [=] {
+        const auto path = QFileDialog::getSaveFileName(page, tr("Export host"), "PVT.pvthost", tr("PVT host (*.pvthost)"));
         if (path.isEmpty()) return;
         QSaveFile file(path);
         if (!file.open(QIODevice::WriteOnly)) { status->setText(file.errorString()); return; }
@@ -356,26 +414,103 @@ void RemoteBridge::showManager(QWidget* parent) {
         if (!file.commit()) status->setText(file.errorString());
         else status->setText(tr("Pairing file saved. Open it in Remote Display or Remote Control to finish setup."));
     });
-    connect(background, &QPushButton::clicked, &dialog, [&] {
-        dialog.accept(); emit backgroundRequested(!background_);
+    connect(background, &QPushButton::clicked, page, [=] {
+        emit backgroundRequested(!background_);
     });
-    connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, &dialog, [&] {
+    connect(buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, page, [=] {
         QSettings().setValue("remotes/minimizeOnClose", close->isChecked());
-        QJsonObject changes{{"remotes", profiles}, {"active_control", active->currentData().toString()}};
+        QJsonObject changes{{"remotes", draft->profiles}, {"active_control", active->currentData().toString()},
+            {"address_scope", scope->currentData().toString()}, {"custom_networks", networks->text()},
+            {"remote_port_min", port_min->value()}, {"remote_port_max", port_max->value()}};
         // On first startup we haven't read the saved configuration yet. Send
         // only authored fields so defaults cannot erase unseen paired remotes
         // or network settings; the worker already merges configuration patches.
         if (!config_loaded_) {
             for (const auto& key : changes.keys())
-                if (!edited_fields.contains(key)) changes.remove(key);
+                if (!draft->edited_fields.contains(key)) changes.remove(key);
         }
         configure(changes, enable->isChecked());
     });
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (auto* dialog = qobject_cast<QDialog*>(parent))
+        connect(dialog, &QDialog::accepted, page, [buttons] { buttons->button(QDialogButtonBox::Apply)->click(); });
     reload();
-    const auto edited = [&](const QString& key) { if (!loading) edited_fields.insert(key); };
-    connect(enable, &QCheckBox::toggled, &dialog, [&] { edited("enabled"); });
-    connect(active, &QComboBox::currentIndexChanged, &dialog, [&] { edited("active_control"); });
+    const auto edited = [=](const QString& key) { if (!draft->loading) draft->edited_fields.insert(key); };
+    connect(enable, &QCheckBox::toggled, page, [=] { edited("enabled"); });
+    connect(active, &QComboBox::currentIndexChanged, page, [=] { edited("active_control"); });
+    connect(scope, &QComboBox::currentIndexChanged, page, [=] { edited("address_scope"); networks->setEnabled(scope->currentData() == "custom"); });
+    connect(networks, &QLineEdit::textChanged, page, [=] { edited("custom_networks"); });
+    connect(port_min, &QSpinBox::valueChanged, page, [=] { edited("remote_port_min"); });
+    connect(port_max, &QSpinBox::valueChanged, page, [=] { edited("remote_port_max"); });
     if (!ready_) start();
-    dialog.exec();
+    return page;
+}
+
+QString RemoteBridge::connectionSummary() const {
+    QStringList names;
+    for (const auto& value : connections_) {
+        const auto row = value.toObject();
+        names << tr("%1 %2 [%3]").arg(row.value("role") == "control" ? tr("Control") : tr("View"),
+            row.value("label").toString(), row.value("id").toString().left(8));
+    }
+    return names.isEmpty() ? QString() : tr(" ● Remotes: %1").arg(names.join(", "));
+}
+
+void RemoteBridge::showTracker(QWidget* parent) {
+    auto* dialog = new QDialog(parent);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    if (auto* settings = qobject_cast<QDialog*>(parent)) {
+        auto* owner = qobject_cast<QWidget*>(this->parent());
+        connect(settings, &QDialog::finished, dialog, [dialog, owner] {
+            dialog->setParent(owner, Qt::Window); dialog->show();
+        });
+    }
+    dialog->setWindowTitle(tr("Live remote connections"));
+    dialog->resize(1100, 420);
+    auto* layout = new QVBoxLayout(dialog);
+    auto* hint = new QLabel(tr("Authenticated devices. Browser details are self-reported; the identity distinguishes pairings. Media endpoints are allowed ICE candidates, not a claim that every candidate is in use. — means no measurement is available. Pause disconnects a device and prevents automatic reconnection until resumed in Remotes."));
+    hint->setWordWrap(true); layout->addWidget(hint);
+    auto* table = new QTableWidget(0, 10);
+    table->setHorizontalHeaderLabels({tr("Device / identity"), tr("Role / access"), tr("Browser / extension / OS"), tr("Signaling endpoint"), tr("Media candidates"), tr("Status"), tr("Connected"), tr("RTT ms"), tr("Lost packets"), tr("Traffic kbit/s / sent / received")});
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    layout->addWidget(table);
+    auto* pause = new QPushButton(tr("Disconnect and pause selected device")); layout->addWidget(pause);
+    const auto refresh = [this, table] {
+        const auto selected = table->currentRow() >= 0 ? table->item(table->currentRow(), 0)->data(Qt::UserRole).toString() : QString();
+        table->setRowCount(static_cast<int>(connections_.size()));
+        for (int i = 0; i < connections_.size(); ++i) {
+            const auto row = connections_[i].toObject();
+            const auto client = row.value("client").toObject();
+            const auto metric = [&](const char* key) { return row.contains(key) ? QString::number(row.value(key).toDouble()) : QStringLiteral("—"); };
+            QStringList values{row.value("label").toString() + " / " + row.value("id").toString(),
+                row.value("role").toString() + (row.value("active_control").toBool() ? tr(" · Can edit") : tr(" · View / status")),
+                client.value("browser").toString() + " / " + client.value("version").toString() + " / " + client.value("platform").toString(),
+                row.value("endpoint").toString(), row.value("media_endpoints").toString(), row.value("status").toString(),
+                tr("%1 s").arg(row.value("seconds").toInt()), metric("rtt_ms"), metric("packets_lost"),
+                metric("kbps") + " / " + metric("bytes_sent") + " B / " + metric("bytes_received") + " B"};
+            for (int j = 0; j < values.size(); ++j) {
+                auto* item = new QTableWidgetItem(values[j]); item->setToolTip(values[j]);
+                item->setData(Qt::UserRole, row.value("id").toString()); table->setItem(i, j, item);
+            }
+            if (row.value("id").toString() == selected) table->selectRow(i);
+        }
+    };
+    connect(this, &RemoteBridge::connectionsChanged, dialog, refresh);
+    connect(pause, &QPushButton::clicked, dialog, [this, table] {
+        if (table->currentRow() >= 0) setPaused(table->item(table->currentRow(), 0)->data(Qt::UserRole).toString(), true);
+    });
+    refresh(); dialog->show();
+}
+
+void RemoteBridge::setPaused(const QString& remote, bool paused) {
+    auto list = config_.value("paused_remotes").toArray();
+    if (paused && !list.contains(remote)) list.append(remote);
+    if (!paused) for (int i = static_cast<int>(list.size()) - 1; i >= 0; --i) if (list[i] == remote) list.removeAt(i);
+    config_.insert("paused_remotes", list);
+    // Revoke queued desktop commands before waiting for the worker to close sockets.
+    emit configurationChanged();
+    send({{"op", "pause"}, {"remote", remote}, {"paused", paused}});
 }

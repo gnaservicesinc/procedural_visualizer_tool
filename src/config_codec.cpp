@@ -332,7 +332,7 @@ bool supported_layer_version(const std::string& serialized,
                     : layer_version == 19U ? 21U
                     : layer_version == 20U ? 22U
                     : layer_version == 21U ? 24U
-                    : layer_version == 22U ? 25U : 26U;
+                    : layer_version == 22U ? 25U : layer_version == 23U ? 26U : 28U;
     return true;
 }
 
@@ -625,6 +625,7 @@ bool synthesize_setup(const std::string& partial,
         if (setup_version < 25U && is_setup_v25_key(key)) {
             continue;
         }
+        if (setup_version < 28U && starts_with(key, "source_image.photo.")) continue;
         if (setup_version < 27U && is_setup_v27_key(key)) {
             continue;
         }
@@ -821,6 +822,8 @@ bool serialize_layer_config(const RenderData& render,
         if (!project.layers.front().render.starting_image.sha256.empty()) {
             project.layers.front().render.starting_image.path.clear();
         }
+        for (auto& image : project.layers.front().render.starting_image.derived_images)
+            if (!image.sha256.empty()) image.path.clear();
         // Layer validity must not depend on an arbitrary final RGB/RGBA choice.
         // The project-global output codec validates that choice separately.
         project.output.write_alpha = true;

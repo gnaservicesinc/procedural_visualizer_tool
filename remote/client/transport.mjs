@@ -1,3 +1,9 @@
+function clientInfo() {
+  const runtime = globalThis.browser?.runtime || globalThis.chrome?.runtime;
+  return {browser: navigator.userAgent, platform: navigator.platform,
+    version: runtime?.getManifest?.().version || "unknown"};
+}
+
 import {Cipher, unb64} from './protocol.mjs';
 export class Connection {
   constructor(identity, host, {onStatus, onStream, iceServers = []} = {}) {
@@ -87,7 +93,7 @@ export class Connection {
               await this.offer(ws, pc);
             } else {
               this.challenge = message.challenge;
-              ws.send(JSON.stringify(await this.cipher.seal(this.host, {op: 'hello', challenge: message.challenge})));
+              ws.send(JSON.stringify(await this.cipher.seal(this.host, {op: 'hello', challenge: message.challenge, client: clientInfo()})));
             }
           } else if (message.op === 'result' && this.local && this.authenticated) {
             this.result(message);
@@ -111,7 +117,7 @@ export class Connection {
       pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') { clearTimeout(timer); resolve(); } };
     });
     if (this.closed || this.ws !== ws) return;
-    ws.send(JSON.stringify(await this.cipher.seal(this.host, {op: 'offer', session: this.session, sdp: pc.localDescription.sdp})));
+    ws.send(JSON.stringify(await this.cipher.seal(this.host, {op: 'offer', client: clientInfo(), session: this.session, sdp: pc.localDescription.sdp})));
   }
   command(action, fields = {}) {
     const message = {op: 'command', id: crypto.randomUUID(), action, ...fields};

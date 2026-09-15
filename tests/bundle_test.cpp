@@ -543,7 +543,7 @@ void test_layer_codec_backward_compatibility() {
     std::string error;
     CHECK(pvt::detail::serialize_layer_config(
         original, current_layer, &error, &motion_paths));
-    CHECK(current_layer.rfind("PVT_LAYER\t23\n", 0U) == 0U);
+    CHECK(current_layer.rfind("PVT_LAYER\t24\n", 0U) == 0U);
     pvt::RenderData current_round_trip;
     CHECK(pvt::detail::deserialize_layer_config(
         current_layer, current_round_trip, &error, &motion_paths));
@@ -734,7 +734,7 @@ void test_layer_codec_backward_compatibility() {
     std::ostringstream version_twenty_one_output;
     std::string version_line;
     CHECK(static_cast<bool>(std::getline(current_v22_input, version_line)));
-    CHECK(version_line == "PVT_LAYER\t23");
+    CHECK(version_line == "PVT_LAYER\t24");
     version_twenty_one_output << "PVT_LAYER\t21\n";
     while (std::getline(current_v22_input, version_line)) {
         const std::size_t tab = version_line.find('\t');
@@ -868,7 +868,7 @@ void test_layer_codec_backward_compatibility() {
     std::string serialized_water_layer;
     CHECK(pvt::detail::serialize_layer_config(
         water_layer, serialized_water_layer, &error, &motion_paths));
-    CHECK(serialized_water_layer.rfind("PVT_LAYER\t23\n", 0U) == 0U);
+    CHECK(serialized_water_layer.rfind("PVT_LAYER\t24\n", 0U) == 0U);
     pvt::RenderData loaded_water_layer;
     CHECK(pvt::detail::deserialize_layer_config(
         serialized_water_layer, loaded_water_layer, &error, &motion_paths));
@@ -1574,7 +1574,7 @@ void test_aggregate_particle_bundle_recovery(const fs::path& directory) {
     std::ostringstream legacy_layer;
     std::string line;
     CHECK(static_cast<bool>(std::getline(current_layer, line)));
-    CHECK(line == "PVT_LAYER\t23");
+    CHECK(line == "PVT_LAYER\t24");
     legacy_layer << "PVT_LAYER\t12\n";
     const auto has_suffix = [](const std::string& value,
                                const std::string& suffix) {
@@ -3663,7 +3663,8 @@ void test_content_addressed_embedded_assets(const fs::path& directory) {
     old_layer << "PVT_LAYER_SPLIT\t1\n";
     while (std::getline(modern_lines, old_line)) {
         const std::string key = old_line.substr(0U, old_line.find('\t'));
-        const bool newer = key == "split.layer_format_version"
+        const bool newer = key.rfind("source_image.photo.", 0U) == 0U
+            || key == "split.layer_format_version"
             || key == "starting_colors.legacy_alpha_outermost"
             || key == "post_process.effects_authoritative"
             || key.rfind("post_process.invert_red_", 0U) == 0U

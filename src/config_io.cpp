@@ -111,8 +111,8 @@ constexpr std::size_t kMaximumMusicBasenameBytes = kMaximumUiItems;
 constexpr std::size_t kMaximumMusicFormatBytes = kMaximumUiItems;
 constexpr std::size_t kSha256HexBytes = 64U;
 
-static_assert(kSetupFormatVersion == 27U,
-              "config_io.cpp implements setup format version 27");
+static_assert(kSetupFormatVersion == 28U,
+              "config_io.cpp implements setup format version 28");
 static_assert(std::is_nothrow_move_assignable_v<RenderConfig>,
               "transactional setup loading requires a non-throwing commit");
 
@@ -1405,6 +1405,7 @@ bool enum_token(Enum value,
 
 class SetupBuilder {
 public:
+    bool photo_fields() const { return true; }
     static constexpr bool kReading = false;
     bool add_music_onset(std::string_view key, MusicOnsetDetection value) {
         return add_enum(key, value, kMusicOnsetDetections);
@@ -1514,6 +1515,7 @@ private:
 
 class RawSetupBuilder {
 public:
+    bool photo_fields() const { return true; }
     static constexpr bool kReading = false;
     bool add_music_onset(std::string_view, MusicOnsetDetection) { return true; }
     template <typename Config>
@@ -2891,9 +2893,27 @@ bool serialize_setup_values(Config& config,
     builder.add_integer("output.filename_digits", config.output.filename_digits);
     builder.add_bool("output.overwrite_existing", config.output.overwrite_existing);
 
-    if (!builder.add_music_onset_suffix(config) || !builder.ok()) {
-        return false;
+    if (!builder.add_music_onset_suffix(config)) return false;
+    // Append raw layout 3; never alter the legacy scalar walk above.
+    if (builder.photo_fields()) {
+        auto& photo = config.starting_image;
+        builder.add_flag_bank("source_image.photo.flags", photo.photo_flags, 3U, 2U);
+        builder.add_bool("source_image.photo.depth_enabled", photo.depth_enabled);
+        builder.add_bool("source_image.photo.depth_lighting", photo.depth_lighting);
+        builder.add_double("source_image.photo.depth_amount", photo.depth_amount);
+        builder.add_double("source_image.photo.tilt_x", photo.depth_tilt_x);
+        builder.add_double("source_image.photo.tilt_y", photo.depth_tilt_y);
+        builder.add_collection("source_image.photo.images.count", photo.derived_images, 32U);
+        for (std::size_t i = 0; i < photo.derived_images.size(); ++i) {
+            auto& image = photo.derived_images[i];
+            builder.add_string(indexed_key("source_image.photo.images", i, "kind"), image.kind);
+            builder.add_string(indexed_key("source_image.photo.images", i, "name"), image.name);
+            builder.add_string(indexed_key("source_image.photo.images", i, "path"), image.path);
+            builder.add_string(indexed_key("source_image.photo.images", i, "sha256"), image.sha256);
+            builder.add_string(indexed_key("source_image.photo.images", i, "basename"), image.basename);
+        }
     }
+    if (!builder.ok()) return false;
     return true;
 }
 
@@ -2912,11 +2932,12 @@ bool serialize_setup(const RenderConfig& config,
 
 class RawSetupReader {
 public:
+    bool photo_fields() const { return photo_suffix_; }
     static constexpr bool kReading = true;
 
     RawSetupReader(const std::string& contents, const std::string& strings,
-                   std::string* error, bool onset_suffix)
-        : contents_(contents), strings_(strings), error_(error), onset_suffix_(onset_suffix) {}
+                   std::string* error, bool onset_suffix, bool photo_suffix = false)
+        : contents_(contents), strings_(strings), error_(error), onset_suffix_(onset_suffix), photo_suffix_(photo_suffix) {}
 
     bool add_music_onset(std::string_view, MusicOnsetDetection) { return true; }
     template <typename Config>
@@ -2933,14 +2954,14 @@ public:
     }
 
     template <typename Collection>
-    bool add_collection(std::string_view, Collection& values,
+    bool add_collection(std::string_view key, Collection& values,
                         std::size_t maximum) {
         std::uint32_t count = 0U;
         // Every item in the frozen walk consumes numeric bytes. Bound the
         // allocation by actual input before resize; a tiny damaged snapshot
         // must not request billions of in-memory objects.
         if (!integer(count) || count > maximum
-            || count > contents_.size() - offset_) {
+            || (key != "source_image.photo.images.count" && count > contents_.size() - offset_)) {
             return set_failure("Raw snapshot collection count is invalid.");
         }
         values.resize(static_cast<std::size_t>(count));
@@ -3050,6 +3071,7 @@ private:
     std::size_t offset_ = 0U;
     std::size_t string_offset_ = 0U;
     bool onset_suffix_ = false;
+    bool photo_suffix_ = false;
     bool ok_ = true;
 };
 
@@ -4131,6 +4153,26 @@ bool deserialize_setup(Reader& records,
             || !consume_music_extensions(
                 records, "timing.music.", candidate.clock.music, error))) {
         return false;
+    }
+    if (setup_version >= 28U) {
+        auto& photo = candidate.starting_image;
+        std::size_t count = 0;
+        if (!consume_flag_bank(records, "source_image.photo.flags", photo.photo_flags, 3U, 2U, error)
+            || !consume_bool(records, "source_image.photo.depth_enabled", photo.depth_enabled, error)
+            || !consume_bool(records, "source_image.photo.depth_lighting", photo.depth_lighting, error)
+            || !consume_double(records, "source_image.photo.depth_amount", photo.depth_amount, error)
+            || !consume_double(records, "source_image.photo.tilt_x", photo.depth_tilt_x, error)
+            || !consume_double(records, "source_image.photo.tilt_y", photo.depth_tilt_y, error)
+            || !consume_count(records, "source_image.photo.images.count", 32U, count, error)) return false;
+        photo.derived_images.resize(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            auto& image = photo.derived_images[i];
+            if (!consume_bounded_string(records, indexed_key("source_image.photo.images", i, "kind"), 16U, image.kind, error)
+                || !consume_bounded_string(records, indexed_key("source_image.photo.images", i, "name"), 240U, image.name, error)
+                || !consume_string(records, indexed_key("source_image.photo.images", i, "path"), image.path, error)
+                || !consume_bounded_string(records, indexed_key("source_image.photo.images", i, "sha256"), kSha256HexBytes, image.sha256, error)
+                || !consume_bounded_string(records, indexed_key("source_image.photo.images", i, "basename"), kMaximumAttachmentBasenameBytes, image.basename, error)) return false;
+        }
     }
     if (setup_version >= 7U) {
         if (!consume_bool(records, "source_image.enabled",
@@ -6270,8 +6312,8 @@ bool serialize_raw_config(const RenderConfig& config,
         // copied in their native representation straight into one contiguous
         // buffer; no text, field tag, or Boolean expansion is involved.
         RawSetupBuilder builder(error);
-        static_assert(kRawConfigCurrentLayout == 2U
-                          && kSetupFormatVersion == 27U,
+        static_assert(kRawConfigCurrentLayout == 3U
+                          && kSetupFormatVersion == 28U,
                       "preserve the layout-1 walk and append layout-2 onset settings");
         if (!serialize_setup_values(config, builder, error,
                                     enforce_particle_workload)) {
@@ -6302,13 +6344,13 @@ bool deserialize_raw_config(const std::string& numeric,
         }
         RenderConfig candidate;
         bool decoded = false;
-        static_assert(kRawConfigCurrentLayout == 2U);
+        static_assert(kRawConfigCurrentLayout == 3U);
         // Each attempt must consume both streams exactly. Layout 2 adds only
         // a five-enum suffix; layout 1 restores the historical Hybrid default.
-        for (bool onset_suffix : {true, false}) {
+        for (int layout : {3, 2, 1}) {
             RenderConfig attempt;
             std::string attempt_error;
-            RawSetupReader reader(numeric, strings, &attempt_error, onset_suffix);
+            RawSetupReader reader(numeric, strings, &attempt_error, layout >= 2, layout >= 3);
             if (serialize_setup_values(attempt, reader, &attempt_error,
                                        enforce_particle_workload)) {
                 candidate = std::move(attempt);
