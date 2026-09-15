@@ -15218,32 +15218,12 @@ Hinweise:</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+130"/>
+        <location filename="../gui/remote_bridge.cpp" line="+131"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Der Fernsteuerungsprozess hat das Nachrichtenlimit überschritten.</translation>
     </message>
     <message>
-        <location line="+128"/>
-        <source>Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates.</source>
-        <translation>Installieren Sie die Browser-Erweiterungen aus dem Chrome Web Store und koppeln Sie sie anschließend unten. Chrome übernimmt die Installation und genehmigte Updates.</translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Get Remote Control for Chrome</source>
-        <translation>Remote Control für Chrome herunterladen</translation>
-    </message>
-    <message>
-        <location line="+2"/>
-        <source>Get Remote Display for Chrome</source>
-        <translation>Remote Display für Chrome herunterladen</translation>
-    </message>
-    <message>
-        <location line="+7"/>
-        <source>Could not open the browser. Open this address in Chrome: %1</source>
-        <translation>Der Browser konnte nicht geöffnet werden. Öffnen Sie diese Adresse in Chrome: %1</translation>
-    </message>
-    <message>
-        <location line="+11"/>
+        <location line="+166"/>
         <source>Close window to system tray / menu bar</source>
         <translation>Fenster in den Infobereich / die Menüleiste schließen</translation>
     </message>
@@ -15280,12 +15260,12 @@ Hinweise:</translation>
     </message>
     <message>
         <location line="-232"/>
-        <location line="+283"/>
+        <location line="+287"/>
         <source>ID: %1</source>
         <translation>ID: %1</translation>
     </message>
     <message>
-        <location line="-282"/>
+        <location line="-286"/>
         <source> · </source>
         <translation> · </translation>
     </message>
@@ -15331,6 +15311,11 @@ Hinweise:</translation>
     </message>
     <message>
         <location line="+23"/>
+        <source>Extension update required: PVT-RC and PVT-RD 0.2.2 are unsupported because Disconnect is missing. Do not use these extensions until updated to 0.2.3 or later.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+4"/>
         <source>Live connections reconnect automatically. Remove a Remote file from the saved devices to revoke its access. A dash means no measurement is available.</source>
         <translation>Aktive Verbindungen werden automatisch wiederhergestellt. Entfernen Sie eine Remote-Datei aus den gespeicherten Geräten, um deren Zugriff zu widerrufen. Ein Strich bedeutet, dass kein Messwert verfügbar ist.</translation>
     </message>
@@ -15340,7 +15325,12 @@ Hinweise:</translation>
         <translation>Status</translation>
     </message>
     <message>
-        <location line="+26"/>
+        <location line="+27"/>
+        <source>Unsupported extension — do not use until updated to 0.2.3 or later</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+6"/>
         <source>%1 ms</source>
         <translation>%1 ms</translation>
     </message>
@@ -15360,7 +15350,7 @@ Hinweise:</translation>
         <translation>%1 s</translation>
     </message>
     <message>
-        <location line="-615"/>
+        <location line="-640"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation>Fernsteuerungen sind vorübergehend nicht verfügbar. PVT versucht es automatisch erneut.</translation>
     </message>
@@ -15395,7 +15385,37 @@ Hinweise:</translation>
         <translation>Remote-Dateien und Netzwerkeinstellungen verwalten</translation>
     </message>
     <message>
-        <location line="+32"/>
+        <location line="+10"/>
+        <source>Update both browser extensions to 0.2.3 or later before use. Version 0.2.2 removed Disconnect and is unsupported. Do not use it until updated. Firefox downloads are available from the release page while store review is pending.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>Update Remote Control for Chrome</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Update Remote Display for Chrome</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Could not open the browser. Open this address in your browser: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <source>Update Remote Control for Firefox</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Update Remote Display for Firefox</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location line="+12"/>
         <source>Enable Remotes</source>
         <translation>Fernsteuerungen aktivieren</translation>
     </message>
@@ -15524,13 +15544,13 @@ Hinweise:</translation>
         <translation>%1: %2</translation>
     </message>
     <message>
-        <location line="-356"/>
-        <location line="+371"/>
+        <location line="-370"/>
+        <location line="+385"/>
         <source>Remote connection details</source>
         <translation>Details der Remote-Verbindungen</translation>
     </message>
     <message>
-        <location line="+16"/>
+        <location line="+20"/>
         <source>Data use</source>
         <translation>Datennutzung</translation>
     </message>
@@ -15540,7 +15560,7 @@ Hinweise:</translation>
         <translation>Browser/System nicht gemeldet — Erweiterung aktualisieren</translation>
     </message>
     <message>
-        <location line="+5"/>
+        <location line="+12"/>
         <source>Media: %1</source>
         <translation>Medien: %1</translation>
     </message>
@@ -15559,12 +15579,13 @@ Gesendet %2
 Empfangen %3</translation>
     </message>
     <message>
-        <location line="+4"/>
+        <location line="-10"/>
+        <location line="+14"/>
         <source>Extension %1</source>
         <translation>Erweiterung %1</translation>
     </message>
     <message>
-        <location line="-14"/>
+        <location line="-21"/>
         <source>Control PVT</source>
         <translation>PVT steuern</translation>
     </message>

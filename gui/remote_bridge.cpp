@@ -7,6 +7,7 @@
 #include <QDebug>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QVersionNumber>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -255,26 +256,40 @@ QWidget* RemoteBridge::createManager(QWidget* parent) {
     setup_page->setVisible(setup->isChecked());
     connect(setup, &QPushButton::toggled, setup_page, &QWidget::setVisible);
     layout = new QVBoxLayout(setup_page);
-    auto* store_intro = new QLabel(tr("Get the browser extensions from the Chrome Web Store, then pair them below. Chrome handles installation and approved updates."));
+    auto* store_intro = new QLabel(tr("Update both browser extensions to 0.2.3 or later before use. Version 0.2.2 removed Disconnect and is unsupported. Do not use it until updated. Firefox downloads are available from the release page while store review is pending."));
     store_intro->setWordWrap(true);
     layout->addWidget(store_intro);
     auto* store_row = new QHBoxLayout;
-    auto* get_control = new QPushButton(tr("Get Remote Control for Chrome"));
+    auto* get_control = new QPushButton(tr("Update Remote Control for Chrome"));
     get_control->setObjectName(QStringLiteral("remoteControlStore"));
-    auto* get_display = new QPushButton(tr("Get Remote Display for Chrome"));
+    auto* get_display = new QPushButton(tr("Update Remote Display for Chrome"));
     get_display->setObjectName(QStringLiteral("remoteDisplayStore"));
     store_row->addWidget(get_control);
     store_row->addWidget(get_display);
     layout->addLayout(store_row);
     const auto open_store = [=](const QString& url) {
         if (!QDesktopServices::openUrl(QUrl(url)))
-            store_intro->setText(tr("Could not open the browser. Open this address in Chrome: %1").arg(url));
+            store_intro->setText(tr("Could not open the browser. Open this address in your browser: %1").arg(url));
     };
     connect(get_control, &QPushButton::clicked, page, [=] {
         open_store(QStringLiteral("https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde"));
     });
     connect(get_display, &QPushButton::clicked, page, [=] {
         open_store(QStringLiteral("https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda"));
+    });
+    auto* firefox_row = new QHBoxLayout;
+    auto* firefox_control = new QPushButton(tr("Update Remote Control for Firefox"));
+    firefox_control->setObjectName("remoteControlFirefox");
+    auto* firefox_display = new QPushButton(tr("Update Remote Display for Firefox"));
+    firefox_display->setObjectName("remoteDisplayFirefox");
+    firefox_row->addWidget(firefox_control);
+    firefox_row->addWidget(firefox_display);
+    layout->addLayout(firefox_row);
+    connect(firefox_control, &QPushButton::clicked, page, [=] {
+        open_store(QStringLiteral("https://github.com/gnaservicesinc/PVT-RC/releases/latest"));
+    });
+    connect(firefox_display, &QPushButton::clicked, page, [=] {
+        open_store(QStringLiteral("https://github.com/gnaservicesinc/PVT-RD/releases/latest"));
     });
     auto* form = new QFormLayout;
     auto* enable = new QCheckBox(tr("Enable Remotes"));
@@ -625,6 +640,10 @@ QWidget* RemoteBridge::createConnections(QWidget* parent) {
     auto* page = new QWidget(parent);
     auto* layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
+    auto* warning = new QLabel(tr("Extension update required: PVT-RC and PVT-RD 0.2.2 are unsupported because Disconnect is missing. Do not use these extensions until updated to 0.2.3 or later."));
+    warning->setObjectName("remoteExtensionWarning");
+    warning->setWordWrap(true);
+    layout->addWidget(warning);
     auto* hint = new QLabel(tr("Live connections reconnect automatically. Remove a Remote file from the saved devices to revoke its access. A dash means no measurement is available."));
     hint->setWordWrap(true); layout->addWidget(hint);
     auto* table = new QTableWidget(0, 5);
@@ -651,11 +670,18 @@ QWidget* RemoteBridge::createConnections(QWidget* parent) {
             device << (browser.isEmpty() ? tr("Browser/system not reported — update the extension") : browser);
             if (!platform.isEmpty()) device << platform;
             device << tr("ID: %1").arg(row.value("id").toString().left(13));
+            const auto version = client.value("version").toString();
+            const auto parsed_version = QVersionNumber::fromString(version);
+            const bool needs_update = parsed_version.isNull() || parsed_version < QVersionNumber(0, 2, 3);
+            device << tr("Extension %1").arg(version.isEmpty() ? QStringLiteral("—") : version);
+            QString status = row.value("status").toString();
+            if (needs_update)
+                status = tr("Unsupported extension — do not use until updated to 0.2.3 or later") + '\n' + status;
             QStringList addresses{row.value("endpoint").toString()};
             if (!row.value("media_endpoints").toString().isEmpty())
                 addresses << tr("Media: %1").arg(row.value("media_endpoints").toString());
             QStringList values{device.join('\n'), addresses.join('\n'),
-                row.value("status").toString() + '\n' + tr("%1 s").arg(row.value("seconds").toInt()),
+                status + '\n' + tr("%1 s").arg(row.value("seconds").toInt()),
                 (row.contains("rtt_ms") ? tr("%1 ms").arg(metric("rtt_ms", 1)) : QStringLiteral("—")) + '\n' + tr("Packets lost: %1").arg(metric("packets_lost")),
                 tr("%1\nSent %2\nReceived %3").arg(row.contains("kbps") ? (row.value("kbps").toDouble() >= 1000 ? tr("%1 Mb/s").arg(QLocale().toString(row.value("kbps").toDouble() / 1000, 'f', 1)) : tr("%1 kb/s").arg(metric("kbps", 1))) : QStringLiteral("—"), bytes("bytes_sent"), bytes("bytes_received"))};
             const auto key = row.value("session").toString(row.value("id").toString());

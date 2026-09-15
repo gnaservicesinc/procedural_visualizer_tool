@@ -72,7 +72,7 @@ static int worker() {
         if (op == "enable" || op == "configure") {
             emitJson({{"event", "connections"}, {"connections", QJsonArray{QJsonObject{
                 {"id", "saved-remote"}, {"session", "tab-one"}, {"role", "control"},
-                {"client", QJsonObject{{"browser", "Chrome 145"}, {"platform", "macOS"}, {"version", "0.2.1"}}},
+                {"client", QJsonObject{{"browser", "Chrome 145"}, {"platform", "macOS"}, {"version", "0.2.2"}}},
                 {"endpoint", "127.0.0.1:54321"}, {"status", "connected"},
                 {"bytes_sent", 14039500}, {"bytes_received", 436297}, {"kbps", 349.3}, {"rtt_ms", 0.7}}}}});
         }
@@ -179,12 +179,18 @@ int main(int argc, char** argv) {
             dialog->findChild<QPushButton*>("remoteControlStore");
         auto* display_store =
             dialog->findChild<QPushButton*>("remoteDisplayStore");
-        if (control_store && display_store) {
+        auto* firefox_control = dialog->findChild<QPushButton*>("remoteControlFirefox");
+        auto* firefox_display = dialog->findChild<QPushButton*>("remoteDisplayFirefox");
+        if (control_store && display_store && firefox_control && firefox_display) {
             control_store->click();
             display_store->click();
+            firefox_control->click();
+            firefox_display->click();
             store_links = receiver.urls == QList<QUrl>{
                 QUrl("https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde"),
-                QUrl("https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda")};
+                QUrl("https://chromewebstore.google.com/detail/pvt-remote-display/ebehogflkicknbgeimbmhfeaagjfgfda"),
+                QUrl("https://github.com/gnaservicesinc/PVT-RC/releases/latest"),
+                QUrl("https://github.com/gnaservicesinc/PVT-RD/releases/latest")};
         }
         if (!spin([&] { return enabled->isEnabled(); })
             || ranges->isVisible() || firewall->isVisible()) {
@@ -323,6 +329,8 @@ int main(int argc, char** argv) {
     if (!table || !spin([&] { return table->rowCount() == 1; })
         || !table->item(0, 0)->text().contains("Chrome 145")
         || !table->item(0, 0)->text().contains("macOS")
+        || !table->item(0, 2)->text().contains("Unsupported extension")
+        || !table->item(0, 2)->text().contains("0.2.3")
         || !table->item(0, 4)->text().contains("MB")
         || !table->item(0, 4)->text().contains("kb/s")
         || table->item(0, 4)->text().contains("e+")) {
