@@ -10,13 +10,15 @@ apply immediately; Cancel restores the opening settings. Networking remains opt-
 Export a **Remote file (.pvtremote)** from each extension and import the files in
 PVT. Export the **PVT host file (.pvthost)** from PVT and import it in each extension.
 Every imported control profile can edit through the normal project validation and
-undo path. Display profiles receive output. Removing a saved Remote file revokes
-that identity and closes all its connections. Connection pause and controller
-selection controls have been removed, including their saved settings and MIDI target.
+undo path. Display profiles receive output. The first time an imported identity
+connects, PVT shows its authenticated role and last-reported browser, platform,
+version, address, and identity, then asks for a unique remembered name.
 
 The address presets are:
 
-- **This computer and devices on the same IP subnets** (default): loopback and
+- **This computer only** (default): accepts loopback connections only. PVT binds
+  no LAN listener and does not scan interfaces or advertise an mDNS service.
+- **This computer and devices on the same IP subnets**: loopback and
   the actual IP subnets of this computer’s current network interfaces, including
   IPv6. Interface changes are refreshed within three seconds.
 - **Any private network**: RFC 1918, IPv6 unique-local `fc00::/7`, IPv6 link-local
@@ -26,12 +28,33 @@ The address presets are:
 - **Only the addresses or ranges below**: individual IPs, CIDR subnets, and
   inclusive start–end ranges separated by spaces or commas.
 
-The live table identifies devices by browser, system, remote type, address and
-stable identity. Each browser tab has its own connection; opening another tab
-with the same profile does not disconnect an existing tab. Full identity and
-extension version are available in the device tooltip. Older extensions’ browser
-headers supply descriptive metadata when available. Saved devices retain the last
-reported browser/system and endpoint; names are not used as their identity.
+The connection table is also the saved-device list. It identifies remotes by their
+unique name, browser, system, remote type, address and stable identity. Multiple
+tabs can still use one authenticated identity without replacing each other, but
+they share one permanent row. When a known remote becomes unreachable, its last
+details remain frozen in gray. Full identity and extension version are available in the
+device tooltip. Older extensions’ browser headers supply descriptive metadata
+when available. Names never replace public-key identity.
+
+Right-click or Control-click a selected row to rename it or remove it. Removal
+revokes the identity, closes its connections, and archives the public Remote file
+and last-known metadata. **Recover a remote** lists archived entries by name and
+date, shows their contents, restores one, or exports its `.pvtremote` file.
+Unreachable rows can remember a replacement IP address or hostname; PVT resolves
+that address and recognizes the authenticated remote when it returns.
+
+Remote Display rows also offer Pause with Blackout (the default) or Freeze frame,
+Unpause, and—when browser audio is enabled—Mute or Unmute. Paused and muted streams
+keep their WebRTC clocks alive with replacement video and silent audio. Either PVT
+or an updated Remote Display can resume or unmute. Capability-advertising extensions
+also allow PVT to request Disconnect or Reconnect; older extensions continue using
+their existing connection and local Disconnect controls without being rejected by
+version number. Disconnect is an intentional persistent state, whether selected in
+Remote Display or from PVT: WebRTC media and controls stop and automatic media
+reconnection stays off. A small authenticated signaling connection remains so a
+reachable remote is not gray and PVT can offer Reconnect as an explicit on switch.
+If that signaling connection is unavailable, the row is gray and Reconnect is not
+shown. Reconnect resumes the normal automatic-recovery behavior.
 
 Response time is shown in ms, traffic rate in kb/s or Mb/s, and cumulative sent
 and received media/transport data in B, KB, MB or GB. Missing measurements show a
@@ -39,8 +62,9 @@ dash. Packet loss comes from receiver feedback. These are live measurements,
 not an exported support report. Browser information is self-reported and does not
 replace public-key authentication.
 
-Connections automatically recover after interruption. Legacy desktop and browser
-pause settings are removed on load. Short ICE interruptions get time to recover;
+Connections automatically recover after interruption. Legacy browser-only pause
+settings are removed on load and replaced by the shared host-backed media state.
+Short ICE interruptions get time to recover;
 failed connections and repeated unanswered commands trigger automatic retries.
 
 ## Portrait and spatial photos

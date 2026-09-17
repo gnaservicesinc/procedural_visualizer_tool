@@ -3,7 +3,7 @@ const prefix = 'pvt.host.';
 export class ProfileStore {
   constructor(api, role) { this.api = api; this.role = role; }
   async load() {
-    const saved = await this.api.storage.local.get(['identity', 'hosts', 'syncEnabled', 'selected']);
+    const saved = await this.api.storage.local.get(['identity', 'hosts', 'syncEnabled', 'selected', 'disabledHosts']);
     // Old explicit pauses must never suppress automatic reconnection.
     await this.api.storage.local.remove(['paused']);
     if (!saved.identity) {
@@ -21,7 +21,10 @@ export class ProfileStore {
       hosts = await this.mergeSyncedHosts(hosts);
       await this.api.storage.local.set({hosts, syncEnabled});
     }
-    return {...saved, hosts, syncEnabled};
+    const known = new Set(hosts.map(host => host.id));
+    const disabledHosts = Array.isArray(saved.disabledHosts)
+      ? saved.disabledHosts.filter(id => typeof id === 'string' && known.has(id)) : [];
+    return {...saved, hosts, syncEnabled, disabledHosts};
   }
   async mergeSyncedHosts(hosts, preferLocal = false) {
     const synced = await this.api.storage.sync.get(null);

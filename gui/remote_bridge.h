@@ -46,6 +46,8 @@ private:
     void send(const QJsonObject& message);
     void receive();
     void configure(const QJsonObject& config, bool enabled);
+    void promptForRemoteName(const QJsonObject& remote);
+    void remoteOperation(const QJsonObject& operation);
     QWidget* createConnections(QWidget* parent);
     QProcess process_;
     QTimer restart_timer_;
@@ -56,6 +58,7 @@ private:
     QByteArray input_;
     QJsonObject config_;
     QJsonArray connections_;
+    QJsonArray removed_remotes_;
     std::optional<QJsonObject> pending_config_;
     QJsonObject profile_;
     std::function<QJsonObject()> state_provider_;

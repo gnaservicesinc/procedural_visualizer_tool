@@ -14,7 +14,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLineEdit>
-#include <QListWidget>
+#include <QLabel>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -71,9 +71,10 @@ static int worker() {
         }
         if (op == "enable" || op == "configure") {
             emitJson({{"event", "connections"}, {"connections", QJsonArray{QJsonObject{
-                {"id", "saved-remote"}, {"session", "tab-one"}, {"role", "control"},
-                {"client", QJsonObject{{"browser", "Chrome 145"}, {"platform", "macOS"}, {"version", "0.2.2"}}},
-                {"endpoint", "127.0.0.1:54321"}, {"status", "connected"},
+                {"id", "saved-remote"}, {"session", "tab-one"}, {"label", "Saved control"}, {"role", "control"},
+                {"client", QJsonObject{{"browser", "Chrome 145"}, {"platform", "macOS"}, {"version", "0.2.2"},
+                                       {"features", QJsonArray{"remote-reconnect-v1"}}}},
+                {"endpoint", "127.0.0.1:54321"}, {"status", "connected"}, {"connected", true},
                 {"bytes_sent", 14039500}, {"bytes_received", 436297}, {"kbps", 349.3}, {"rtt_ms", 0.7}}}}});
         }
         if (op == "video") {
@@ -170,6 +171,9 @@ int main(int argc, char** argv) {
         auto* ranges = dialog->findChild<QLineEdit*>("remoteCustomNetworks");
         auto* firewall = dialog->findChild<QFrame*>("remoteFirewallHelp");
         if (!enabled || !buttons || !scope || !ranges || !firewall
+            || enabled->text() != QStringLiteral("Enable PVT Server")
+            || scope->currentData() != QStringLiteral("local")
+            || dialog->findChild<QLabel*>("remoteExtensionWarning")
             || buttons->button(QDialogButtonBox::Apply)
             || !dialog->findChildren<QSpinBox*>().isEmpty()) {
             dialog->reject();
@@ -271,8 +275,7 @@ int main(int argc, char** argv) {
         if (!dialog) return;
         if (auto* setup = dialog->findChild<QPushButton*>("remoteSetupToggle")) setup->setChecked(true);
         auto* import = dialog->findChild<QPushButton*>("remoteImport");
-        auto* list = dialog->findChild<QListWidget*>();
-        if (!import || !list || !spin([&] { return import->isEnabled(); })) {
+        if (!import || !spin([&] { return import->isEnabled(); })) {
             dialog->reject();
             return;
         }
@@ -294,8 +297,7 @@ int main(int argc, char** argv) {
         chooser->start();
         import->click();
         multi_imported = spin([&] {
-            return list->count() == 3
-                && bridge.profileNames().contains("Studio control")
+            return bridge.profileNames().contains("Studio control")
                 && bridge.authorized("saved-remote", "set")
                 && bridge.authorized("second-remote", "set")
                 && !bridge.authorized("third-remote", "set");
@@ -329,8 +331,8 @@ int main(int argc, char** argv) {
     if (!table || !spin([&] { return table->rowCount() == 1; })
         || !table->item(0, 0)->text().contains("Chrome 145")
         || !table->item(0, 0)->text().contains("macOS")
-        || !table->item(0, 2)->text().contains("Unsupported extension")
-        || !table->item(0, 2)->text().contains("0.2.3")
+        || !table->item(0, 0)->text().contains("Extension 0.2.2")
+        || table->item(0, 2)->text().contains("Unsupported extension")
         || !table->item(0, 4)->text().contains("MB")
         || !table->item(0, 4)->text().contains("kb/s")
         || table->item(0, 4)->text().contains("e+")) {

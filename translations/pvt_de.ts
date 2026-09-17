@@ -15218,22 +15218,17 @@ Hinweise:</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+131"/>
+        <location filename="../gui/remote_bridge.cpp" line="+134"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Der Fernsteuerungsprozess hat das Nachrichtenlimit überschritten.</translation>
     </message>
     <message>
-        <location line="+166"/>
+        <location line="+217"/>
         <source>Close window to system tray / menu bar</source>
         <translation>Fenster in den Infobereich / die Menüleiste schließen</translation>
     </message>
     <message>
-        <location line="+5"/>
-        <source>Export the Remote file (.pvtremote) from each browser extension and import those files here. Export the PVT host file (.pvthost) here and import it in each remote. Paired remotes reconnect automatically while PVT is running.</source>
-        <translation>Exportieren Sie die Remote-Datei (.pvtremote) aus jeder Browser-Erweiterung und importieren Sie diese Dateien hier. Exportieren Sie hier die PVT-Hostdatei (.pvthost) und importieren Sie sie in jede Remote-Erweiterung. Gekoppelte Geräte verbinden sich automatisch erneut, solange PVT läuft.</translation>
-    </message>
-    <message>
-        <location line="+10"/>
+        <location line="+12"/>
         <source>This computer and devices on the same IP subnets</source>
         <translation>Dieser Computer und Geräte in denselben IP-Subnetzen</translation>
     </message>
@@ -15248,39 +15243,104 @@ Hinweise:</translation>
         <translation>Remote-Dateien (.pvtremote) importieren…</translation>
     </message>
     <message>
-        <location line="+4"/>
+        <location line="+2"/>
         <source>Export PVT host file (.pvthost)…</source>
         <translation>PVT-Hostdatei (.pvthost) exportieren…</translation>
     </message>
     <message>
-        <location line="+31"/>
-        <location line="+241"/>
+        <location line="+235"/>
         <source>Control</source>
         <translation>Steuerung</translation>
     </message>
     <message>
-        <location line="-232"/>
-        <location line="+287"/>
+        <location line="-427"/>
+        <location line="+561"/>
         <source>ID: %1</source>
         <translation>ID: %1</translation>
     </message>
     <message>
-        <location line="-286"/>
+        <location line="-570"/>
+        <location line="+567"/>
+        <source>Remote Display</source>
+        <translation>Remote Display</translation>
+    </message>
+    <message>
+        <location line="-567"/>
+        <location line="+567"/>
+        <source>Remote Control</source>
+        <translation>Remote Control</translation>
+    </message>
+    <message>
+        <location line="-551"/>
+        <source> %1</source>
+        <translation> %1</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>New remote connected</source>
+        <translation>Neue Remote-Verbindung</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>A new %1 has connected to the PVT Server.
+
+%2
+
+Give this remote a unique name. PVT will remember it across disconnects and reconnects.</source>
+        <translation>Ein neues %1 hat eine Verbindung zum PVT-Server hergestellt.
+
+%2
+
+Geben Sie dieser Remote-Verbindung einen eindeutigen Namen. PVT behält ihn auch nach dem Trennen und erneuten Verbinden bei.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
         <source> · </source>
         <translation> · </translation>
     </message>
     <message>
-        <location line="+71"/>
+        <location line="+6"/>
+        <source>Unique remote name</source>
+        <translation>Eindeutiger Remote-Name</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Enter a unique name containing 1–120 characters.</source>
+        <translation>Geben Sie einen eindeutigen Namen mit 1–120 Zeichen ein.</translation>
+    </message>
+    <message>
+        <location line="+91"/>
+        <source>Install or update the PVT Remote Control and PVT Remote Display browser extensions here.</source>
+        <translation>Installieren oder aktualisieren Sie hier die Browsererweiterungen PVT Remote Control und PVT Remote Display.</translation>
+    </message>
+    <message>
+        <location line="+36"/>
+        <source>Enable PVT Server</source>
+        <translation>PVT-Server aktivieren</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Export the Remote file (.pvtremote) from each browser extension and import those files here. Export the PVT host file (.pvthost) here and import it in each remote. Known remotes remain in the connection list and reconnect automatically while the PVT Server is running.</source>
+        <translation>Exportieren Sie die Remote-Datei (.pvtremote) aus jeder Browsererweiterung und importieren Sie diese Dateien hier. Exportieren Sie hier die PVT-Hostdatei (.pvthost) und importieren Sie sie in jede Remote-Erweiterung. Bekannte Remotes bleiben in der Verbindungsliste und verbinden sich automatisch erneut, solange der PVT-Server läuft.</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>This computer only</source>
+        <translation>Nur dieser Computer</translation>
+    </message>
+    <message>
+        <location line="+117"/>
         <source>Import Remote files (.pvtremote)</source>
         <translation>Remote-Dateien (.pvtremote) importieren</translation>
     </message>
     <message>
         <location line="+1"/>
+        <location line="+253"/>
         <source>Remote files (*.pvtremote)</source>
         <translation>Remote-Dateien (*.pvtremote)</translation>
     </message>
     <message>
-        <location line="+29"/>
+        <location line="-224"/>
         <source>That Remote file could not be added, or it is already paired.</source>
         <translation>Diese Remote-Datei konnte nicht hinzugefügt werden oder ist bereits gekoppelt.</translation>
     </message>
@@ -15290,7 +15350,7 @@ Hinweise:</translation>
         <translation>Keine der ausgewählten Remote-Dateien konnte hinzugefügt werden oder sie sind bereits gekoppelt.</translation>
     </message>
     <message>
-        <location line="+25"/>
+        <location line="+14"/>
         <source>Export PVT host file (.pvthost)</source>
         <translation>PVT-Hostdatei (.pvthost) exportieren</translation>
     </message>
@@ -15305,32 +15365,169 @@ Hinweise:</translation>
         <translation>PVT-Hostdatei gespeichert. Öffnen Sie sie in jeder Remote-Display- oder Remote-Control-Erweiterung, um die Einrichtung abzuschließen.</translation>
     </message>
     <message>
-        <location line="+100"/>
+        <location line="+101"/>
         <source> ● Remotes: %1</source>
         <translation> ● Remotes: %1</translation>
     </message>
     <message>
-        <location line="+23"/>
-        <source>Extension update required: PVT-RC and PVT-RD 0.2.2 are unsupported because Disconnect is missing. Do not use these extensions until updated to 0.2.3 or later.</source>
-        <translation>Erweiterungsupdate erforderlich: PVT-RC und PVT-RD 0.2.2 werden nicht unterstützt, da die Funktion zum Trennen fehlt. Verwenden Sie diese Erweiterungen erst nach einem Update auf 0.2.3 oder neuer.</translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Live connections reconnect automatically. Remove a Remote file from the saved devices to revoke its access. A dash means no measurement is available.</source>
-        <translation>Aktive Verbindungen werden automatisch wiederhergestellt. Entfernen Sie eine Remote-Datei aus den gespeicherten Geräten, um deren Zugriff zu widerrufen. Ein Strich bedeutet, dass kein Messwert verfügbar ist.</translation>
+        <location line="+39"/>
+        <source>Recover a remote</source>
+        <translation>Remote wiederherstellen</translation>
     </message>
     <message>
         <location line="+5"/>
+        <source>Removed</source>
+        <translation>Entfernt</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>Restore</source>
+        <translation>Wiederherstellen</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Export .pvtremote…</source>
+        <translation>.pvtremote exportieren…</translation>
+    </message>
+    <message>
+        <location line="+24"/>
+        <source>Select a removed remote to see its saved pairing and last-known details.</source>
+        <translation>Wählen Sie eine entfernte Remote-Verbindung aus, um die gespeicherte Kopplung und die letzten bekannten Details anzuzeigen.</translation>
+    </message>
+    <message>
+        <location line="+16"/>
+        <source>Export recovered Remote file (.pvtremote)</source>
+        <translation>Wiederhergestellte Remote-Datei (.pvtremote) exportieren</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <location line="+5"/>
+        <source>Could not export remote</source>
+        <translation>Remote konnte nicht exportiert werden</translation>
+    </message>
+    <message>
+        <location line="+19"/>
+        <source>Browser/system not reported</source>
+        <translation>Browser/System nicht gemeldet</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Last seen: %1</source>
+        <translation>Zuletzt gesehen: %1</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Paused · freeze frame</source>
+        <translation>Pausiert · Standbild</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Paused · blackout</source>
+        <translation>Pausiert · Schwarzbild</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Muted</source>
+        <translation>Stummgeschaltet</translation>
+    </message>
+    <message>
+        <location line="+51"/>
+        <source>Unpause</source>
+        <translation>Fortsetzen</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Pause</source>
+        <translation>Pause</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Blackout</source>
+        <translation>Schwarzbild</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Freeze frame</source>
+        <translation>Standbild</translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <source>Unmute</source>
+        <translation>Stummschaltung aufheben</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Mute</source>
+        <translation>Stummschalten</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Disconnect</source>
+        <translation>Trennen</translation>
+    </message>
+    <message>
+        <location line="+12"/>
+        <source>Reconnect</source>
+        <translation>Neu verbinden</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>Rename…</source>
+        <translation>Umbenennen…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Rename remote</source>
+        <translation>Remote umbenennen</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Unique name</source>
+        <translation>Eindeutiger Name</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Look for remote at new address…</source>
+        <translation>Remote unter neuer Adresse suchen…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Locate remote</source>
+        <translation>Remote suchen</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Enter its new IP address or hostname. PVT will resolve it and recognize the remote when it reconnects.</source>
+        <translation>Geben Sie die neue IP-Adresse oder den Hostnamen ein. PVT löst die Adresse auf und erkennt die Remote-Verbindung, sobald sie sich erneut verbindet.</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Remove selected remote…</source>
+        <translation>Ausgewählte Remote entfernen…</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Remove remote</source>
+        <translation>Remote entfernen</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Remove “%1” and revoke its access? Its Remote file and last-known details will be kept in Recover a remote.</source>
+        <translation>„%1“ entfernen und den Zugriff widerrufen? Die Remote-Datei und die letzten bekannten Details bleiben unter „Remote wiederherstellen“ erhalten.</translation>
+    </message>
+    <message>
+        <location line="-84"/>
+        <location line="+90"/>
+        <source>Recover a remote…</source>
+        <translation>Remote wiederherstellen…</translation>
+    </message>
+    <message>
+        <location line="-232"/>
         <source>Status</source>
         <translation>Status</translation>
     </message>
     <message>
-        <location line="+27"/>
-        <source>Unsupported extension — do not use until updated to 0.2.3 or later</source>
-        <translation>Nicht unterstützte Erweiterung — erst nach einem Update auf 0.2.3 oder neuer verwenden</translation>
-    </message>
-    <message>
-        <location line="+6"/>
+        <location line="+117"/>
         <source>%1 ms</source>
         <translation>%1 ms</translation>
     </message>
@@ -15350,12 +15547,12 @@ Hinweise:</translation>
         <translation>%1 s</translation>
     </message>
     <message>
-        <location line="-640"/>
+        <location line="-729"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation>Fernsteuerungen sind vorübergehend nicht verfügbar. PVT versucht es automatisch erneut.</translation>
     </message>
     <message>
-        <location line="+111"/>
+        <location line="+112"/>
         <source>Remote settings could not be saved. Check the Remote file (.pvtremote) and address ranges.</source>
         <translation>Remote-Einstellungen konnten nicht gespeichert werden. Prüfen Sie die Remote-Datei (.pvtremote) und die Adressbereiche.</translation>
     </message>
@@ -15370,12 +15567,12 @@ Hinweise:</translation>
         <translation>Fernsteuerungen deaktiviert</translation>
     </message>
     <message>
-        <location line="+11"/>
+        <location line="+19"/>
         <source>Waiting for a connection. PVT will reconnect automatically.</source>
         <translation>Warten auf eine Verbindung. PVT stellt die Verbindung automatisch wieder her.</translation>
     </message>
     <message>
-        <location line="+63"/>
+        <location line="+105"/>
         <source>Remotes</source>
         <translation>Fernsteuerungen</translation>
     </message>
@@ -15385,12 +15582,7 @@ Hinweise:</translation>
         <translation>Remote-Dateien und Netzwerkeinstellungen verwalten</translation>
     </message>
     <message>
-        <location line="+10"/>
-        <source>Update both browser extensions to 0.2.3 or later before use. Version 0.2.2 removed Disconnect and is unsupported. Do not use it until updated. Firefox downloads are available from the release page while store review is pending.</source>
-        <translation>Aktualisieren Sie beide Browsererweiterungen vor der Verwendung auf 0.2.3 oder neuer. In Version 0.2.2 fehlt die Funktion zum Trennen; diese Version wird nicht unterstützt. Verwenden Sie sie erst nach einem Update. Firefox-Downloads sind während der ausstehenden Store-Prüfung auf der Release-Seite verfügbar.</translation>
-    </message>
-    <message>
-        <location line="+4"/>
+        <location line="+14"/>
         <source>Update Remote Control for Chrome</source>
         <translation>Remote Control für Chrome aktualisieren</translation>
     </message>
@@ -15415,17 +15607,7 @@ Hinweise:</translation>
         <translation>Remote Display für Firefox aktualisieren</translation>
     </message>
     <message>
-        <location line="+12"/>
-        <source>Enable Remotes</source>
-        <translation>Fernsteuerungen aktivieren</translation>
-    </message>
-    <message>
-        <location line="+13"/>
-        <source>Paired devices</source>
-        <translation>Gekoppelte Geräte</translation>
-    </message>
-    <message>
-        <location line="+5"/>
+        <location line="+27"/>
         <source>Any private network</source>
         <translation>Beliebiges privates Netzwerk</translation>
     </message>
@@ -15470,12 +15652,7 @@ Hinweise:</translation>
         <translation>Anweisungen für Netzwerkadministration speichern…</translation>
     </message>
     <message>
-        <location line="+10"/>
-        <source>Remove selected remote</source>
-        <translation>Ausgewählte Fernsteuerung entfernen</translation>
-    </message>
-    <message>
-        <location line="+6"/>
+        <location line="+14"/>
         <source>Run Remotes in the background</source>
         <translation>Fernsteuerungen im Hintergrund ausführen</translation>
     </message>
@@ -15485,23 +15662,17 @@ Hinweise:</translation>
         <translation>Fernsteuerungen werden vorbereitet…</translation>
     </message>
     <message>
-        <location line="+25"/>
-        <location line="+241"/>
+        <location line="+229"/>
         <source>Display</source>
         <translation>Anzeige</translation>
     </message>
     <message>
-        <location line="-231"/>
-        <source> — </source>
-        <translation> — </translation>
-    </message>
-    <message>
-        <location line="+59"/>
+        <location line="-162"/>
         <source>Enter at least one address or range.</source>
         <translation>Geben Sie mindestens eine Adresse oder einen Bereich ein.</translation>
     </message>
     <message numerus="yes">
-        <location line="+52"/>
+        <location line="+51"/>
         <source>Added %n Remote(s).</source>
         <translation>
             <numerusform>%n Fernsteuerung hinzugefügt.</numerusform>
@@ -15514,7 +15685,7 @@ Hinweise:</translation>
         <translation>%1 Fernsteuerung(en) hinzugefügt; %2 Datei(en) wurden übersprungen, weil sie ungültig oder bereits gekoppelt waren oder die Grenze von 64 Fernsteuerungen überschritten wurde.</translation>
     </message>
     <message>
-        <location line="+30"/>
+        <location line="+20"/>
         <source>Save network-admin instructions</source>
         <translation>Anweisungen für Netzwerkadministration speichern</translation>
     </message>
@@ -15539,28 +15710,28 @@ Hinweise:</translation>
         <translation>Firewall-Einrichtung gespeichert. Führen Sie sie auf dem PVT-Computer aus; sie bittet um Administratorfreigabe.</translation>
     </message>
     <message>
-        <location line="+46"/>
+        <location line="+47"/>
         <source>%1: %2</source>
         <translation>%1: %2</translation>
     </message>
     <message>
-        <location line="-370"/>
-        <location line="+385"/>
+        <location line="-328"/>
+        <location line="+343"/>
         <source>Remote connection details</source>
         <translation>Details der Remote-Verbindungen</translation>
     </message>
     <message>
-        <location line="+20"/>
+        <location line="+11"/>
+        <source>Known remotes keep a permanent place here. Disconnected remotes retain their last known details in gray. Right-click or Control-click a selected remote for its controls. A dash means no measurement is available.</source>
+        <translation>Bekannte Remotes behalten hier einen festen Platz. Bei getrennten Remotes bleiben die letzten bekannten Details grau dargestellt. Klicken Sie mit der rechten Maustaste oder bei gedrückter Ctrl-Taste auf eine ausgewählte Remote-Verbindung, um deren Steuerung anzuzeigen. Ein Strich bedeutet, dass kein Messwert verfügbar ist.</translation>
+    </message>
+    <message>
+        <location line="+5"/>
         <source>Data use</source>
         <translation>Datennutzung</translation>
     </message>
     <message>
-        <location line="+18"/>
-        <source>Browser/system not reported — update the extension</source>
-        <translation>Browser/System nicht gemeldet — Erweiterung aktualisieren</translation>
-    </message>
-    <message>
-        <location line="+12"/>
+        <location line="+114"/>
         <source>Media: %1</source>
         <translation>Medien: %1</translation>
     </message>
@@ -15579,23 +15750,19 @@ Gesendet %2
 Empfangen %3</translation>
     </message>
     <message>
-        <location line="-10"/>
-        <location line="+14"/>
+        <location line="-13"/>
+        <location line="+17"/>
         <source>Extension %1</source>
         <translation>Erweiterung %1</translation>
     </message>
     <message>
-        <location line="-21"/>
-        <source>Control PVT</source>
-        <translation>PVT steuern</translation>
-    </message>
-    <message>
-        <location line="-17"/>
+        <location line="-122"/>
+        <location line="+16"/>
         <source>Remote</source>
         <translation>Remote-Gerät</translation>
     </message>
     <message>
-        <location line="+0"/>
+        <location line="-16"/>
         <source>Connection addresses</source>
         <translation>Verbindungsadressen</translation>
     </message>
@@ -15603,11 +15770,6 @@ Empfangen %3</translation>
         <location line="+0"/>
         <source>Response / loss</source>
         <translation>Antwortzeit / Verluste</translation>
-    </message>
-    <message>
-        <location line="+17"/>
-        <source>View PVT</source>
-        <translation>PVT anzeigen</translation>
     </message>
 </context>
 <context>

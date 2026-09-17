@@ -15218,22 +15218,17 @@ Notes :</translation>
 <context>
     <name>RemoteBridge</name>
     <message>
-        <location filename="../gui/remote_bridge.cpp" line="+131"/>
+        <location filename="../gui/remote_bridge.cpp" line="+134"/>
         <source>Remote worker exceeded the message limit.</source>
         <translation>Le processus distant a dépassé la limite des messages.</translation>
     </message>
     <message>
-        <location line="+166"/>
+        <location line="+217"/>
         <source>Close window to system tray / menu bar</source>
         <translation>Fermer la fenêtre dans la zone de notification / barre de menus</translation>
     </message>
     <message>
-        <location line="+5"/>
-        <source>Export the Remote file (.pvtremote) from each browser extension and import those files here. Export the PVT host file (.pvthost) here and import it in each remote. Paired remotes reconnect automatically while PVT is running.</source>
-        <translation>Exportez le fichier de télécommande (.pvtremote) depuis chaque extension de navigateur et importez ces fichiers ici. Exportez ici le fichier hôte PVT (.pvthost) et importez-le dans chaque extension. Les appareils associés se reconnectent automatiquement tant que PVT est ouvert.</translation>
-    </message>
-    <message>
-        <location line="+10"/>
+        <location line="+12"/>
         <source>This computer and devices on the same IP subnets</source>
         <translation>Cet ordinateur et les appareils des mêmes sous-réseaux IP</translation>
     </message>
@@ -15248,39 +15243,104 @@ Notes :</translation>
         <translation>Importer des fichiers de télécommande (.pvtremote)…</translation>
     </message>
     <message>
-        <location line="+4"/>
+        <location line="+2"/>
         <source>Export PVT host file (.pvthost)…</source>
         <translation>Exporter le fichier hôte PVT (.pvthost)…</translation>
     </message>
     <message>
-        <location line="+31"/>
-        <location line="+241"/>
+        <location line="+235"/>
         <source>Control</source>
         <translation>Contrôle</translation>
     </message>
     <message>
-        <location line="-232"/>
-        <location line="+287"/>
+        <location line="-427"/>
+        <location line="+561"/>
         <source>ID: %1</source>
         <translation>ID : %1</translation>
     </message>
     <message>
-        <location line="-286"/>
+        <location line="-570"/>
+        <location line="+567"/>
+        <source>Remote Display</source>
+        <translation>Remote Display</translation>
+    </message>
+    <message>
+        <location line="-567"/>
+        <location line="+567"/>
+        <source>Remote Control</source>
+        <translation>Remote Control</translation>
+    </message>
+    <message>
+        <location line="-551"/>
+        <source> %1</source>
+        <translation> %1</translation>
+    </message>
+    <message>
+        <location line="+4"/>
+        <source>New remote connected</source>
+        <translation>Nouvelle télécommande connectée</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>A new %1 has connected to the PVT Server.
+
+%2
+
+Give this remote a unique name. PVT will remember it across disconnects and reconnects.</source>
+        <translation>Un nouveau %1 s’est connecté au serveur PVT.
+
+%2
+
+Donnez un nom unique à cette télécommande. PVT le conservera après les déconnexions et reconnexions.</translation>
+    </message>
+    <message>
+        <location line="+1"/>
         <source> · </source>
         <translation> · </translation>
     </message>
     <message>
-        <location line="+71"/>
+        <location line="+6"/>
+        <source>Unique remote name</source>
+        <translation>Nom unique de la télécommande</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Enter a unique name containing 1–120 characters.</source>
+        <translation>Saisissez un nom unique de 1 à 120 caractères.</translation>
+    </message>
+    <message>
+        <location line="+91"/>
+        <source>Install or update the PVT Remote Control and PVT Remote Display browser extensions here.</source>
+        <translation>Installez ou mettez à jour ici les extensions de navigateur PVT Remote Control et PVT Remote Display.</translation>
+    </message>
+    <message>
+        <location line="+36"/>
+        <source>Enable PVT Server</source>
+        <translation>Activer le serveur PVT</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Export the Remote file (.pvtremote) from each browser extension and import those files here. Export the PVT host file (.pvthost) here and import it in each remote. Known remotes remain in the connection list and reconnect automatically while the PVT Server is running.</source>
+        <translation>Exportez le fichier Remote (.pvtremote) depuis chaque extension de navigateur et importez ces fichiers ici. Exportez ici le fichier hôte PVT (.pvthost), puis importez-le dans chaque télécommande. Les télécommandes connues restent dans la liste des connexions et se reconnectent automatiquement tant que le serveur PVT fonctionne.</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>This computer only</source>
+        <translation>Cet ordinateur uniquement</translation>
+    </message>
+    <message>
+        <location line="+117"/>
         <source>Import Remote files (.pvtremote)</source>
         <translation>Importer des fichiers de télécommande (.pvtremote)</translation>
     </message>
     <message>
         <location line="+1"/>
+        <location line="+253"/>
         <source>Remote files (*.pvtremote)</source>
         <translation>Fichiers de télécommande (*.pvtremote)</translation>
     </message>
     <message>
-        <location line="+29"/>
+        <location line="-224"/>
         <source>That Remote file could not be added, or it is already paired.</source>
         <translation>Ce fichier de télécommande n’a pas pu être ajouté ou est déjà associé.</translation>
     </message>
@@ -15290,7 +15350,7 @@ Notes :</translation>
         <translation>Aucun des fichiers de télécommande sélectionnés n’a pu être ajouté ou ils sont déjà associés.</translation>
     </message>
     <message>
-        <location line="+25"/>
+        <location line="+14"/>
         <source>Export PVT host file (.pvthost)</source>
         <translation>Exporter le fichier hôte PVT (.pvthost)</translation>
     </message>
@@ -15305,32 +15365,169 @@ Notes :</translation>
         <translation>Fichier hôte PVT enregistré. Ouvrez-le dans chaque extension Remote Display ou Remote Control pour terminer la configuration.</translation>
     </message>
     <message>
-        <location line="+100"/>
+        <location line="+101"/>
         <source> ● Remotes: %1</source>
         <translation> ● Connexions distantes : %1</translation>
     </message>
     <message>
-        <location line="+23"/>
-        <source>Extension update required: PVT-RC and PVT-RD 0.2.2 are unsupported because Disconnect is missing. Do not use these extensions until updated to 0.2.3 or later.</source>
-        <translation>Mise à jour des extensions requise : PVT-RC et PVT-RD 0.2.2 ne sont pas pris en charge, car la déconnexion est absente. Ne les utilisez pas avant leur mise à jour vers la version 0.2.3 ou ultérieure.</translation>
-    </message>
-    <message>
-        <location line="+4"/>
-        <source>Live connections reconnect automatically. Remove a Remote file from the saved devices to revoke its access. A dash means no measurement is available.</source>
-        <translation>Les connexions actives se rétablissent automatiquement. Retirez un fichier de télécommande des appareils enregistrés pour révoquer son accès. Un tiret indique qu’aucune mesure n’est disponible.</translation>
+        <location line="+39"/>
+        <source>Recover a remote</source>
+        <translation>Récupérer une télécommande</translation>
     </message>
     <message>
         <location line="+5"/>
+        <source>Removed</source>
+        <translation>Supprimée</translation>
+    </message>
+    <message>
+        <location line="+13"/>
+        <source>Restore</source>
+        <translation>Restaurer</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Export .pvtremote…</source>
+        <translation>Exporter le fichier .pvtremote…</translation>
+    </message>
+    <message>
+        <location line="+24"/>
+        <source>Select a removed remote to see its saved pairing and last-known details.</source>
+        <translation>Sélectionnez une télécommande supprimée pour afficher son jumelage enregistré et ses dernières informations connues.</translation>
+    </message>
+    <message>
+        <location line="+16"/>
+        <source>Export recovered Remote file (.pvtremote)</source>
+        <translation>Exporter le fichier Remote récupéré (.pvtremote)</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <location line="+5"/>
+        <source>Could not export remote</source>
+        <translation>Impossible d’exporter la télécommande</translation>
+    </message>
+    <message>
+        <location line="+19"/>
+        <source>Browser/system not reported</source>
+        <translation>Navigateur/système non indiqué</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Last seen: %1</source>
+        <translation>Dernière connexion : %1</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Paused · freeze frame</source>
+        <translation>En pause · image figée</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Paused · blackout</source>
+        <translation>En pause · écran noir</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Muted</source>
+        <translation>Son coupé</translation>
+    </message>
+    <message>
+        <location line="+51"/>
+        <source>Unpause</source>
+        <translation>Reprendre</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Pause</source>
+        <translation>Pause</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Blackout</source>
+        <translation>Écran noir</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Freeze frame</source>
+        <translation>Image figée</translation>
+    </message>
+    <message>
+        <location line="+9"/>
+        <source>Unmute</source>
+        <translation>Rétablir le son</translation>
+    </message>
+    <message>
+        <location line="+0"/>
+        <source>Mute</source>
+        <translation>Couper le son</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Disconnect</source>
+        <translation>Déconnecter</translation>
+    </message>
+    <message>
+        <location line="+12"/>
+        <source>Reconnect</source>
+        <translation>Reconnecter</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>Rename…</source>
+        <translation>Renommer…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Rename remote</source>
+        <translation>Renommer la télécommande</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Unique name</source>
+        <translation>Nom unique</translation>
+    </message>
+    <message>
+        <location line="+5"/>
+        <source>Look for remote at new address…</source>
+        <translation>Rechercher la télécommande à une nouvelle adresse…</translation>
+    </message>
+    <message>
+        <location line="+3"/>
+        <source>Locate remote</source>
+        <translation>Localiser la télécommande</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Enter its new IP address or hostname. PVT will resolve it and recognize the remote when it reconnects.</source>
+        <translation>Saisissez sa nouvelle adresse IP ou son nouveau nom d’hôte. PVT résoudra cette adresse et reconnaîtra la télécommande lors de sa reconnexion.</translation>
+    </message>
+    <message>
+        <location line="+7"/>
+        <source>Remove selected remote…</source>
+        <translation>Supprimer la télécommande sélectionnée…</translation>
+    </message>
+    <message>
+        <location line="+2"/>
+        <source>Remove remote</source>
+        <translation>Supprimer la télécommande</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Remove “%1” and revoke its access? Its Remote file and last-known details will be kept in Recover a remote.</source>
+        <translation>Supprimer « %1 » et révoquer son accès ? Son fichier Remote et ses dernières informations connues seront conservés dans « Récupérer une télécommande ».</translation>
+    </message>
+    <message>
+        <location line="-84"/>
+        <location line="+90"/>
+        <source>Recover a remote…</source>
+        <translation>Récupérer une télécommande…</translation>
+    </message>
+    <message>
+        <location line="-232"/>
         <source>Status</source>
         <translation>État</translation>
     </message>
     <message>
-        <location line="+27"/>
-        <source>Unsupported extension — do not use until updated to 0.2.3 or later</source>
-        <translation>Extension non prise en charge — ne pas utiliser avant la mise à jour vers la version 0.2.3 ou ultérieure</translation>
-    </message>
-    <message>
-        <location line="+6"/>
+        <location line="+117"/>
         <source>%1 ms</source>
         <translation>%1 ms</translation>
     </message>
@@ -15350,12 +15547,12 @@ Notes :</translation>
         <translation>%1 s</translation>
     </message>
     <message>
-        <location line="-640"/>
+        <location line="-729"/>
         <source>Remotes are temporarily unavailable. PVT will try again automatically.</source>
         <translation>Les télécommandes sont temporairement indisponibles. PVT réessaiera automatiquement.</translation>
     </message>
     <message>
-        <location line="+111"/>
+        <location line="+112"/>
         <source>Remote settings could not be saved. Check the Remote file (.pvtremote) and address ranges.</source>
         <translation>Impossible d’enregistrer les paramètres distants. Vérifiez le fichier de télécommande (.pvtremote) et les plages d’adresses.</translation>
     </message>
@@ -15370,12 +15567,12 @@ Notes :</translation>
         <translation>Télécommandes désactivées</translation>
     </message>
     <message>
-        <location line="+11"/>
+        <location line="+19"/>
         <source>Waiting for a connection. PVT will reconnect automatically.</source>
         <translation>En attente d’une connexion. PVT se reconnectera automatiquement.</translation>
     </message>
     <message>
-        <location line="+63"/>
+        <location line="+105"/>
         <source>Remotes</source>
         <translation>Télécommandes</translation>
     </message>
@@ -15385,12 +15582,7 @@ Notes :</translation>
         <translation>Gérer les fichiers de télécommande et les paramètres réseau</translation>
     </message>
     <message>
-        <location line="+10"/>
-        <source>Update both browser extensions to 0.2.3 or later before use. Version 0.2.2 removed Disconnect and is unsupported. Do not use it until updated. Firefox downloads are available from the release page while store review is pending.</source>
-        <translation>Mettez les deux extensions à jour vers la version 0.2.3 ou ultérieure avant utilisation. La version 0.2.2 a supprimé la déconnexion et n’est pas prise en charge. Ne l’utilisez pas avant sa mise à jour. Les téléchargements Firefox sont disponibles sur la page des versions en attendant la validation de la boutique.</translation>
-    </message>
-    <message>
-        <location line="+4"/>
+        <location line="+14"/>
         <source>Update Remote Control for Chrome</source>
         <translation>Mettre à jour Remote Control pour Chrome</translation>
     </message>
@@ -15415,17 +15607,7 @@ Notes :</translation>
         <translation>Mettre à jour Remote Display pour Firefox</translation>
     </message>
     <message>
-        <location line="+12"/>
-        <source>Enable Remotes</source>
-        <translation>Activer les télécommandes</translation>
-    </message>
-    <message>
-        <location line="+13"/>
-        <source>Paired devices</source>
-        <translation>Appareils associés</translation>
-    </message>
-    <message>
-        <location line="+5"/>
+        <location line="+27"/>
         <source>Any private network</source>
         <translation>N’importe quel réseau privé</translation>
     </message>
@@ -15470,12 +15652,7 @@ Notes :</translation>
         <translation>Enregistrer les instructions pour l’administrateur réseau…</translation>
     </message>
     <message>
-        <location line="+10"/>
-        <source>Remove selected remote</source>
-        <translation>Supprimer la télécommande sélectionnée</translation>
-    </message>
-    <message>
-        <location line="+6"/>
+        <location line="+14"/>
         <source>Run Remotes in the background</source>
         <translation>Exécuter les télécommandes en arrière-plan</translation>
     </message>
@@ -15485,23 +15662,17 @@ Notes :</translation>
         <translation>Préparation des télécommandes…</translation>
     </message>
     <message>
-        <location line="+25"/>
-        <location line="+241"/>
+        <location line="+229"/>
         <source>Display</source>
         <translation>Affichage</translation>
     </message>
     <message>
-        <location line="-231"/>
-        <source> — </source>
-        <translation> — </translation>
-    </message>
-    <message>
-        <location line="+59"/>
+        <location line="-162"/>
         <source>Enter at least one address or range.</source>
         <translation>Saisissez au moins une adresse ou une plage.</translation>
     </message>
     <message numerus="yes">
-        <location line="+52"/>
+        <location line="+51"/>
         <source>Added %n Remote(s).</source>
         <translation>
             <numerusform>%n télécommande ajoutée.</numerusform>
@@ -15514,7 +15685,7 @@ Notes :</translation>
         <translation>%1 télécommande(s) ajoutée(s) ; %2 fichier(s) ignoré(s), car ils étaient non valides, déjà associés ou dépassaient la limite de 64 télécommandes.</translation>
     </message>
     <message>
-        <location line="+30"/>
+        <location line="+20"/>
         <source>Save network-admin instructions</source>
         <translation>Enregistrer les instructions pour l’administrateur réseau</translation>
     </message>
@@ -15539,28 +15710,28 @@ Notes :</translation>
         <translation>Configuration du pare-feu enregistrée. Exécutez-la sur l’ordinateur PVT ; elle demandera l’autorisation d’un administrateur.</translation>
     </message>
     <message>
-        <location line="+46"/>
+        <location line="+47"/>
         <source>%1: %2</source>
         <translation>%1 : %2</translation>
     </message>
     <message>
-        <location line="-370"/>
-        <location line="+385"/>
+        <location line="-328"/>
+        <location line="+343"/>
         <source>Remote connection details</source>
         <translation>Détails des connexions distantes</translation>
     </message>
     <message>
-        <location line="+20"/>
+        <location line="+11"/>
+        <source>Known remotes keep a permanent place here. Disconnected remotes retain their last known details in gray. Right-click or Control-click a selected remote for its controls. A dash means no measurement is available.</source>
+        <translation>Les télécommandes connues conservent ici un emplacement permanent. Les dernières informations connues des télécommandes déconnectées restent affichées en gris. Faites un clic droit ou Ctrl-clic sur une télécommande sélectionnée pour afficher ses commandes. Un tiret indique qu’aucune mesure n’est disponible.</translation>
+    </message>
+    <message>
+        <location line="+5"/>
         <source>Data use</source>
         <translation>Utilisation des données</translation>
     </message>
     <message>
-        <location line="+18"/>
-        <source>Browser/system not reported — update the extension</source>
-        <translation>Navigateur/système non indiqué — mettez l’extension à jour</translation>
-    </message>
-    <message>
-        <location line="+12"/>
+        <location line="+114"/>
         <source>Media: %1</source>
         <translation>Média : %1</translation>
     </message>
@@ -15579,23 +15750,19 @@ Envoyé %2
 Reçu %3</translation>
     </message>
     <message>
-        <location line="-10"/>
-        <location line="+14"/>
+        <location line="-13"/>
+        <location line="+17"/>
         <source>Extension %1</source>
         <translation>Extension %1</translation>
     </message>
     <message>
-        <location line="-21"/>
-        <source>Control PVT</source>
-        <translation>Contrôler PVT</translation>
-    </message>
-    <message>
-        <location line="-17"/>
+        <location line="-122"/>
+        <location line="+16"/>
         <source>Remote</source>
         <translation>Appareil distant</translation>
     </message>
     <message>
-        <location line="+0"/>
+        <location line="-16"/>
         <source>Connection addresses</source>
         <translation>Adresses de connexion</translation>
     </message>
@@ -15603,11 +15770,6 @@ Reçu %3</translation>
         <location line="+0"/>
         <source>Response / loss</source>
         <translation>Réponse / pertes</translation>
-    </message>
-    <message>
-        <location line="+17"/>
-        <source>View PVT</source>
-        <translation>Afficher PVT</translation>
     </message>
 </context>
 <context>

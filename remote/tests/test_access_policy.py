@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from websockets.asyncio.client import connect
 from aiortc import RTCPeerConnection
-from pvt_remote.host import Host
+from PIL import Image
+from pvt_remote.host import Audio, Host, Video
 from pvt_remote.protocol import Cipher, new_identity, compact
 
 class AccessPolicyTests(unittest.IsolatedAsyncioTestCase):
@@ -23,6 +24,14 @@ class AccessPolicyTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(self.host.address_allowed(address), address)
         for address in ['172.32.0.1', '8.8.8.8', '100.64.0.1', '192.0.2.1', '2001:db8::1', '::', '224.0.0.1']:
             self.assertFalse(self.host.address_allowed(address), address)
+    def test_this_computer_only_is_the_optimized_default(self):
+        self.assertEqual(self.host.config['address_scope'], 'local')
+        self.assertFalse(self.host.config['lan'])
+        self.assertTrue(self.host.address_allowed('127.0.0.1'))
+        self.assertTrue(self.host.address_allowed('::1'))
+        self.assertFalse(self.host.address_allowed('192.168.1.2'))
+        self.assertEqual(len(self.host.public()['endpoints']), 1)
+        self.assertTrue(self.host.public()['endpoints'][0].startswith('ws://127.0.0.1:'))
     def test_custom_address_ranges_do_not_ask_for_remote_ports(self):
         self.host.config.update(address_scope='custom', custom_networks='10.1.2.3-10.1.2.8, fd12::/64')
         self.host.validate_config(self.host.config)
@@ -43,12 +52,131 @@ class AccessPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('remote_port_min', saved)
         self.assertNotIn('remote_port_max', saved)
     def test_subnets_use_interface_masks(self):
+        self.host.config['address_scope'] = 'subnet'
         interfaces = [SimpleNamespace(ips=[SimpleNamespace(ip='192.168.3.5',network_prefix=24), SimpleNamespace(ip=('fd12:abcd::1',0,0),network_prefix=64)])]
         with patch('pvt_remote.host.get_adapters', return_value=interfaces):
             self.assertTrue(self.host.address_allowed('192.168.3.254'))
             self.assertFalse(self.host.address_allowed('192.168.4.1'))
             self.assertTrue(self.host.address_allowed('fd12:abcd::a'))
             self.assertFalse(self.host.address_allowed('fd12:abce::a'))
+
+    async def test_remote_media_state_is_persistent_and_display_only(self):
+        display = new_identity('pvtremote', 'display')['public']
+        control = new_identity('pvtremote', 'control')['public']
+        self.host.config['remotes'] = [display, control]
+        self.host.enabled = True
+        reply = await self.host.command(display, dict(
+            op='command', id='media', action='remote_media', paused=True,
+            pause_mode='freeze', muted=True, audio_enabled=True))
+        self.assertTrue(reply['ok'])
+        self.assertEqual(reply['remote_media'], dict(
+            paused=True, pause_mode='freeze', muted=True, audio_enabled=True))
+        self.assertEqual(self.host.offline_rows()[0]['pause_mode'], 'freeze')
+        rejected = await self.host.command(control, dict(
+            op='command', id='media-control', action='remote_media', muted=True))
+        self.assertFalse(rejected['ok'])
+        loaded = Host(self.directory.name)
+        self.assertEqual(loaded.remote_media(display['id']), reply['remote_media'])
+
+    async def test_paused_tracks_keep_timing_with_freeze_blackout_and_silence(self):
+        display = new_identity('pvtremote', 'display')['public']
+        self.host.config['remotes'] = [display]
+        self.host.image = Image.new('RGB', (16, 8), (20, 80, 140))
+        self.host.sequence = 1
+        with patch('pvt_remote.host.sys.platform', 'linux'):
+            video = Video(self.host, display['id'])
+        live = await video.recv()
+        self.assertEqual(live.to_image().getpixel((0, 0)), (20, 80, 140))
+        display['media'] = dict(paused=True, pause_mode='freeze', muted=False,
+                                audio_enabled=True)
+        frozen = await asyncio.wait_for(video.recv(), .2)
+        self.assertEqual(frozen.to_image().getpixel((0, 0)), (20, 80, 140))
+        display['media']['pause_mode'] = 'blackout'
+        black = await asyncio.wait_for(video.recv(), .2)
+        self.assertEqual(black.to_image().getpixel((0, 0)), (0, 0, 0))
+        audio = Audio(self.host, display['id'])
+        audio.queue.put_nowait(bytes([127]) * 3840)
+        display['media']['muted'] = True
+        silent = await audio.recv()
+        self.assertFalse(any(bytes(silent.planes[0])))
+        self.assertTrue(audio.queue.empty())
+        audio.stop(); video.stop()
+
+    async def test_removed_remote_can_be_recovered_with_metadata(self):
+        remote = new_identity('pvtremote', 'display')['public']
+        remote.update(label='Lobby display', recognized=True,
+                      client={'browser': 'Firefox 147', 'platform': 'Linux',
+                              'version': '0.2.3', 'features': ['remote-media-v1']},
+                      last_endpoint='192.168.1.30:55000')
+        self.host.config['remotes'] = [remote]
+        self.host.validate_config(self.host.config)
+        await self.host.input(dict(op='remove_remote', remote=remote['id']))
+        removed = self.host.removed_profiles()
+        self.assertEqual(len(removed), 1)
+        self.assertEqual(removed[0]['profile']['label'], 'Lobby display')
+        self.assertFalse(self.host.config['remotes'])
+        await self.host.input(dict(op='recover_remote', key=removed[0]['key']))
+        self.assertEqual(self.host.peer(remote['id'])['label'], 'Lobby display')
+        self.assertTrue(self.host.peer(remote['id'])['recognized'])
+        self.assertFalse(self.host.removed_profiles())
+
+    async def test_first_authenticated_connection_is_announced_once(self):
+        remote = Cipher(new_identity('pvtremote', 'control'))
+        self.host.config.update(remotes=[remote.public], lan=False)
+        events = []
+        self.host.emit = events.append
+        await self.host.enable()
+        for _ in range(2):
+            async with connect(self.host.public()['endpoints'][0], proxy=None) as ws:
+                challenge = json.loads(await ws.recv())['challenge']
+                await ws.send(compact(remote.seal(self.host.cipher.public, dict(
+                    op='hello', challenge=challenge,
+                    client={'browser': 'Firefox 147', 'platform': 'Linux',
+                            'version': '0.2.3'}))).decode())
+                await ws.recv()
+        notices = [event for event in events if event.get('event') == 'new_remote']
+        self.assertEqual(len(notices), 1)
+        self.assertEqual(notices[0]['remote']['role'], 'control')
+        await self.host.input(dict(op='rename_remote', remote=remote.public['id'],
+                                   name='Front-of-house control'))
+        self.assertTrue(self.host.peer(remote.public['id'])['recognized'])
+        self.assertEqual(self.host.peer(remote.public['id'])['label'],
+                         'Front-of-house control')
+
+    async def test_display_disconnect_is_persistent_reachable_standby(self):
+        remote = Cipher(new_identity('pvtremote', 'display'))
+        remote.public['client'] = {
+            'features': ['remote-disconnect-v1', 'remote-reconnect-v1']}
+        self.host.config.update(remotes=[remote.public], lan=False)
+        events = []
+        self.host.emit = events.append
+        await self.host.enable()
+        async with connect(self.host.public()['endpoints'][0], proxy=None) as ws:
+            challenge = json.loads(await ws.recv())['challenge']
+            await ws.send(compact(remote.seal(self.host.cipher.public, dict(
+                op='hello', challenge=challenge, client={
+                    'features': ['remote-disconnect-v1', 'remote-reconnect-v1']}))).decode())
+            await ws.recv()
+            await ws.send(json.dumps(dict(op='command', id='off',
+                                          action='remote_connection', enabled=False)))
+            self.assertTrue(json.loads(await ws.recv())['ok'])
+            self.assertFalse(self.host.peer(remote.public['id'])['connection_enabled'])
+            for _ in range(20):
+                row = next((row for event in reversed(events)
+                            for row in event.get('connections', [])
+                            if row['id'] == remote.public['id']), None)
+                if row and row.get('reachable'):
+                    break
+                await asyncio.sleep(.1)
+            self.assertTrue(row['reachable'])
+            self.assertFalse(row['connected'])
+            self.assertEqual(row['status'], 'Disconnected')
+            await self.host.input(dict(op='remote_action', remote=remote.public['id'],
+                                       action='reconnect'))
+            control = remote.open(self.host.cipher.public, json.loads(await ws.recv()))
+            self.assertEqual(control, {'op': 'remote_control', 'action': 'reconnect'})
+            self.assertTrue(self.host.peer(remote.public['id']).get('connection_enabled', True))
+        self.assertFalse(self.host.offline_rows()[0]['reachable'])
     async def test_rejected_socket_gets_no_challenge(self):
         self.host.config.update(address_scope='custom',custom_networks='10.0.0.0/8',lan=False)
         await self.host.enable()

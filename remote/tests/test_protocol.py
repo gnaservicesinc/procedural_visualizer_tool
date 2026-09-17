@@ -137,8 +137,8 @@ class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
         from websockets.asyncio.server import serve
         with tempfile.TemporaryDirectory() as temp:
             host = Host(temp)
-            self.assertTrue(host.config['lan'])
-            async with serve(lambda ws: None, '0.0.0.0', 0) as occupied:
+            self.assertFalse(host.config['lan'])
+            async with serve(lambda ws: None, '127.0.0.1', 0) as occupied:
                 host.config['port'] = occupied.sockets[0].getsockname()[1]
                 with patch.object(host, 'lan_addresses', return_value=[]):
                     await host.enable()
@@ -194,7 +194,7 @@ class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
             host.config.update(lan=False, remotes=[remote], active_control=remote['id'])
             save_private(host.config_path, host.config)
             loaded = Host(temp)
-            self.assertTrue(loaded.config['lan'])
+            self.assertFalse(loaded.config['lan'])
             self.assertFalse(loaded.enabled)
             self.assertEqual(loaded.config['remotes'], [remote])
             self.assertNotIn('active_control', loaded.config)
@@ -204,6 +204,8 @@ class AutomaticReachabilityTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import AsyncMock
         with tempfile.TemporaryDirectory() as temp:
             host = Host(temp)
+            host.config['address_scope'] = 'subnet'
+            host.validate_config(host.config)
             first, second = AsyncMock(), AsyncMock()
             with patch('pvt_remote.host.AsyncZeroconf', side_effect=[first, second]), patch.object(host, 'lan_addresses', return_value=['192.168.1.8']):
                 await host.refresh_discovery()

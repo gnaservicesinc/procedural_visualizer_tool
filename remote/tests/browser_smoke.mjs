@@ -240,7 +240,25 @@ try {
     await display.page.getByRole('button', {name:'Done', exact:true}).click();
     await display.page.getByRole('button', {name:'Enable audio', exact:true}).click();
     assert.equal(await display.page.locator('video').evaluate(v => v.muted), false);
-    await display.page.getByRole('button', {name:'Mute audio', exact:true}).click();
+    send({op:'remote_action', remote:display.identity.id, action:'pause', pause_mode:'freeze'});
+    await display.page.getByText('Output paused', {exact:true}).waitFor();
+    await display.page.getByRole('button', {name:'Resume output', exact:true}).click();
+    send({op:'remote_action', remote:display.identity.id, action:'mute'});
+    await display.page.getByText('Audio muted by PVT', {exact:true}).waitFor();
+    await display.page.getByRole('button', {name:'Unmute', exact:true}).click();
+    send({op:'remote_action', remote:display.identity.id, action:'disconnect'});
+    await display.page.getByRole('status').filter({hasText:/^Disconnected$/}).waitFor({timeout:10000});
+    await display.page.waitForFunction(() => window.peerConnections.every(pc => pc.connectionState === 'closed'));
+    const standbyConnections = await display.page.evaluate(() => window.openedConnections.length);
+    await display.page.waitForTimeout(3500);
+    assert.equal(await display.page.evaluate(() => window.openedConnections.length), standbyConnections);
+    // The intentional off state survives reload. PVT can turn a reachable
+    // display back on through its lightweight authenticated standby channel.
+    await display.page.reload();
+    await display.page.getByRole('status').filter({hasText:/^Disconnected$/}).waitFor({timeout:45000});
+    assert.equal(await display.page.getByRole('button', {name:'Connect', exact:true}).count(), 1);
+    send({op:'remote_action', remote:display.identity.id, action:'reconnect'});
+    await display.page.getByRole('status').filter({hasText:/^Connected$/}).waitFor({timeout:45000});
     await display.page.getByRole('button', {name:'Full screen', exact:true}).click();
     await display.page.waitForFunction(() => document.fullscreenElement?.tagName === 'VIDEO');
     await display.page.evaluate(() => document.exitFullscreen());
@@ -297,7 +315,7 @@ try {
     }
   } finally {clearInterval(interval);}
   assert.deepEqual(browserErrors, []);
-  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','manual disconnect stops transport and media in both roles', 'explicit reconnect', 'reload reconnect','interruption recovery','legacy pause migration', 'sustained same-profile multi-tab media','control request','responsive layout','3637-control hierarchy and bounded pagination','global search and locate','settings save/discard/reload guards in both roles','invalid save retains draft','audio and fullscreen','zero unexpected browser errors'],expectedNetworkErrors:expectedNetworkErrors.length,screenshots:temporary}));
+  console.log(JSON.stringify({ok:true,checks:[useRelay ? 'encrypted relay + fragmented data channel state' : useLan ? 'stable mDNS name + encrypted LAN control' : 'authenticated loopback state','separate identities','public file import','mutual crypto across JS/Python','loopback authentication','real WebRTC audio/video','automatic pairing connection','manual disconnect stops transport and media in both roles', 'explicit reconnect', 'reload reconnect','interruption recovery','host-backed pause and mute controls','legacy pause migration', 'sustained same-profile multi-tab media','control request','responsive layout','3637-control hierarchy and bounded pagination','global search and locate','settings save/discard/reload guards in both roles','invalid save retains draft','audio and fullscreen','zero unexpected browser errors'],expectedNetworkErrors:expectedNetworkErrors.length,screenshots:temporary}));
 } catch (error) {
   console.error('Worker diagnostics:', stderr);
   for (const page of context?.pages() || []) {
