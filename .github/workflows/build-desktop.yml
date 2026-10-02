@@ -27,6 +27,7 @@ jobs:
     timeout-minutes: 90
     env:
       QT_VERSION: ${{ matrix.qt-version || '6.8.3' }}
+      PYTHONFAULTHANDLER: '1'
     strategy:
       fail-fast: false
       matrix:

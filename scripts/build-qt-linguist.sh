@@ -23,6 +23,9 @@ for module in qttools qttranslations; do
     tar -xJf "$archive" --strip-components=1 -C "$source_dir"
     options=()
     if [[ "$module" == qttools ]]; then
+        # Qt probes libclang before evaluating FEATURE_clang. Linguist does
+        # not need it; avoid unrelated, incomplete LLVM packages on the runner.
+        options+=(-DCMAKE_DISABLE_FIND_PACKAGE_WrapLibClang=ON)
         options+=(-DFEATURE_linguist=ON -DFEATURE_clang=OFF -DFEATURE_clangcpp=OFF)
         for feature in assistant designer distancefieldgenerator kmap2qmap pixeltool qdbus qev qdoc qtattributionsscanner qtdiag qtplugininfo; do
             options+=("-DFEATURE_$feature=OFF")
