@@ -53,16 +53,18 @@ jobs:
             qt-arch: win64_msvc2022_64
             qt-dir: msvc2022_64
             cmake-arch: x64
+            cmake-generator: Visual Studio 17 2022
             vcpkg-triplet: x64-windows-static
             package-dir: procedural-visualizer-tool-windows-x86_64
             archive: procedural-visualizer-tool-windows-x86_64.zip
           - name: Windows arm64
-            os: windows-11-arm
+            os: windows-11-vs2026-arm
             qt-source: archive
             qt-host: windows
             qt-arch: win64_msvc2022_arm64_cross_compiled
             qt-dir: msvc2022_arm64
             cmake-arch: ARM64
+            cmake-generator: Visual Studio 18 2026
             vcpkg-triplet: arm64-windows-static
             package-dir: procedural-visualizer-tool-windows-arm64
             archive: procedural-visualizer-tool-windows-arm64.zip
@@ -148,6 +150,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          if ($env:RUNNER_ARCH -eq "ARM64") {
+            # Refresh only OpenSSL's upstream port: the hosted image still has
+            # 3.6.4, which predates the September 2026 DTLS security repairs.
+            $opensslPort = "e182cb4dd2df2ab02f66a1aabd5f35bbdc9522c7" # OpenSSL 3.6.5
+            git -C "$env:VCPKG_INSTALLATION_ROOT" fetch --depth=1 origin $opensslPort
+            if ($LASTEXITCODE -ne 0) { throw "OpenSSL port fetch failed" }
+            git -C "$env:VCPKG_INSTALLATION_ROOT" checkout $opensslPort -- ports/openssl
+            if ($LASTEXITCODE -ne 0) { throw "OpenSSL port update failed" }
+          }
           & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" `
             install "libpng:${{ matrix.vcpkg-triplet }}"
           if ($env:RUNNER_ARCH -eq "ARM64") {
@@ -288,7 +299,7 @@ jobs:
         run: |
           $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
           $cmakeArgs = @(
-            '-S', '.', '-B', 'build', '-G', 'Visual Studio 17 2022',
+            '-S', '.', '-B', 'build', '-G', '${{ matrix.cmake-generator }}',
             '-A', '${{ matrix.cmake-arch }}',
             "-DCMAKE_PREFIX_PATH=$env:QT_ROOT",
             "-DQT_HOST_PATH=$qtHostPath",
@@ -491,7 +502,7 @@ jobs:
           $qtHostPath = $env:QT_HOST_ROOT -replace '\\', '/'
           $consumerPrefix = "$env:GITHUB_WORKSPACE/package;$env:QT_ROOT"
           cmake -S tests/consumer -B installed-consumer `
-            -G "Visual Studio 17 2022" `
+            -G "${{ matrix.cmake-generator }}" `
             -A "${{ matrix.cmake-arch }}" -T ClangCL `
             -DCMAKE_PREFIX_PATH="$consumerPrefix" `
             -DQT_HOST_PATH="$qtHostPath" `
@@ -594,6 +605,10 @@ jobs:
           printf 'Procedural Visualizer Tool %s %s\n\n' \
             "$product_version" "$release_summary" > release-notes.md
           cat >> release-notes.md <<'EOF'
+          Version 19.1.17 updates the bundled Remotes runtime to cryptography 50.0.2 or a newer 50.x release. It includes fixes for wildcard certificate name constraints (CVE-2026-69248), duplicate intermediate certificate processing (CVE-2026-69249), and PKCS#7 decryption errors and timing (CVE-2026-69247).
+
+          Windows ARM64 packages build against OpenSSL 3.6.5, including the September 2026 DTLS security fixes. The worker's dependency inventory records its linked OpenSSL version. Linux ARM64 Qt Linguist builds also avoid unnecessary Clang package discovery.
+
           Version 19.1.9 integrates the published Remote Control and Remote Display Chrome Web Store listings into Settings → Networking & Remotes. Install the extensions from Chrome, then use the existing public pairing files. Chrome handles approved extension updates; desktop releases and Web Store review remain separate. The shared extension interface adds project/layer navigation, bounded item browsing and protected settings drafts.
 
           - [PVT Remote Control](https://chromewebstore.google.com/detail/pvt-remote-control/paachfdeekmbojpfifnaadedhogpgcde)

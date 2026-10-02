@@ -1,3 +1,12 @@
+procedural-visualizer-tool (19.1.17) stonking; urgency=medium
+
+  * Require patched cryptography 50.0.2 for bundled and system Remotes runtimes.
+  * Avoid unused Clang package discovery while building Qt Linguist.
+  * Update Windows ARM64 OpenSSL and record its version in worker packages.
+  * Use the hosted Windows ARM64 runner's Visual Studio 2026 generator.
+
+ -- gnaservicesinc <alast.andy@gmail.com>  Fri, 02 Oct 2026 16:11:33 -0400
+
 procedural-visualizer-tool (19.1.16) stonking; urgency=medium
 
   * New upstream release.

@@ -24,7 +24,7 @@ Depends:
  hicolor-icon-theme,
  python3 (>= 3.11),
  python3-aiortc (>= 1.14),
- python3-cryptography (>= 45),
+ python3-cryptography (>= 50.0.2),
  python3-ifaddr,
  python3-pil (>= 11),
  python3-websockets (>= 15),

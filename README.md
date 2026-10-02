@@ -12,7 +12,7 @@ Remote access ranges, live connection tracking, portrait/spatial photo extractio
 image inspection/export, and combined photo/Plane depth are described in
 [Remote connections and depth photos](docs/remotes-and-photos.md).
 
-Current product version: **19.1.16**. The version is read from `VERSION` by every
+Current product version: **19.1.17**. The version is read from `VERSION` by every
 build and appears in the GUI title, About PVT dialog, native application
 metadata, library package metadata, and saved-project provenance.
 
@@ -21,6 +21,16 @@ editor, and optional Qt 6 desktop GUI. A named project can contain a stack of
 independently configurable fire layers; each frame is rendered and blended in
 linear-light 32-bit floating-point RGBA, then exported as 8/16-bit PNG or full
 32-bit FLOAT EXR.
+
+## 19.1.17 remote worker security updates
+
+The bundled Remotes runtime requires cryptography 50.0.2 or a newer 50.x
+release; Debian packages also require the patched system dependency.
+This includes the certificate-validation fixes for CVE-2026-69248
+and CVE-2026-69249, plus the PKCS#7 decryption fix for CVE-2026-69247.
+The Windows ARM64 source build uses OpenSSL 3.6.5, including the latest
+DTLS security fixes. Worker packages record the linked OpenSSL version
+alongside their Python dependency versions.
 
 ## 19.0.0 maintained Music detection and preview performance
 

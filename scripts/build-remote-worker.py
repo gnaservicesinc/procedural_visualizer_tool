@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from cryptography.hazmat.backends.openssl.backend import backend
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--output', type=Path, required=True)
@@ -59,6 +60,7 @@ for distribution in importlib.metadata.distributions():
                 destination = licenses / name / str(item).replace('..', '_')
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
+versions['OpenSSL (cryptography)'] = backend.openssl_version_text()
 (licenses / 'versions.json').write_text(json.dumps(versions, indent=2) + '\n')
 executable = output / ('pvt-remote.exe' if sys.platform == 'win32' else 'pvt-remote')
 subprocess.run([str(executable), '--self-test'], check=True, timeout=45)
