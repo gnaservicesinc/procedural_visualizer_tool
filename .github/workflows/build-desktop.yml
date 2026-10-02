@@ -28,6 +28,7 @@ jobs:
     env:
       QT_VERSION: ${{ matrix.qt-version || '6.8.3' }}
       PYTHONFAULTHANDLER: '1'
+      VCPKG_OVERLAY_TRIPLETS: ${{ github.workspace }}/cmake/vcpkg-triplets
     strategy:
       fail-fast: false
       matrix:
