@@ -1,5 +1,6 @@
 procedural-visualizer-tool (19.1.17) stonking; urgency=medium
 
+  * Keep macOS photo translations extractable by Ubuntu's Qt 6.10 lupdate.
   * Require patched cryptography 50.0.2 for bundled and system Remotes runtimes.
   * Avoid unused Clang package discovery while building Qt Linguist.
   * Update Windows ARM64 OpenSSL and record its version in worker packages.

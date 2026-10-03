@@ -92,7 +92,9 @@ bool extractPhoto(const QString& path, ImportedPhoto& photo, QString& error) {
             if (!info) continue;
             NSError* failure = nil;
             AVDepthData* depth = [AVDepthData depthDataFromDictionaryRepresentation:info error:&failure];
-            depth = [[depth depthDataByConvertingToDepthDataType:kCVPixelFormatType_DisparityFloat32] depthDataByApplyingExifOrientation:orientation];
+            // Keep these messages separate: Qt 6.10 lupdate reads [[ as a C++ attribute.
+            depth = [depth depthDataByConvertingToDepthDataType:kCVPixelFormatType_DisparityFloat32];
+            depth = [depth depthDataByApplyingExifOrientation:orientation];
             auto image = dataImage(depth.depthDataMap, true);
             if (!image.isNull()) { photo.images.push_back({"depth", QObject::tr("Camera depth (normalized near = white)"), image}); break; }
             photo.notes += QObject::tr(" Camera depth was present but could not be decoded.");

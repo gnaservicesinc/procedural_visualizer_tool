@@ -35,6 +35,8 @@ jobs:
         include:
           - name: Linux x64
             os: ubuntu-24.04
+            # Match Ubuntu PPA Linguist so its Objective-C++ parser is covered.
+            qt-version: 6.10.2
             qt-source: archive
             qt-host: linux
             qt-arch: linux_gcc_64

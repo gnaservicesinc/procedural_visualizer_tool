@@ -1,5 +1,45 @@
 # Launchpad Snap and Debian build repair
 
+## 2026-10-02: September 17 PPA translation failure
+
+The 19.1.16 source recipes succeeded, but their binary builds failed for both
+enabled Ubuntu series:
+
+- [Resolute binary build 33605939](https://launchpad.net/~gnaservicesinc/+archive/ubuntu/proceduralvisualizertool/+build/33605939)
+- [Stonking binary build 33605930](https://launchpad.net/~gnaservicesinc/+archive/ubuntu/proceduralvisualizertool/+build/33605930)
+
+The [Resolute source recipe 4091092](https://launchpad.net/~gnaservicesinc/+archive/ubuntu/proceduralvisualizertool/+recipebuild/4091092)
+used `8b0780294166e3448f4c316aacd532da54d166ff`. Both binary logs stop at
+`pvt_check_translations`: Qt 6.10.2 `lupdate` treats the nested Objective-C
+message at `gui/photo_import_mac.mm:95` as an unterminated C++ attribute, then
+reports an excess closing bracket. The same expression remained in 19.1.17.
+
+Split the depth conversion and orientation messages into two equivalent
+statements. This source contains six translated messages and must remain in
+both translation scans. No catalog changes or exclusions are needed. The
+Linux x64 desktop CI job now uses Qt 6.10.2, matching the PPA's Linguist parser;
+its existing static and shared builds both validate translation extraction.
+
+Local verification:
+
+- Official Qt 6.10.2 `lupdate`, with matching frameworks, reproduced both
+  warnings against the original source and emitted no warnings after the fix.
+  All six photo messages were retained.
+- Full catalog validation passed with Qt 6.10.2 and Qt 6.11.2. German and French
+  retained 3261/3261 finished messages.
+- Rebuilt `pvt_photo_tests` and `pvt_check_translations` on macOS ARM64.
+  Both `pvt_photos` and `pvt_translation_catalogs` CTest checks passed, including
+  the native portrait-depth and stereo fixtures.
+- Desktop workflow YAML and `git diff --check` passed.
+
+At investigation time, imported Launchpad `main` matched GitHub
+`cab9284d42e1615f69780a0dbe2d615e19478f60` (19.1.17); the recipe API reported
+no pending source builds. A fresh binary build containing this fix remains
+unverified. Automatic import/build and successful PPA publication are separate
+from the local checks and repository push.
+
+## 2026-09-09: Shared-library cache exports
+
 Investigated on 2026-09-09 against `c52112cda2115e26947928c53d3511df069390ad`
 (17.11.0). Noble Debian builds are excluded at the owner's request.
 
